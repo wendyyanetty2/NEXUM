@@ -434,7 +434,7 @@ async function guardarCompra() {
 }
 
 async function anularCompra(id) {
-  if (!await confirmar('¿Anular este comprobante?')) return;
+  if (!await confirmar('¿Anular este comprobante?', { btnOk: 'Anular', btnColor: '#D69E2E' })) return;
   const { error } = await _supabase.from('registro_compras').update({ estado: 'ANULADO' }).eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Comprobante anulado', 'exito');
@@ -442,7 +442,7 @@ async function anularCompra(id) {
 }
 
 async function eliminarCompra(id) {
-  if (!await confirmar('¿Eliminar este registro permanentemente?')) return;
+  if (!await confirmar('¿Eliminar este registro permanentemente?', { btnOk: 'Eliminar' })) return;
   const { error } = await _supabase.from('registro_compras').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');

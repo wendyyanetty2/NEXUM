@@ -366,7 +366,7 @@ async function guardarPeriodo() {
 }
 
 async function eliminarPeriodo(id) {
-  if (!await confirmar('¿Eliminar este periodo? Se eliminará también todo su detalle de planilla.')) return;
+  if (!await confirmar('¿Eliminar este periodo? Se eliminará también todo su detalle de planilla.', { btnOk: 'Eliminar' })) return;
   const { error: errDet } = await _supabase
     .from('planilla_detalle')
     .delete()

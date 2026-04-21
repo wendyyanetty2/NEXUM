@@ -560,7 +560,7 @@ async function guardarMovimiento() {
 }
 
 async function eliminarMovimiento(id) {
-  if (!await confirmar('¿Eliminar este movimiento?')) return;
+  if (!await confirmar('¿Eliminar este movimiento?', { btnOk: 'Eliminar' })) return;
   const { error } = await _supabase.from('movimientos').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');

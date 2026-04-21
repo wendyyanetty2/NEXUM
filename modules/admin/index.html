@@ -190,7 +190,7 @@ async function guardarNuevaPassword() {
   else { exito.textContent = '✓ Contraseña actualizada.'; exito.classList.add('visible'); setTimeout(cerrarModalPassword, 2000); }
 }
 async function confirmarCerrarSesion() {
-  const ok = await confirmar('¿Seguro que deseas cerrar sesión?');
+  const ok = await confirmar('¿Seguro que deseas cerrar sesión?', { btnOk: 'Cerrar sesión' });
   if (ok) await cerrarSesion();
 }
 </script>

@@ -393,7 +393,7 @@ async function guardarVenta() {
 }
 
 async function anularVenta(id) {
-  if (!await confirmar('¿Anular este comprobante? El registro se mantendrá como ANULADO.')) return;
+  if (!await confirmar('¿Anular este comprobante? El registro se mantendrá como ANULADO.', { btnOk: 'Anular', btnColor: '#D69E2E' })) return;
   const { error } = await _supabase.from('registro_ventas').update({ estado: 'ANULADO' }).eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Comprobante anulado', 'exito');
@@ -401,7 +401,7 @@ async function anularVenta(id) {
 }
 
 async function eliminarVenta(id) {
-  if (!await confirmar('¿Eliminar este registro permanentemente?')) return;
+  if (!await confirmar('¿Eliminar este registro permanentemente?', { btnOk: 'Eliminar' })) return;
   const { error } = await _supabase.from('registro_ventas').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');

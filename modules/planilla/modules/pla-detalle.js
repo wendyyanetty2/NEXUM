@@ -298,7 +298,7 @@ async function calcularPlanilla() {
   const btn = document.getElementById('btn-calcular');
   if (!btn) return;
 
-  if (!await confirmar('¿Calcular la planilla? Se sobrescribirán los datos actuales del periodo.')) return;
+  if (!await confirmar('¿Calcular la planilla? Se sobrescribirán los datos actuales del periodo.', { btnOk: 'Calcular', btnColor: '#2C5282' })) return;
 
   btn.disabled = true; btn.textContent = '⏳ Calculando…';
 
@@ -586,7 +586,7 @@ async function confirmarPagoDet() {
 }
 
 async function desmarcarPagado(id) {
-  if (!await confirmar('¿Revertir el pago de este trabajador?')) return;
+  if (!await confirmar('¿Revertir el pago de este trabajador?', { btnOk: 'Revertir', btnColor: '#D69E2E' })) return;
   const { error } = await _supabase
     .from('planilla_detalle')
     .update({ pagado: false, fecha_pago: null, numero_operacion: null })
@@ -610,7 +610,7 @@ async function _verificarTodoPagado() {
 // ── Eliminar fila ──────────────────────────────────────────────
 
 async function eliminarDetalle(id) {
-  if (!await confirmar('¿Eliminar este trabajador del periodo?')) return;
+  if (!await confirmar('¿Eliminar este trabajador del periodo?', { btnOk: 'Eliminar' })) return;
   const { error } = await _supabase.from('planilla_detalle').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');

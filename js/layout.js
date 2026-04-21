@@ -133,7 +133,7 @@ function cambiarEmpresa() {
 }
 
 async function layout_cerrarSesion() {
-  const ok = await confirmar('¿Seguro que deseas cerrar sesión?');
+  const ok = await confirmar('¿Seguro que deseas cerrar sesión?', { btnOk: 'Cerrar sesión' });
   if (ok) await cerrarSesion();
 }
 
