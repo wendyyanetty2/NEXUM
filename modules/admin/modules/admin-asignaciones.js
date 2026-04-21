@@ -256,7 +256,7 @@ async function guardarAsignacion() {
 }
 
 async function eliminarAsignacion(id) {
-  const ok = await confirmar('¿Eliminar esta asignación?<br>El usuario perderá acceso a esa empresa.');
+  const ok = await confirmar('¿Eliminar esta asignación?<br>El usuario perderá acceso a esa empresa.', { btnOk: 'Eliminar' });
   if (!ok) return;
   const { error } = await _supabase.from('usuarios_empresas').delete().eq('id', id);
   if (error) { mostrarToast('Error al eliminar asignación.', 'error'); return; }

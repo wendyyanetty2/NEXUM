@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tesorería — NEXUM</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="../../css/main.css">
+  <link rel="stylesheet" href="../../css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="../../js/config.js"></script>
+  <script src="../../js/utils.js"></script>
+  <script src="../../js/auth.js"></script>
+  <script src="../../js/tema.js"></script>
+  <script src="../../js/layout.js"></script>
+</head>
+<body>
+<div class="nexum-layout">
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="cerrarSidebar()"></div>
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="contenido-principal">
+    <header class="header-top" id="header-top"></header>
+    <main class="area-contenido">
+
+      <div class="page-header">
+        <div>
+          <h1>🏦 Tesorería</h1>
+          <p>Cuentas bancarias, movimientos y conciliación</p>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:4px;margin-bottom:24px;border-bottom:2px solid var(--color-borde);overflow-x:auto;">
+        <button class="tab-btn activo" id="tab-cuentas"     onclick="activarTab('cuentas')">🏦 Cuentas bancarias</button>
+        <button class="tab-btn"        id="tab-movimientos" onclick="activarTab('movimientos')">📊 Movimientos</button>
+        <button class="tab-btn"        id="tab-importar"    onclick="activarTab('importar')">⬆️ Importar EECC</button>
+      </div>
+
+      <div id="contenido-tab">
+        <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div id="modal-container"></div>
+
+<style>
+.tab-btn {
+  padding:10px 16px; border:none; background:none; cursor:pointer;
+  font-family:var(--font); font-size:13px; font-weight:500;
+  color:var(--color-texto-suave); border-bottom:2px solid transparent;
+  margin-bottom:-2px; transition:all 0.2s; white-space:nowrap;
+}
+.tab-btn:hover { color:var(--color-primario); }
+.tab-btn.activo { color:var(--color-secundario); border-bottom-color:var(--color-secundario); }
+</style>
+
+<script src="../../modules/tesoreria/modules/tes-cuentas.js"></script>
+<script src="../../modules/tesoreria/modules/tes-movimientos.js"></script>
+<script src="../../modules/tesoreria/modules/tes-importar.js"></script>
+
+<script>
+let perfil_usuario = null;
+let empresa_activa = null;
+
+(async () => {
+  const resultado = await inicializarModulo('tesoreria');
+  if (!resultado) return;
+  perfil_usuario = resultado.perfil;
+  empresa_activa = resultado.empresa;
+  setBreadcrumb('Tesorería');
+  activarTab('cuentas');
+})();
+
+function activarTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('activo'));
+  document.getElementById('tab-' + tab).classList.add('activo');
+  const area = document.getElementById('contenido-tab');
+  const mapa = {
+    cuentas:     () => renderTabCuentas(area),
+    movimientos: () => renderTabMovimientos(area),
+    importar:    () => renderTabImportar(area),
+  };
+  if (mapa[tab]) mapa[tab]();
+}
+</script>
+</body>
+</html>

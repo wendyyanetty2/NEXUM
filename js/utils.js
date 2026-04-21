@@ -69,7 +69,7 @@ function crearContenedorToast() {
 }
 
 // ── Modal de confirmación ──────────────────────────────────────────────────────
-function confirmar(mensaje) {
+function confirmar(mensaje, { btnOk = 'Confirmar', btnColor = '#C53030' } = {}) {
   return new Promise(resolve => {
     const overlay = document.createElement('div');
     overlay.style.cssText = `
@@ -87,15 +87,16 @@ function confirmar(mensaje) {
             Cancelar
           </button>
           <button id="btn-confirmar" style="padding:10px 24px; border:none;
-            border-radius:8px; background:#C53030; color:#fff; cursor:pointer; font-size:14px;">
-            Eliminar
+            border-radius:8px; background:${btnColor}; color:#fff; cursor:pointer; font-size:14px;">
+            ${btnOk}
           </button>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
     overlay.querySelector('#btn-confirmar').onclick = () => { overlay.remove(); resolve(true); };
-    overlay.querySelector('#btn-cancelar').onclick = () => { overlay.remove(); resolve(false); };
+    overlay.querySelector('#btn-cancelar').onclick  = () => { overlay.remove(); resolve(false); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); resolve(false); } });
   });
 }
 
