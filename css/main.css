@@ -6,7 +6,7 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-/* ── Variables CSS ───────────────────────────────────────────── */
+/* ── Variables CSS — Modo claro (default) ────────────────────── */
 :root {
   --color-primario:    #2D3748;
   --color-secundario:  #2C5282;
@@ -15,6 +15,7 @@
   --color-exito:       #2F855A;
   --color-bg:          #F7FAFC;
   --color-bg-card:     #FFFFFF;
+  --color-bg-alt:      #EDF2F7;
   --color-borde:       #E2E8F0;
   --color-texto:       #2D3748;
   --color-texto-suave: #718096;
@@ -28,6 +29,30 @@
   --header-alto:       60px;
   --font:              'Inter', system-ui, -apple-system, sans-serif;
   --transicion:        0.2s ease;
+}
+
+/* ── Variables CSS — Modo oscuro ─────────────────────────────── */
+[data-tema="oscuro"] {
+  --color-bg:          #0F1117;
+  --color-bg-card:     #1A1D27;
+  --color-bg-alt:      #252836;
+  --color-borde:       #2D3748;
+  --color-texto:       #E2E8F0;
+  --color-texto-suave: #718096;
+  --color-hover:       #1E2533;
+  --sombra-sm:         0 1px 3px rgba(0,0,0,0.3);
+  --sombra-md:         0 4px 12px rgba(0,0,0,0.4);
+  --sombra-lg:         0 8px 24px rgba(0,0,0,0.5);
+  /* Colores de acción — un poco más brillantes en oscuro */
+  --color-secundario:  #4299E1;
+  --color-exito:       #48BB78;
+  --color-critico:     #FC8181;
+  --color-atencion:    #F6C90E;
+}
+
+/* Transición suave al cambiar tema */
+*, *::before, *::after {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.15s ease;
 }
 
 /* ── Reset base ──────────────────────────────────────────────── */

@@ -214,3 +214,36 @@ body.auth-page {
   .auth-header { padding: 24px 24px 20px; }
   .empresa-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Modo oscuro en páginas de auth ──────────────────────────── */
+[data-tema="oscuro"] body.auth-page {
+  background: linear-gradient(135deg, #070B10 0%, #0F1117 50%, #141C2B 100%);
+}
+[data-tema="oscuro"] .auth-card {
+  background: var(--color-bg-card);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+[data-tema="oscuro"] .auth-body {
+  background: var(--color-bg-card);
+  color: var(--color-texto);
+}
+[data-tema="oscuro"] .auth-body h2 { color: var(--color-texto); }
+[data-tema="oscuro"] .input-grupo input {
+  background: var(--color-bg-alt, #252836);
+  border-color: var(--color-borde);
+  color: var(--color-texto);
+}
+[data-tema="oscuro"] .input-grupo input::placeholder { color: #4A5568; }
+[data-tema="oscuro"] .auth-footer {
+  background: var(--color-bg-card);
+  color: var(--color-texto-suave);
+  border-top: 1px solid var(--color-borde);
+}
+[data-tema="oscuro"] .empresa-card {
+  background: var(--color-bg-card);
+  border-color: var(--color-borde);
+}
+[data-tema="oscuro"] .empresa-card:hover {
+  background: var(--color-hover);
+}
+[data-tema="oscuro"] .empresa-card .empresa-nombre { color: var(--color-texto); }

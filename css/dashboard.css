@@ -155,7 +155,7 @@
 /* ── Header superior ─────────────────────────────────────────── */
 .header-top {
   height: var(--header-alto);
-  background: #fff;
+  background: var(--color-bg-card);
   border-bottom: 1px solid var(--color-borde);
   display: flex;
   align-items: center;
@@ -322,3 +322,62 @@
     display: none;
   }
 }
+
+/* ── Toggle modo oscuro/claro ────────────────────────────────── */
+.btn-tema {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--color-borde);
+  background: var(--color-bg-alt, var(--color-bg));
+  cursor: pointer;
+  font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+.btn-tema:hover {
+  background: var(--color-hover);
+  transform: rotate(20deg);
+}
+
+/* ── Ajustes de modo oscuro en el layout ─────────────────────── */
+[data-tema="oscuro"] .tabla thead th {
+  background: #252836;
+}
+[data-tema="oscuro"] .stat-card {
+  background: var(--color-bg-card);
+  border-color: var(--color-borde);
+}
+[data-tema="oscuro"] .stat-icono.azul     { background: #1a2a3a; }
+[data-tema="oscuro"] .stat-icono.verde    { background: #1a2e22; }
+[data-tema="oscuro"] .stat-icono.amarillo { background: #2a2210; }
+[data-tema="oscuro"] .stat-icono.rojo     { background: #2a1212; }
+[data-tema="oscuro"] .badge-activo   { background: #1a2e22; color: #68D391; }
+[data-tema="oscuro"] .badge-inactivo { background: #2a1212; color: #FC8181; }
+[data-tema="oscuro"] .badge-primario { background: #1a2a3a; color: #63B3ED; }
+[data-tema="oscuro"] .badge-atencion { background: #2a2210; color: #F6E05E; }
+[data-tema="oscuro"] .modal { background: var(--color-bg-card); }
+[data-tema="oscuro"] .campo input,
+[data-tema="oscuro"] .campo select,
+[data-tema="oscuro"] .campo textarea {
+  background: var(--color-bg-alt, #252836);
+  color: var(--color-texto);
+  border-color: var(--color-borde);
+}
+[data-tema="oscuro"] .btn-secundario {
+  background: var(--color-bg-alt, #252836);
+  color: var(--color-texto);
+  border-color: var(--color-borde);
+}
+[data-tema="oscuro"] .btn-secundario:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+[data-tema="oscuro"] .paginacion button {
+  background: var(--color-bg-alt, #252836);
+  color: var(--color-texto);
+  border-color: var(--color-borde);
+}
+[data-tema="oscuro"] .tab-btn { color: #718096; }
+[data-tema="oscuro"] .tab-btn.activo { color: var(--color-secundario); }
+[data-tema="oscuro"] .en-construccion h2 { color: var(--color-texto); }
+[data-tema="oscuro"] .area-contenido .page-header h1 { color: var(--color-texto); }
