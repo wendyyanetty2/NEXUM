@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCR — NEXUM</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="../../css/main.css">
+  <link rel="stylesheet" href="../../css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../../js/config.js"></script>
+  <script src="../../js/utils.js"></script>
+  <script src="../../js/auth.js"></script>
+  <script src="../../js/tema.js"></script>
+  <script src="../../js/layout.js"></script>
+</head>
+<body>
+<div class="nexum-layout">
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="cerrarSidebar()"></div>
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="contenido-principal">
+    <header class="header-top" id="header-top"></header>
+    <main class="area-contenido">
+
+      <div class="page-header">
+        <div>
+          <h1>🔍 OCR — Lectura de comprobantes</h1>
+          <p>Extrae datos de facturas, boletas y recibos en formato PDF o imagen</p>
+        </div>
+      </div>
+
+      <div class="grid-2" style="gap:16px;align-items:start">
+
+        <!-- Panel de carga -->
+        <div class="card">
+          <h3 style="margin-bottom:16px">📄 Cargar comprobante</h3>
+
+          <div id="ocr-drop-zone"
+               style="border:2px dashed var(--color-borde);border-radius:var(--radio-lg);padding:40px;text-align:center;cursor:pointer;transition:all 0.2s"
+               onclick="document.getElementById('ocr-file').click()"
+               ondragover="ocr_onDragOver(event)"
+               ondragleave="ocr_onDragLeave(event)"
+               ondrop="ocr_onDrop(event)">
+            <div style="font-size:48px;margin-bottom:12px">📂</div>
+            <p style="font-weight:600;margin-bottom:4px">Arrastra tu archivo aquí</p>
+            <p class="text-muted text-sm">o haz clic para seleccionar</p>
+            <p class="text-muted text-sm" style="margin-top:8px">Formatos: PDF, JPG, PNG, WebP</p>
+          </div>
+          <input type="file" id="ocr-file" accept=".pdf,image/*" style="display:none" onchange="ocr_onFileSelect(event)">
+
+          <div id="ocr-archivo-info" style="display:none;margin-top:16px">
+            <div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--color-bg-alt,#f7fafc);border-radius:var(--radio)">
+              <span style="font-size:28px" id="ocr-file-icon">📄</span>
+              <div style="flex:1;min-width:0">
+                <div id="ocr-file-name" style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+                <div id="ocr-file-size" class="text-muted text-sm"></div>
+              </div>
+              <button class="btn-icono peligro" onclick="ocr_limpiar()">✕</button>
+            </div>
+          </div>
+
+          <div style="margin-top:16px">
+            <label class="label-filtro" style="margin-bottom:6px;display:block">Destino del comprobante</label>
+            <select id="ocr-destino" class="input-buscar w-full">
+              <option value="compras">📥 Registro de compras</option>
+              <option value="ventas">📤 Registro de ventas</option>
+            </select>
+          </div>
+
+          <button class="btn btn-primario" style="width:100%;margin-top:16px" onclick="ocr_extraer()" id="btn-ocr-extraer" disabled>
+            🔍 Extraer datos
+          </button>
+        </div>
+
+        <!-- Panel de datos extraídos -->
+        <div class="card" id="ocr-resultado-card">
+          <h3 style="margin-bottom:16px">📋 Datos extraídos</h3>
+          <div id="ocr-resultado">
+            <div class="text-center text-muted" style="padding:40px 20px">
+              <div style="font-size:40px;margin-bottom:12px">🔍</div>
+              <p>Carga un comprobante y haz clic en <strong>Extraer datos</strong></p>
+              <p class="text-sm" style="margin-top:8px">Los datos se llenarán automáticamente para su revisión</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Historial -->
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3>📜 Comprobantes recientes (últimos 20)</h3>
+        </div>
+        <div id="ocr-historial">
+          <div class="text-center text-muted text-sm" style="padding:20px">Cargando…</div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div id="modal-container"></div>
+
+<script>
+let perfil_usuario = null;
+let empresa_activa = null;
+let ocr_archivo    = null;
+
+(async () => {
+  const resultado = await inicializarModulo('ocr');
+  if (!resultado) return;
+  perfil_usuario = resultado.perfil;
+  empresa_activa = resultado.empresa;
+  setBreadcrumb('OCR');
+  await cargarHistorialOCR();
+})();
+
+function ocr_onDragOver(e) {
+  e.preventDefault();
+  document.getElementById('ocr-drop-zone').style.borderColor = 'var(--color-secundario)';
+  document.getElementById('ocr-drop-zone').style.background  = 'rgba(44,82,130,0.05)';
+}
+function ocr_onDragLeave(e) {
+  document.getElementById('ocr-drop-zone').style.borderColor = 'var(--color-borde)';
+  document.getElementById('ocr-drop-zone').style.background  = '';
+}
+function ocr_onDrop(e) {
+  e.preventDefault();
+  ocr_onDragLeave(e);
+  const file = e.dataTransfer.files[0];
+  if (file) ocr_cargarArchivo(file);
+}
+function ocr_onFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) ocr_cargarArchivo(file);
+}
+function ocr_cargarArchivo(file) {
+  ocr_archivo = file;
+  const iconos = { 'application/pdf': '📄', 'image/jpeg': '🖼️', 'image/png': '🖼️', 'image/webp': '🖼️' };
+  document.getElementById('ocr-file-icon').textContent = iconos[file.type] || '📄';
+  document.getElementById('ocr-file-name').textContent = file.name;
+  document.getElementById('ocr-file-size').textContent = (file.size / 1024).toFixed(1) + ' KB';
+  document.getElementById('ocr-archivo-info').style.display = 'block';
+  document.getElementById('btn-ocr-extraer').disabled = false;
+}
+function ocr_limpiar() {
+  ocr_archivo = null;
+  document.getElementById('ocr-archivo-info').style.display = 'none';
+  document.getElementById('btn-ocr-extraer').disabled = true;
+  document.getElementById('ocr-file').value = '';
+  document.getElementById('ocr-resultado').innerHTML = `
+    <div class="text-center text-muted" style="padding:40px 20px">
+      <div style="font-size:40px;margin-bottom:12px">🔍</div>
+      <p>Carga un comprobante y haz clic en <strong>Extraer datos</strong></p>
+    </div>`;
+}
+
+async function ocr_extraer() {
+  if (!ocr_archivo) return;
+  const btn = document.getElementById('btn-ocr-extraer');
+  btn.disabled = true; btn.textContent = 'Extrayendo…';
+
+  // Lectura básica del archivo para mostrar formulario prellenado
+  // (en producción conectar con Google Vision API o similar)
+  await new Promise(r => setTimeout(r, 800)); // simular procesamiento
+
+  const destino = document.getElementById('ocr-destino').value;
+  const hoy     = new Date().toISOString().slice(0, 10);
+  const periodo = new Date().toISOString().slice(0, 7);
+
+  btn.disabled = false; btn.textContent = '🔍 Extraer datos';
+
+  document.getElementById('ocr-resultado').innerHTML = `
+    <div style="background:#EBF8FF;border:1px solid #BEE3F8;border-radius:var(--radio);padding:12px;margin-bottom:16px">
+      <p class="text-sm">💡 <strong>Modo manual activo:</strong> Los datos OCR automático requieren configurar la API de visión.
+        Revisa y completa los campos manualmente, luego guarda.</p>
+    </div>
+
+    <div id="alerta-ocr" class="alerta-error"></div>
+
+    <div class="grid-2">
+      <div class="campo">
+        <label>Tipo de documento</label>
+        <select id="ocr-tipo-doc" class="w-full">
+          <option value="01">01 — Factura</option>
+          <option value="03">03 — Boleta</option>
+          <option value="07">07 — Nota de crédito</option>
+          <option value="08">08 — Nota de débito</option>
+          <option value="RH">RH — Recibo de honorarios</option>
+        </select>
+      </div>
+      <div class="campo" style="display:flex;gap:8px">
+        <div style="flex:1"><label>Serie</label><input type="text" id="ocr-serie" class="w-full" placeholder="F001"></div>
+        <div style="flex:2"><label>Número</label><input type="text" id="ocr-nro" class="w-full" placeholder="00000001"></div>
+      </div>
+      <div class="campo">
+        <label>Fecha de emisión</label>
+        <input type="date" id="ocr-fecha" class="w-full" value="${hoy}">
+      </div>
+      <div class="campo">
+        <label>RUC / DNI ${destino === 'compras' ? 'proveedor' : 'cliente'}</label>
+        <input type="text" id="ocr-ruc" class="w-full" placeholder="RUC o DNI">
+      </div>
+      <div class="campo col-2">
+        <label>Razón social / Nombre</label>
+        <input type="text" id="ocr-razon" class="w-full" placeholder="Nombre o razón social">
+      </div>
+      <div class="campo">
+        <label>Base imponible</label>
+        <input type="number" id="ocr-base" class="w-full" min="0" step="0.01" oninput="ocr_calcular()" placeholder="0.00">
+      </div>
+      <div class="campo">
+        <label>IGV</label>
+        <input type="number" id="ocr-igv" class="w-full" min="0" step="0.01" placeholder="0.00" readonly style="background:var(--color-bg-alt,#f7fafc)">
+      </div>
+      <div class="campo">
+        <label>Total <span class="req">*</span></label>
+        <input type="number" id="ocr-total" class="w-full" min="0" step="0.01" oninput="ocr_calcularDesdeTotal()" placeholder="0.00">
+      </div>
+      <div class="campo">
+        <label>Moneda</label>
+        <select id="ocr-moneda" class="w-full">
+          <option value="PEN">PEN — Soles</option>
+          <option value="USD">USD — Dólares</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-secundario" onclick="ocr_limpiar()">Cancelar</button>
+      <button class="btn btn-primario" onclick="ocr_guardar()">
+        💾 Guardar en ${destino === 'compras' ? 'Registro Compras' : 'Registro Ventas'}
+      </button>
+    </div>`;
+}
+
+function ocr_calcular() {
+  const base = parseFloat(document.getElementById('ocr-base')?.value) || 0;
+  const igvEl = document.getElementById('ocr-igv');
+  const totEl = document.getElementById('ocr-total');
+  if (igvEl) igvEl.value = (base * 0.18).toFixed(2);
+  if (totEl) totEl.value = (base * 1.18).toFixed(2);
+}
+function ocr_calcularDesdeTotal() {
+  const total = parseFloat(document.getElementById('ocr-total')?.value) || 0;
+  const base  = total / 1.18;
+  const baseEl = document.getElementById('ocr-base');
+  const igvEl  = document.getElementById('ocr-igv');
+  if (baseEl) baseEl.value = base.toFixed(2);
+  if (igvEl)  igvEl.value  = (total - base).toFixed(2);
+}
+
+async function ocr_guardar() {
+  const total   = parseFloat(document.getElementById('ocr-total')?.value);
+  const alerta  = document.getElementById('alerta-ocr');
+  alerta.classList.remove('visible');
+  if (!total || total <= 0) { alerta.textContent = 'El total es obligatorio.'; alerta.classList.add('visible'); return; }
+
+  const destino = document.getElementById('ocr-destino').value;
+  const periodo = document.getElementById('ocr-fecha')?.value?.slice(0, 7) || new Date().toISOString().slice(0, 7);
+  const payload = {
+    empresa_operadora_id:  empresa_activa.id,
+    periodo,
+    fecha_emision:         document.getElementById('ocr-fecha')?.value,
+    tipo_documento_codigo: document.getElementById('ocr-tipo-doc')?.value,
+    serie:                 document.getElementById('ocr-serie')?.value || null,
+    numero:                document.getElementById('ocr-nro')?.value || null,
+    base_imponible:        parseFloat(document.getElementById('ocr-base')?.value) || 0,
+    igv:                   parseFloat(document.getElementById('ocr-igv')?.value) || 0,
+    total,
+    moneda:                document.getElementById('ocr-moneda')?.value || 'PEN',
+    estado:                'BORRADOR',
+    usuario_id:            perfil_usuario?.id || null,
+  };
+
+  if (destino === 'compras') {
+    payload.ruc_proveedor    = document.getElementById('ocr-ruc')?.value || null;
+    payload.nombre_proveedor = document.getElementById('ocr-razon')?.value || null;
+  } else {
+    payload.ruc_cliente    = document.getElementById('ocr-ruc')?.value || null;
+    payload.nombre_cliente = document.getElementById('ocr-razon')?.value || null;
+  }
+
+  const tabla = destino === 'compras' ? 'registro_compras' : 'registro_ventas';
+  const { error } = await _supabase.from(tabla).insert(payload);
+  if (error) { alerta.textContent = error.message; alerta.classList.add('visible'); return; }
+
+  mostrarToast(`Guardado en ${destino === 'compras' ? 'Registro de Compras' : 'Registro de Ventas'} como Borrador`, 'exito');
+  ocr_limpiar();
+  await cargarHistorialOCR();
+}
+
+async function cargarHistorialOCR() {
+  const [resVentas, resCompras] = await Promise.all([
+    _supabase.from('registro_ventas')
+      .select('id,fecha_emision,tipo_documento_codigo,serie,numero,nombre_cliente,total,estado')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('estado', 'BORRADOR')
+      .order('fecha_creacion', { ascending: false })
+      .limit(10),
+    _supabase.from('registro_compras')
+      .select('id,fecha_emision,tipo_documento_codigo,serie,numero,nombre_proveedor,total,estado')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('estado', 'BORRADOR')
+      .order('fecha_creacion', { ascending: false })
+      .limit(10),
+  ]);
+
+  const ventas  = (resVentas.data  || []).map(v => ({ ...v, _tipo: 'Venta',  _contraparte: v.nombre_cliente  || '—' }));
+  const compras = (resCompras.data || []).map(c => ({ ...c, _tipo: 'Compra', _contraparte: c.nombre_proveedor || '—' }));
+  const todos   = [...ventas, ...compras]
+    .sort((a, b) => b.fecha_emision.localeCompare(a.fecha_emision))
+    .slice(0, 20);
+
+  const cont = document.getElementById('ocr-historial');
+  if (!cont) return;
+  if (!todos.length) {
+    cont.innerHTML = '<p class="text-center text-muted text-sm" style="padding:12px">Sin borradores recientes</p>';
+    return;
+  }
+  cont.innerHTML = `
+    <div class="table-wrap">
+      <table class="tabla" style="font-size:13px">
+        <thead><tr><th>Tipo</th><th>Fecha</th><th>Tipo Doc.</th><th>Serie-Número</th><th>Contraparte</th><th>Total</th><th>Estado</th></tr></thead>
+        <tbody>${todos.map(r => `
+          <tr>
+            <td><span class="badge ${r._tipo==='Venta'?'badge-activo':'badge-primario'}" style="font-size:10px">${r._tipo}</span></td>
+            <td>${formatearFecha(r.fecha_emision)}</td>
+            <td>${escapar(r.tipo_documento_codigo||'—')}</td>
+            <td class="text-mono text-sm">${escapar((r.serie||'')+'‑'+(r.numero||''))}</td>
+            <td>${escapar(r._contraparte.slice(0,30))}</td>
+            <td class="text-right">${formatearMoneda(r.total||0)}</td>
+            <td><span class="badge badge-warning" style="font-size:10px">BORRADOR</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+</script>
+</body>
+</html>

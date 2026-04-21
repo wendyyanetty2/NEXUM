@@ -51,33 +51,32 @@
         <span class="icono">⚙️</span> Administración
       </a>
 
-      <a class="nav-item" id="nav-contabilidad" onclick="navegarA('contabilidad')">
-        <span class="icono">📒</span> Contabilidad
-        <span class="badge-pronto">Pronto</span>
+      <a class="nav-item" id="nav-catalogos" onclick="navegarA('catalogos')">
+        <span class="icono">🗂️</span> Catálogos
       </a>
 
       <a class="nav-item" id="nav-tesoreria" onclick="navegarA('tesoreria')">
         <span class="icono">🏦</span> Tesorería
-        <span class="badge-pronto">Pronto</span>
       </a>
 
       <a class="nav-item" id="nav-planilla" onclick="navegarA('planilla')">
         <span class="icono">👥</span> Planilla
-        <span class="badge-pronto">Pronto</span>
       </a>
 
       <a class="nav-item" id="nav-tributaria" onclick="navegarA('tributaria')">
         <span class="icono">📋</span> Tributaria
-        <span class="badge-pronto">Pronto</span>
       </a>
 
       <a class="nav-item" id="nav-ocr" onclick="navegarA('ocr')">
         <span class="icono">🔍</span> OCR
-        <span class="badge-pronto">Pronto</span>
       </a>
 
       <a class="nav-item" id="nav-reportes" onclick="navegarA('reportes')">
         <span class="icono">📊</span> Reportes
+      </a>
+
+      <a class="nav-item" id="nav-contabilidad" style="opacity:0.55;cursor:default">
+        <span class="icono">📒</span> Contabilidad
         <span class="badge-pronto">Pronto</span>
       </a>
     </nav>
@@ -205,12 +204,13 @@ function navegarA(modulo) {
   const nombres = {
     dashboard:    'Dashboard',
     admin:        'Administración',
-    contabilidad: 'Contabilidad',
+    catalogos:    'Catálogos',
     tesoreria:    'Tesorería',
     planilla:     'Planilla',
     tributaria:   'Tributaria',
     ocr:          'OCR',
-    reportes:     'Reportes'
+    reportes:     'Reportes',
+    contabilidad: 'Contabilidad',
   };
   document.getElementById('breadcrumb').innerHTML =
     `NEXUM &rsaquo; <span>${nombres[modulo] || modulo}</span>`;
@@ -221,11 +221,20 @@ function navegarA(modulo) {
 
   // Renderizar contenido
   const area = document.getElementById('area-contenido');
+  const rutas = {
+    admin:       '/modules/admin/index.html',
+    catalogos:   '/modules/catalogos/index.html',
+    tesoreria:   '/modules/tesoreria/index.html',
+    planilla:    '/modules/planilla/index.html',
+    tributaria:  '/modules/tributaria/index.html',
+    ocr:         '/modules/ocr/index.html',
+    reportes:    '/modules/reportes/index.html',
+  };
+
   if (modulo === 'dashboard') {
     renderDashboard(area);
-  } else if (modulo === 'admin') {
-    // Redirigir al módulo de administración
-    window.location.href = '/modules/admin/index.html';
+  } else if (rutas[modulo]) {
+    window.location.href = rutas[modulo];
   } else {
     renderEnConstruccion(area, nombres[modulo]);
   }
@@ -282,13 +291,14 @@ function renderDashboard(area) {
       <div class="card mb-24">
         <h3 style="margin-bottom:16px">Módulos del sistema</h3>
         <div class="grid-3" style="gap:12px">
-          ${renderTarjetaModulo('⚙️', 'Administración', 'Empresas, usuarios, catálogos globales', 'admin', true)}
+          ${renderTarjetaModulo('⚙️', 'Administración', 'Empresas, usuarios y catálogos globales', 'admin', true)}
+          ${renderTarjetaModulo('🗂️', 'Catálogos', 'Clientes, conceptos, proyectos, trabajadores', 'catalogos', true)}
+          ${renderTarjetaModulo('🏦', 'Tesorería', 'Cuentas bancarias, movimientos, importar EECC', 'tesoreria', true)}
+          ${renderTarjetaModulo('👥', 'Planilla', 'Trabajadores, remuneraciones, AFP, CTS', 'planilla', true)}
+          ${renderTarjetaModulo('📋', 'Tributaria', 'Registro ventas/compras, resumen IGV', 'tributaria', true)}
+          ${renderTarjetaModulo('🔍', 'OCR', 'Lectura de comprobantes PDF e imágenes', 'ocr', true)}
+          ${renderTarjetaModulo('📊', 'Reportes', 'Exportación y análisis multi-empresa', 'reportes', true)}
           ${renderTarjetaModulo('📒', 'Contabilidad', 'Asientos, mayor, estados financieros', 'contabilidad', false)}
-          ${renderTarjetaModulo('🏦', 'Tesorería', 'Cuentas bancarias, movimientos, conciliación', 'tesoreria', false)}
-          ${renderTarjetaModulo('👥', 'Planilla', 'Trabajadores, remuneraciones, CTS, gratificación', 'planilla', false)}
-          ${renderTarjetaModulo('📋', 'Tributaria', 'IGV, renta, detracciones, cronograma SUNAT', 'tributaria', false)}
-          ${renderTarjetaModulo('🔍', 'OCR', 'Lectura automática de comprobantes PDF', 'ocr', false)}
-          ${renderTarjetaModulo('📊', 'Reportes', 'Exportación y análisis multi-empresa', 'reportes', false)}
         </div>
       </div>
 

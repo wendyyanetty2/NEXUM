@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reportes — NEXUM</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="../../css/main.css">
+  <link rel="stylesheet" href="../../css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="../../js/config.js"></script>
+  <script src="../../js/utils.js"></script>
+  <script src="../../js/auth.js"></script>
+  <script src="../../js/tema.js"></script>
+  <script src="../../js/layout.js"></script>
+</head>
+<body>
+<div class="nexum-layout">
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="cerrarSidebar()"></div>
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="contenido-principal">
+    <header class="header-top" id="header-top"></header>
+    <main class="area-contenido">
+
+      <div class="page-header">
+        <div>
+          <h1>📊 Reportes</h1>
+          <p>Exportación y análisis de datos por empresa y periodo</p>
+        </div>
+      </div>
+
+      <!-- Selector de empresa (super admin puede ver todas) -->
+      <div class="card" style="padding:16px;margin-bottom:20px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;align-items:end">
+          <div class="campo" style="margin:0">
+            <label class="label-filtro">Empresa</label>
+            <select id="rep-empresa" class="input-buscar w-full"></select>
+          </div>
+          <div class="campo" style="margin:0">
+            <label class="label-filtro">Periodo desde</label>
+            <input type="month" id="rep-desde" class="input-buscar w-full" value="${new Date().toISOString().slice(0,7)}">
+          </div>
+          <div class="campo" style="margin:0">
+            <label class="label-filtro">Periodo hasta</label>
+            <input type="month" id="rep-hasta" class="input-buscar w-full" value="${new Date().toISOString().slice(0,7)}">
+          </div>
+        </div>
+      </div>
+
+      <!-- Cards de reportes disponibles -->
+      <div class="grid-2" style="gap:16px;margin-bottom:20px">
+
+        <div class="card" style="padding:20px">
+          <div style="font-size:32px;margin-bottom:12px">📤</div>
+          <h3>Registro de ventas</h3>
+          <p class="text-muted text-sm" style="margin:8px 0 16px">Exporta todas las ventas del periodo seleccionado incluyendo IGV, clientes y totales.</p>
+          <button class="btn btn-primario btn-sm" onclick="exportarReporteVentas()">⬇ Exportar Excel</button>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <div style="font-size:32px;margin-bottom:12px">📥</div>
+          <h3>Registro de compras</h3>
+          <p class="text-muted text-sm" style="margin:8px 0 16px">Exporta todas las compras con detracciones, IGV crédito fiscal y estado.</p>
+          <button class="btn btn-primario btn-sm" onclick="exportarReporteCompras()">⬇ Exportar Excel</button>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <div style="font-size:32px;margin-bottom:12px">🏦</div>
+          <h3>Movimientos de tesorería</h3>
+          <p class="text-muted text-sm" style="margin:8px 0 16px">Cargos y abonos bancarios con clasificación y estado de conciliación.</p>
+          <button class="btn btn-primario btn-sm" onclick="exportarReporteTesoreria()">⬇ Exportar Excel</button>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <div style="font-size:32px;margin-bottom:12px">👥</div>
+          <h3>Planilla de remuneraciones</h3>
+          <p class="text-muted text-sm" style="margin:8px 0 16px">Detalle de remuneraciones, descuentos AFP/ONP y aportes del empleador.</p>
+          <button class="btn btn-primario btn-sm" onclick="exportarReportePlanilla()">⬇ Exportar Excel</button>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <div style="font-size:32px;margin-bottom:12px">⚖️</div>
+          <h3>Resumen IGV mensual</h3>
+          <p class="text-muted text-sm" style="margin:8px 0 16px">Débito fiscal, crédito fiscal y determinación del IGV a pagar por periodo.</p>
+          <button class="btn btn-primario btn-sm" onclick="exportarReporteIGV()">⬇ Exportar Excel</button>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <div style="font-size:32px;margin-bottom:12px">📋</div>
+          <h3>Reporte global (todo)</h3>
+          <p class="text-muted text-sm" style="margin:8px 0 16px">Genera un Excel con múltiples hojas: ventas, compras, movimientos y planilla.</p>
+          <button class="btn btn-secundario btn-sm" onclick="exportarReporteGlobal()">📦 Exportar completo</button>
+        </div>
+
+      </div>
+
+      <!-- Sección de resúmenes visuales -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3>📈 Resumen del periodo</h3>
+          <button class="btn btn-secundario btn-sm" onclick="cargarResumenPeriodo()">🔄 Actualizar</button>
+        </div>
+        <div id="rep-resumen" class="grid-3" style="gap:12px">
+          <div class="text-center text-muted" style="grid-column:span 3;padding:30px">
+            Selecciona empresa y periodo, luego haz clic en <strong>Actualizar</strong>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div id="modal-container"></div>
+
+<script>
+let perfil_usuario = null;
+let empresa_activa = null;
+let rep_empresas   = [];
+
+(async () => {
+  const resultado = await inicializarModulo('reportes');
+  if (!resultado) return;
+  perfil_usuario = resultado.perfil;
+  empresa_activa = resultado.empresa;
+  setBreadcrumb('Reportes');
+  await cargarEmpresasReporte();
+})();
+
+async function cargarEmpresasReporte() {
+  const sel = document.getElementById('rep-empresa');
+  if (!sel) return;
+
+  // Super admin puede ver todas
+  const esSA = await esSuperAdmin();
+  let lista = [];
+  if (esSA) {
+    const { data } = await _supabase.from('empresas_operadoras').select('id,nombre').eq('activa', true).order('nombre');
+    lista = data || [];
+  } else {
+    // Usuario normal: solo sus empresas
+    const { data } = await _supabase.from('usuarios_empresas')
+      .select('empresa_operadora_id, empresas_operadoras(id,nombre)')
+      .eq('usuario_id', perfil_usuario.id)
+      .eq('activo', true);
+    lista = (data || []).map(ue => ue.empresas_operadoras).filter(Boolean);
+  }
+  rep_empresas = lista;
+  sel.innerHTML = lista.map(e => `<option value="${e.id}" ${e.id === empresa_activa.id ? 'selected' : ''}>${escapar(e.nombre)}</option>`).join('');
+}
+
+function _getParams() {
+  const empId  = document.getElementById('rep-empresa')?.value || empresa_activa.id;
+  const desde  = document.getElementById('rep-desde')?.value  || '';
+  const hasta  = document.getElementById('rep-hasta')?.value  || '';
+  const empNom = rep_empresas.find(e => e.id === empId)?.nombre || empresa_activa.nombre;
+  return { empId, desde, hasta, empNom };
+}
+
+async function exportarReporteVentas() {
+  const { empId, desde, hasta, empNom } = _getParams();
+  let query = _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id', empId).order('fecha_emision');
+  if (desde) query = query.gte('periodo', desde);
+  if (hasta) query = query.lte('periodo', hasta);
+  const { data } = await query;
+  if (!data?.length) { mostrarToast('Sin datos para el periodo/empresa seleccionado', 'atencion'); return; }
+  const rows = data.map(v => ({
+    Periodo: v.periodo, 'F. Emisión': v.fecha_emision,
+    'Tipo Doc': v.tipo_documento_codigo||'', Serie: v.serie||'', Número: v.numero||'',
+    'RUC Cliente': v.ruc_cliente||'', Cliente: v.nombre_cliente||'',
+    'Base Imponible': v.base_imponible||0, IGV: v.igv||0, Total: v.total||0,
+    Moneda: v.moneda, Estado: v.estado,
+  }));
+  _descargarExcel([{ nombre: 'Ventas', datos: rows }], `reporte_ventas_${empNom}_${desde||'todo'}.xlsx`);
+  mostrarToast(`${rows.length} registros exportados`, 'exito');
+}
+
+async function exportarReporteCompras() {
+  const { empId, desde, hasta, empNom } = _getParams();
+  let query = _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empId).order('fecha_emision');
+  if (desde) query = query.gte('periodo', desde);
+  if (hasta) query = query.lte('periodo', hasta);
+  const { data } = await query;
+  if (!data?.length) { mostrarToast('Sin datos', 'atencion'); return; }
+  const rows = data.map(c => ({
+    Periodo: c.periodo, 'F. Emisión': c.fecha_emision, 'F. Vencimiento': c.fecha_vencimiento||'',
+    'Tipo Doc': c.tipo_documento_codigo||'', Serie: c.serie||'', Número: c.numero||'',
+    'RUC Proveedor': c.ruc_proveedor||'', Proveedor: c.nombre_proveedor||'',
+    'Base Imponible': c.base_imponible||0, IGV: c.igv||0, Total: c.total||0,
+    'Tiene Detracción': c.tiene_detraccion?'Sí':'No', 'Monto Detracción': c.monto_detraccion||0,
+    'Deducible Renta': c.deducible_renta?'Sí':'No', Estado: c.estado,
+  }));
+  _descargarExcel([{ nombre: 'Compras', datos: rows }], `reporte_compras_${empNom}_${desde||'todo'}.xlsx`);
+  mostrarToast(`${rows.length} registros exportados`, 'exito');
+}
+
+async function exportarReporteTesoreria() {
+  const { empId, desde, hasta, empNom } = _getParams();
+  let query = _supabase.from('movimientos').select('*, cuentas_bancarias(nombre_alias)').eq('empresa_operadora_id', empId).order('fecha');
+  if (desde) query = query.gte('fecha', desde + '-01');
+  if (hasta) query = query.lte('fecha', hasta + '-31');
+  const { data } = await query;
+  if (!data?.length) { mostrarToast('Sin datos', 'atencion'); return; }
+  const rows = data.map(m => ({
+    Fecha: m.fecha, Cuenta: m.cuentas_bancarias?.nombre_alias||'',
+    Naturaleza: m.naturaleza, Importe: m.importe, Moneda: m.moneda,
+    Descripción: m.descripcion||'', 'Nro Operación': m.numero_operacion||'',
+    Estado: m.estado, 'Tiene IGV': m.tiene_igv?'Sí':'No',
+    'Base Imponible': m.base_imponible||0, IGV: m.igv||0,
+    'Tiene Detracción': m.tiene_detraccion?'Sí':'No', 'Monto Detracción': m.monto_detraccion||0,
+  }));
+  _descargarExcel([{ nombre: 'Movimientos', datos: rows }], `reporte_tesoreria_${empNom}_${desde||'todo'}.xlsx`);
+  mostrarToast(`${rows.length} movimientos exportados`, 'exito');
+}
+
+async function exportarReportePlanilla() {
+  const { empId, desde, hasta, empNom } = _getParams();
+  let query = _supabase.from('planilla_detalle')
+    .select('*, planilla_periodos(anio,mes,tipo), trabajadores(nombre,apellido_paterno,apellido_materno,dni)')
+    .eq('empresa_operadora_id', empId);
+  const { data } = await query;
+  if (!data?.length) { mostrarToast('Sin datos de planilla', 'atencion'); return; }
+  const rows = data.map(d => ({
+    Año: d.planilla_periodos?.anio||'', Mes: d.planilla_periodos?.mes||'',
+    Tipo: d.planilla_periodos?.tipo||'',
+    DNI: d.trabajadores?.dni||'',
+    Trabajador: [d.trabajadores?.apellido_paterno, d.trabajadores?.apellido_materno, d.trabajadores?.nombre].filter(Boolean).join(' '),
+    'Días Trabajados': d.dias_trabajados,
+    'Sueldo Base': d.sueldo_base, 'Rem. Bruta': d.remuneracion_bruta,
+    'Desc. AFP': d.descuento_afp, 'Desc. ONP': d.descuento_onp,
+    'Desc. Renta 5ta': d.descuento_renta5ta, 'Otros Desc.': d.otros_descuentos,
+    'Rem. Neta': d.remuneracion_neta,
+    'Aporte EsSalud': d.aporte_essalud, 'Aporte SENATI': d.aporte_senati,
+    Pagado: d.pagado?'Sí':'No', 'Fecha Pago': d.fecha_pago||'',
+  }));
+  _descargarExcel([{ nombre: 'Planilla', datos: rows }], `reporte_planilla_${empNom}.xlsx`);
+  mostrarToast(`${rows.length} filas exportadas`, 'exito');
+}
+
+async function exportarReporteIGV() {
+  const { empId, desde, hasta, empNom } = _getParams();
+  if (!desde || !hasta) { mostrarToast('Selecciona periodo desde y hasta para el resumen IGV', 'atencion'); return; }
+
+  const [resV, resC] = await Promise.all([
+    _supabase.from('registro_ventas').select('periodo,base_imponible,igv,total,estado').eq('empresa_operadora_id', empId).gte('periodo', desde).lte('periodo', hasta),
+    _supabase.from('registro_compras').select('periodo,base_imponible,igv,total,estado,tiene_detraccion,monto_detraccion').eq('empresa_operadora_id', empId).gte('periodo', desde).lte('periodo', hasta),
+  ]);
+
+  // Agrupar por periodo
+  const periodos = [...new Set([...(resV.data||[]).map(v=>v.periodo), ...(resC.data||[]).map(c=>c.periodo)])].sort();
+  const rows = periodos.map(p => {
+    const vs = (resV.data||[]).filter(v => v.periodo === p && v.estado !== 'ANULADO');
+    const cs = (resC.data||[]).filter(c => c.periodo === p && c.estado !== 'ANULADO');
+    const v_base = vs.reduce((s,v)=>s+parseFloat(v.base_imponible||0),0);
+    const v_igv  = vs.reduce((s,v)=>s+parseFloat(v.igv||0),0);
+    const v_tot  = vs.reduce((s,v)=>s+parseFloat(v.total||0),0);
+    const c_base = cs.reduce((s,c)=>s+parseFloat(c.base_imponible||0),0);
+    const c_igv  = cs.reduce((s,c)=>s+parseFloat(c.igv||0),0);
+    const c_tot  = cs.reduce((s,c)=>s+parseFloat(c.total||0),0);
+    const c_det  = cs.filter(c=>c.tiene_detraccion).reduce((s,c)=>s+parseFloat(c.monto_detraccion||0),0);
+    const neto   = v_igv - c_igv;
+    return {
+      Periodo: p,
+      'Ventas - Base': v_base, 'Ventas - IGV Débito': v_igv, 'Ventas - Total': v_tot,
+      'Compras - Base': c_base, 'Compras - IGV Crédito': c_igv, 'Compras - Total': c_tot,
+      'Detracciones': c_det,
+      'IGV Neto (Débito - Crédito)': neto,
+      'Resultado': neto >= 0 ? 'A PAGAR' : 'SALDO A FAVOR',
+    };
+  });
+
+  _descargarExcel([{ nombre: 'ResumenIGV', datos: rows }], `resumen_igv_${empNom}_${desde}_${hasta}.xlsx`);
+  mostrarToast('Resumen IGV exportado', 'exito');
+}
+
+async function exportarReporteGlobal() {
+  mostrarToast('Generando reporte completo…', 'info');
+  const { empId, desde, hasta, empNom } = _getParams();
+
+  const [resV, resC, resMov] = await Promise.all([
+    _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id', empId).order('fecha_emision'),
+    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empId).order('fecha_emision'),
+    _supabase.from('movimientos').select('*, cuentas_bancarias(nombre_alias)').eq('empresa_operadora_id', empId).order('fecha'),
+  ]);
+
+  const hojasVentas  = (resV.data||[]).map(v => ({ Periodo: v.periodo, 'F. Emisión': v.fecha_emision, Serie: v.serie||'', Número: v.numero||'', Cliente: v.nombre_cliente||'', 'Base Imp.': v.base_imponible||0, IGV: v.igv||0, Total: v.total||0, Estado: v.estado }));
+  const hojasCompras = (resC.data||[]).map(c => ({ Periodo: c.periodo, 'F. Emisión': c.fecha_emision, Serie: c.serie||'', Número: c.numero||'', Proveedor: c.nombre_proveedor||'', 'Base Imp.': c.base_imponible||0, IGV: c.igv||0, Total: c.total||0, Estado: c.estado }));
+  const hojasMov     = (resMov.data||[]).map(m => ({ Fecha: m.fecha, Cuenta: m.cuentas_bancarias?.nombre_alias||'', Naturaleza: m.naturaleza, Importe: m.importe, Moneda: m.moneda, Descripción: m.descripcion||'', Estado: m.estado }));
+
+  _descargarExcel([
+    { nombre: 'Ventas',      datos: hojasVentas },
+    { nombre: 'Compras',     datos: hojasCompras },
+    { nombre: 'Movimientos', datos: hojasMov },
+  ], `reporte_global_${empNom}_${new Date().toISOString().slice(0,10)}.xlsx`);
+
+  mostrarToast('Reporte global exportado', 'exito');
+}
+
+async function cargarResumenPeriodo() {
+  const { empId, desde, hasta } = _getParams();
+  const grid = document.getElementById('rep-resumen');
+  if (grid) grid.innerHTML = '<div class="cargando" style="grid-column:span 3"><div class="spinner"></div><span>Cargando…</span></div>';
+
+  const [resV, resC, resMov, resPla] = await Promise.all([
+    _supabase.from('registro_ventas').select('total,estado', { count: 'exact' }).eq('empresa_operadora_id', empId).neq('estado','ANULADO').gte('periodo', desde||'').lte('periodo', hasta||'9999-12'),
+    _supabase.from('registro_compras').select('total,estado', { count: 'exact' }).eq('empresa_operadora_id', empId).neq('estado','ANULADO').gte('periodo', desde||'').lte('periodo', hasta||'9999-12'),
+    _supabase.from('movimientos').select('importe,naturaleza', { count: 'exact' }).eq('empresa_operadora_id', empId).gte('fecha', (desde||'2000-01')+'-01').lte('fecha', (hasta||'9999-12')+'-31'),
+    _supabase.from('planilla_periodos').select('total_neto,estado', { count: 'exact' }).eq('empresa_operadora_id', empId),
+  ]);
+
+  const totalVentas  = (resV.data||[]).reduce((s,v)=>s+parseFloat(v.total||0),0);
+  const totalCompras = (resC.data||[]).reduce((s,c)=>s+parseFloat(c.total||0),0);
+  const abonos       = (resMov.data||[]).filter(m=>m.naturaleza==='ABONO').reduce((s,m)=>s+parseFloat(m.importe||0),0);
+  const cargos       = (resMov.data||[]).filter(m=>m.naturaleza==='CARGO').reduce((s,m)=>s+parseFloat(m.importe||0),0);
+  const totalPlanilla = (resPla.data||[]).filter(p=>p.estado!=='ANULADO').reduce((s,p)=>s+parseFloat(p.total_neto||0),0);
+
+  if (!grid) return;
+  grid.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icono verde">📤</div>
+      <div class="stat-info"><div class="numero">${formatearMoneda(totalVentas)}</div><div class="etiqueta">Total ventas (${resV.count||0} comp.)</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icono rojo">📥</div>
+      <div class="stat-info"><div class="numero">${formatearMoneda(totalCompras)}</div><div class="etiqueta">Total compras (${resC.count||0} comp.)</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icono azul">🏦</div>
+      <div class="stat-info"><div class="numero">${formatearMoneda(abonos - cargos)}</div><div class="etiqueta">Saldo neto tesorería</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icono amarillo">👥</div>
+      <div class="stat-info"><div class="numero">${formatearMoneda(totalPlanilla)}</div><div class="etiqueta">Total planilla neta</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icono verde">📈</div>
+      <div class="stat-info"><div class="numero">${formatearMoneda(abonos)}</div><div class="etiqueta">Abonos bancarios</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icono rojo">📉</div>
+      <div class="stat-info"><div class="numero">${formatearMoneda(cargos)}</div><div class="etiqueta">Cargos bancarios</div></div>
+    </div>`;
+}
+
+function _descargarExcel(hojas, nombre) {
+  const wb = XLSX.utils.book_new();
+  hojas.forEach(h => {
+    if (h.datos.length) {
+      const ws = XLSX.utils.json_to_sheet(h.datos);
+      XLSX.utils.book_append_sheet(wb, ws, h.nombre);
+    }
+  });
+  if (wb.SheetNames.length === 0) { mostrarToast('Sin datos para exportar', 'atencion'); return; }
+  XLSX.writeFile(wb, nombre);
+}
+</script>
+</body>
+</html>

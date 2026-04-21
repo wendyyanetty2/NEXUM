@@ -381,3 +381,18 @@
 [data-tema="oscuro"] .tab-btn.activo { color: var(--color-secundario); }
 [data-tema="oscuro"] .en-construccion h2 { color: var(--color-texto); }
 [data-tema="oscuro"] .area-contenido .page-header h1 { color: var(--color-texto); }
+[data-tema="oscuro"] .input-buscar {
+  background: var(--color-bg-alt, #252836);
+  color: var(--color-texto);
+  border-color: var(--color-borde);
+}
+[data-tema="oscuro"] .badge-warning { background: #2a2210; color: #F6E05E; }
+[data-tema="oscuro"] .badge-info    { background: #1e1a2e; color: #B794F4; }
+[data-tema="oscuro"] .badge-critico { background: #2a1212; color: #FC8181; }
+[data-tema="oscuro"] .alerta-error  { background: #2a1212; border-color: #742A2A; }
+[data-tema="oscuro"] .alerta-exito  { background: #1a2e22; border-color: #276749; }
+[data-tema="oscuro"] .btn-pag {
+  background: var(--color-bg-alt, #252836);
+  color: var(--color-texto);
+  border-color: var(--color-borde);
+}

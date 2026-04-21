@@ -3,19 +3,48 @@
  * Cachea recursos estáticos para uso offline básico
  */
 
-const CACHE_VERSION = 'nexum-v3.0.0';
+const CACHE_VERSION = 'nexum-v3.1.0';
 const RECURSOS_ESTATICOS = [
   '/',
   '/login.html',
   '/selector.html',
   '/dashboard.html',
+  '/cambiar-password.html',
   '/css/main.css',
   '/css/auth.css',
   '/css/dashboard.css',
   '/js/config.js',
   '/js/utils.js',
   '/js/auth.js',
-  '/manifest.json'
+  '/js/tema.js',
+  '/js/layout.js',
+  '/manifest.json',
+  // Módulos
+  '/modules/admin/index.html',
+  '/modules/admin/modules/admin-empresas.js',
+  '/modules/admin/modules/admin-usuarios.js',
+  '/modules/admin/modules/admin-asignaciones.js',
+  '/modules/admin/modules/admin-catalogos.js',
+  '/modules/catalogos/index.html',
+  '/modules/catalogos/modules/cat-clientes.js',
+  '/modules/catalogos/modules/cat-conceptos.js',
+  '/modules/catalogos/modules/cat-autorizaciones.js',
+  '/modules/catalogos/modules/cat-proyectos.js',
+  '/modules/catalogos/modules/cat-mediospago.js',
+  '/modules/catalogos/modules/cat-trabajadores.js',
+  '/modules/tesoreria/index.html',
+  '/modules/tesoreria/modules/tes-cuentas.js',
+  '/modules/tesoreria/modules/tes-movimientos.js',
+  '/modules/tesoreria/modules/tes-importar.js',
+  '/modules/planilla/index.html',
+  '/modules/planilla/modules/pla-periodos.js',
+  '/modules/planilla/modules/pla-detalle.js',
+  '/modules/tributaria/index.html',
+  '/modules/tributaria/modules/tri-ventas.js',
+  '/modules/tributaria/modules/tri-compras.js',
+  '/modules/tributaria/modules/tri-resumen.js',
+  '/modules/ocr/index.html',
+  '/modules/reportes/index.html',
 ];
 
 // Instalación: pre-cachear recursos estáticos
@@ -46,7 +75,6 @@ self.addEventListener('fetch', event => {
   event.respondWith(
     fetch(event.request)
       .then(resp => {
-        // Guardar en caché si es exitoso
         if (resp && resp.status === 200 && event.request.method === 'GET') {
           const copia = resp.clone();
           caches.open(CACHE_VERSION).then(cache => cache.put(event.request, copia));
