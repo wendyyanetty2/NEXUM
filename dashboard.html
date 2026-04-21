@@ -75,9 +75,8 @@
         <span class="icono">📊</span> Reportes
       </a>
 
-      <a class="nav-item" id="nav-contabilidad" style="opacity:0.55;cursor:default">
+      <a class="nav-item" id="nav-contabilidad" onclick="navegarA('contabilidad')">
         <span class="icono">📒</span> Contabilidad
-        <span class="badge-pronto">Pronto</span>
       </a>
     </nav>
 
@@ -228,7 +227,8 @@ function navegarA(modulo) {
     planilla:    '/modules/planilla/index.html',
     tributaria:  '/modules/tributaria/index.html',
     ocr:         '/modules/ocr/index.html',
-    reportes:    '/modules/reportes/index.html',
+    reportes:      '/modules/reportes/index.html',
+    contabilidad:  '/modules/contabilidad/index.html',
   };
 
   if (modulo === 'dashboard') {
@@ -298,7 +298,7 @@ function renderDashboard(area) {
           ${renderTarjetaModulo('📋', 'Tributaria', 'Registro ventas/compras, resumen IGV', 'tributaria', true)}
           ${renderTarjetaModulo('🔍', 'OCR', 'Lectura de comprobantes PDF e imágenes', 'ocr', true)}
           ${renderTarjetaModulo('📊', 'Reportes', 'Exportación y análisis multi-empresa', 'reportes', true)}
-          ${renderTarjetaModulo('📒', 'Contabilidad', 'Asientos, mayor, estados financieros', 'contabilidad', false)}
+          ${renderTarjetaModulo('📒', 'Contabilidad', 'Asientos, mayor, estados financieros', 'contabilidad', true)}
         </div>
       </div>
 
