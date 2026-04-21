@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Administración — NEXUM</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="../../css/main.css">
+  <link rel="stylesheet" href="../../css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="../../js/config.js"></script>
+  <script src="../../js/utils.js"></script>
+  <script src="../../js/auth.js"></script>
+</head>
+<body>
+<div class="nexum-layout">
+
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="cerrarSidebar()"></div>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="nombre">NEXUM</div>
+      <div class="claim">El vínculo que sustenta</div>
+    </div>
+    <div class="sidebar-empresa">
+      <div class="label">Empresa activa</div>
+      <div class="nombre-empresa" id="empresa-nombre">—</div>
+      <div class="ruc-empresa"   id="empresa-ruc"></div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-seccion">Módulos</div>
+      <a class="nav-item" onclick="window.location.href='/dashboard.html'"><span class="icono">🏠</span> Dashboard</a>
+      <a class="nav-item activo" id="nav-admin"><span class="icono">⚙️</span> Administración</a>
+      <a class="nav-item"><span class="icono">📒</span> Contabilidad <span class="badge-pronto">Pronto</span></a>
+      <a class="nav-item"><span class="icono">🏦</span> Tesorería <span class="badge-pronto">Pronto</span></a>
+      <a class="nav-item"><span class="icono">👥</span> Planilla <span class="badge-pronto">Pronto</span></a>
+      <a class="nav-item"><span class="icono">📋</span> Tributaria <span class="badge-pronto">Pronto</span></a>
+      <a class="nav-item"><span class="icono">🔍</span> OCR <span class="badge-pronto">Pronto</span></a>
+      <a class="nav-item"><span class="icono">📊</span> Reportes <span class="badge-pronto">Pronto</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="btn-sidebar-accion" onclick="cambiarEmpresa()">🔄 Cambiar empresa</button>
+      <button class="btn-sidebar-accion" onclick="abrirCambiarPassword()">🔑 Cambiar contraseña</button>
+      <button class="btn-sidebar-accion peligro" onclick="confirmarCerrarSesion()">🚪 Cerrar sesión</button>
+    </div>
+  </aside>
+
+  <!-- CONTENIDO -->
+  <div class="contenido-principal">
+    <header class="header-top">
+      <div class="header-izq">
+        <button class="btn-menu-movil" onclick="abrirSidebar()">☰</button>
+        <div class="breadcrumb" id="breadcrumb">NEXUM › <span>Administración</span></div>
+      </div>
+      <div class="header-der">
+        <div class="header-usuario">
+          <div class="avatar" id="avatar-usuario">W</div>
+          <span class="nombre-usuario" id="header-nombre">Wendy</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="area-contenido">
+
+      <!-- Tabs de administración -->
+      <div class="page-header">
+        <div>
+          <h1>⚙️ Administración</h1>
+          <p>Gestión de empresas, usuarios y catálogos globales del sistema</p>
+        </div>
+      </div>
+
+      <!-- Pestañas -->
+      <div style="display:flex; gap:4px; margin-bottom:24px; border-bottom:2px solid var(--color-borde); overflow-x:auto;">
+        <button class="tab-btn activo" id="tab-empresas"   onclick="activarTab('empresas')">🏢 Empresas</button>
+        <button class="tab-btn"        id="tab-usuarios"   onclick="activarTab('usuarios')">👤 Usuarios</button>
+        <button class="tab-btn"        id="tab-asignaciones" onclick="activarTab('asignaciones')">🔗 Asignaciones</button>
+        <button class="tab-btn"        id="tab-catalogos"  onclick="activarTab('catalogos')">📚 Catálogos</button>
+      </div>
+
+      <!-- Contenido de cada tab -->
+      <div id="contenido-tab">
+        <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- MODAL CAMBIAR CONTRASEÑA -->
+<div class="modal-overlay" id="modal-password" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>🔑 Cambiar contraseña</h3>
+      <button class="modal-cerrar" onclick="cerrarModalPassword()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="alerta-pass" class="alerta-error"></div>
+      <div id="exito-pass"  class="alerta-exito"></div>
+      <div class="campo"><label>Nueva contraseña <span class="req">*</span></label>
+        <input type="password" id="nueva-pass" placeholder="Mínimo 8 caracteres"></div>
+      <div class="campo"><label>Confirmar <span class="req">*</span></label>
+        <input type="password" id="confirmar-pass" placeholder="Repite la contraseña"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="cerrarModalPassword()">Cancelar</button>
+      <button class="btn btn-primario" onclick="guardarNuevaPassword()" id="btn-guardar-pass">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.tab-btn {
+  padding: 10px 18px; border: none; background: none; cursor: pointer;
+  font-family: var(--font); font-size: 14px; font-weight: 500;
+  color: var(--color-texto-suave); border-bottom: 2px solid transparent;
+  margin-bottom: -2px; transition: all 0.2s; white-space: nowrap;
+}
+.tab-btn:hover { color: var(--color-primario); }
+.tab-btn.activo { color: var(--color-secundario); border-bottom-color: var(--color-secundario); }
+</style>
+
+<script src="../../modules/admin/modules/admin-empresas.js"></script>
+<script src="../../modules/admin/modules/admin-usuarios.js"></script>
+<script src="../../modules/admin/modules/admin-asignaciones.js"></script>
+<script src="../../modules/admin/modules/admin-catalogos.js"></script>
+<script>
+let perfil_usuario = null;
+let empresa_activa = null;
+let tab_actual = 'empresas';
+
+(async () => {
+  const { sesion, empresa } = await protegerPaginaConEmpresa();
+  if (!sesion || !empresa) return;
+
+  empresa_activa = empresa;
+  perfil_usuario = await obtenerPerfil();
+  if (!perfil_usuario) { await cerrarSesion(); return; }
+
+  document.getElementById('empresa-nombre').textContent = empresa_activa.nombre;
+  document.getElementById('empresa-ruc').textContent    = 'RUC: ' + empresa_activa.ruc;
+  document.getElementById('header-nombre').textContent  = perfil_usuario.nombre.split(' ')[0];
+  document.getElementById('avatar-usuario').textContent = perfil_usuario.nombre.charAt(0).toUpperCase();
+
+  if (empresa_activa.color_primario)
+    document.querySelector('.sidebar').style.background = empresa_activa.color_primario;
+
+  activarTab('empresas');
+})();
+
+function activarTab(tab) {
+  tab_actual = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('activo'));
+  document.getElementById('tab-' + tab).classList.add('activo');
+  const area = document.getElementById('contenido-tab');
+  if (tab === 'empresas')     renderTabEmpresas(area);
+  else if (tab === 'usuarios')     renderTabUsuarios(area);
+  else if (tab === 'asignaciones') renderTabAsignaciones(area);
+  else if (tab === 'catalogos')    renderTabCatalogos(area);
+}
+
+function abrirSidebar()  { document.getElementById('sidebar').classList.add('abierto'); document.getElementById('sidebar-overlay').classList.add('visible'); }
+function cerrarSidebar() { document.getElementById('sidebar').classList.remove('abierto'); document.getElementById('sidebar-overlay').classList.remove('visible'); }
+function cambiarEmpresa() { sessionStorage.removeItem('nexum_empresa_activa'); window.location.href = '/selector.html'; }
+function abrirCambiarPassword() {
+  document.getElementById('modal-password').style.display = 'flex';
+  ['nueva-pass','confirmar-pass'].forEach(id => document.getElementById(id).value = '');
+  ['alerta-pass','exito-pass'].forEach(id => document.getElementById(id).classList.remove('visible'));
+}
+function cerrarModalPassword() { document.getElementById('modal-password').style.display = 'none'; }
+async function guardarNuevaPassword() {
+  const nueva = document.getElementById('nueva-pass').value;
+  const conf  = document.getElementById('confirmar-pass').value;
+  const alerta = document.getElementById('alerta-pass');
+  const exito  = document.getElementById('exito-pass');
+  alerta.classList.remove('visible'); exito.classList.remove('visible');
+  if (nueva.length < 8) { alerta.textContent = 'Mínimo 8 caracteres.'; alerta.classList.add('visible'); return; }
+  if (nueva !== conf)   { alerta.textContent = 'Las contraseñas no coinciden.'; alerta.classList.add('visible'); return; }
+  const btn = document.getElementById('btn-guardar-pass');
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  const { error } = await _supabase.auth.updateUser({ password: nueva });
+  btn.disabled = false; btn.textContent = 'Guardar';
+  if (error) { alerta.textContent = 'Error al cambiar contraseña.'; alerta.classList.add('visible'); }
+  else { exito.textContent = '✓ Contraseña actualizada.'; exito.classList.add('visible'); setTimeout(cerrarModalPassword, 2000); }
+}
+async function confirmarCerrarSesion() {
+  const ok = await confirmar('¿Seguro que deseas cerrar sesión?');
+  if (ok) await cerrarSesion();
+}
+</script>
+</body>
+</html>

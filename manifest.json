@@ -1,0 +1,20 @@
+{
+  "name": "NEXUM — El vínculo que sustenta",
+  "short_name": "NEXUM",
+  "description": "Plataforma integral de gestión empresarial multi-empresa",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2D3748",
+  "theme_color": "#2D3748",
+  "orientation": "any",
+  "lang": "es-PE",
+  "icons": [
+    { "src": "/assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["business", "finance", "productivity"],
+  "shortcuts": [
+    { "name": "Dashboard",       "url": "/dashboard.html",            "description": "Ir al dashboard" },
+    { "name": "Administración",  "url": "/modules/admin/index.html",  "description": "Módulo de administración" }
+  ]
+}

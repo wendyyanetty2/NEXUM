@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — NEXUM</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/auth.js"></script>
+</head>
+<body>
+
+<div class="nexum-layout">
+
+  <!-- ── Overlay para móvil ─────────────────────────────── -->
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="cerrarSidebar()"></div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SIDEBAR
+  ═══════════════════════════════════════════════════════ -->
+  <aside class="sidebar" id="sidebar">
+
+    <!-- Logo -->
+    <div class="sidebar-logo">
+      <div class="nombre">NEXUM</div>
+      <div class="claim">El vínculo que sustenta</div>
+    </div>
+
+    <!-- Empresa activa -->
+    <div class="sidebar-empresa" id="sidebar-empresa">
+      <div class="label">Empresa activa</div>
+      <div class="nombre-empresa" id="empresa-nombre">Cargando…</div>
+      <div class="ruc-empresa" id="empresa-ruc"></div>
+    </div>
+
+    <!-- Navegación -->
+    <nav class="sidebar-nav">
+      <div class="nav-seccion">Módulos</div>
+
+      <a class="nav-item activo" id="nav-dashboard" onclick="navegarA('dashboard')">
+        <span class="icono">🏠</span> Dashboard
+      </a>
+
+      <a class="nav-item" id="nav-admin" onclick="navegarA('admin')">
+        <span class="icono">⚙️</span> Administración
+      </a>
+
+      <a class="nav-item" id="nav-contabilidad" onclick="navegarA('contabilidad')">
+        <span class="icono">📒</span> Contabilidad
+        <span class="badge-pronto">Pronto</span>
+      </a>
+
+      <a class="nav-item" id="nav-tesoreria" onclick="navegarA('tesoreria')">
+        <span class="icono">🏦</span> Tesorería
+        <span class="badge-pronto">Pronto</span>
+      </a>
+
+      <a class="nav-item" id="nav-planilla" onclick="navegarA('planilla')">
+        <span class="icono">👥</span> Planilla
+        <span class="badge-pronto">Pronto</span>
+      </a>
+
+      <a class="nav-item" id="nav-tributaria" onclick="navegarA('tributaria')">
+        <span class="icono">📋</span> Tributaria
+        <span class="badge-pronto">Pronto</span>
+      </a>
+
+      <a class="nav-item" id="nav-ocr" onclick="navegarA('ocr')">
+        <span class="icono">🔍</span> OCR
+        <span class="badge-pronto">Pronto</span>
+      </a>
+
+      <a class="nav-item" id="nav-reportes" onclick="navegarA('reportes')">
+        <span class="icono">📊</span> Reportes
+        <span class="badge-pronto">Pronto</span>
+      </a>
+    </nav>
+
+    <!-- Pie del sidebar -->
+    <div class="sidebar-footer">
+      <button class="btn-sidebar-accion" onclick="cambiarEmpresa()">
+        🔄 Cambiar empresa
+      </button>
+      <button class="btn-sidebar-accion" onclick="abrirCambiarPassword()">
+        🔑 Cambiar contraseña
+      </button>
+      <button class="btn-sidebar-accion peligro" onclick="confirmarCerrarSesion()">
+        🚪 Cerrar sesión
+      </button>
+    </div>
+
+  </aside>
+
+  <!-- ══════════════════════════════════════════════════════
+       CONTENIDO PRINCIPAL
+  ═══════════════════════════════════════════════════════ -->
+  <div class="contenido-principal">
+
+    <!-- Header superior -->
+    <header class="header-top">
+      <div class="header-izq">
+        <button class="btn-menu-movil" onclick="abrirSidebar()" title="Menú">☰</button>
+        <div class="breadcrumb" id="breadcrumb">
+          NEXUM &rsaquo; <span>Dashboard</span>
+        </div>
+      </div>
+      <div class="header-der">
+        <div class="header-usuario">
+          <div class="avatar" id="avatar-usuario">W</div>
+          <span class="nombre-usuario" id="header-nombre">Wendy</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Área de contenido dinámica -->
+    <main class="area-contenido" id="area-contenido">
+      <div class="cargando">
+        <div class="spinner"></div>
+        <span>Cargando…</span>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: Cambiar contraseña
+═══════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-password" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>🔑 Cambiar contraseña</h3>
+      <button class="modal-cerrar" onclick="cerrarModalPassword()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="alerta-password-modal" class="alerta-error"></div>
+      <div id="exito-password-modal" class="alerta-exito"></div>
+      <div class="campo">
+        <label>Nueva contraseña <span class="req">*</span></label>
+        <input type="password" id="nueva-password" placeholder="Mínimo 8 caracteres">
+      </div>
+      <div class="campo">
+        <label>Confirmar contraseña <span class="req">*</span></label>
+        <input type="password" id="confirmar-password" placeholder="Repite la contraseña">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secundario" onclick="cerrarModalPassword()">Cancelar</button>
+      <button class="btn btn-primario" onclick="guardarNuevaPassword()" id="btn-guardar-pass">
+        Guardar contraseña
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Variables de estado ───────────────────────────────────────────
+let modulo_actual = 'dashboard';
+let perfil_usuario = null;
+let empresa_activa = null;
+
+// ── Inicialización ────────────────────────────────────────────────
+(async () => {
+  const { sesion, empresa } = await protegerPaginaConEmpresa();
+  if (!sesion || !empresa) return;
+
+  empresa_activa  = empresa;
+  perfil_usuario  = await obtenerPerfil();
+
+  if (!perfil_usuario) { await cerrarSesion(); return; }
+
+  // Llenar datos en el layout
+  document.getElementById('empresa-nombre').textContent = empresa_activa.nombre;
+  document.getElementById('empresa-ruc').textContent    = 'RUC: ' + empresa_activa.ruc;
+  document.getElementById('header-nombre').textContent  = perfil_usuario.nombre.split(' ')[0];
+  document.getElementById('avatar-usuario').textContent =
+    perfil_usuario.nombre.charAt(0).toUpperCase();
+
+  // Aplicar color de la empresa activa en el sidebar
+  if (empresa_activa.color_primario) {
+    document.querySelector('.sidebar').style.background = empresa_activa.color_primario;
+  }
+
+  // Cargar módulo inicial
+  navegarA('dashboard');
+})();
+
+// ── Navegación entre módulos ──────────────────────────────────────
+function navegarA(modulo) {
+  modulo_actual = modulo;
+
+  // Actualizar nav activo
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('activo'));
+  const navEl = document.getElementById('nav-' + modulo);
+  if (navEl) navEl.classList.add('activo');
+
+  // Actualizar breadcrumb
+  const nombres = {
+    dashboard:    'Dashboard',
+    admin:        'Administración',
+    contabilidad: 'Contabilidad',
+    tesoreria:    'Tesorería',
+    planilla:     'Planilla',
+    tributaria:   'Tributaria',
+    ocr:          'OCR',
+    reportes:     'Reportes'
+  };
+  document.getElementById('breadcrumb').innerHTML =
+    `NEXUM &rsaquo; <span>${nombres[modulo] || modulo}</span>`;
+  document.title = `${nombres[modulo] || modulo} — NEXUM`;
+
+  // Cerrar sidebar en móvil
+  cerrarSidebar();
+
+  // Renderizar contenido
+  const area = document.getElementById('area-contenido');
+  if (modulo === 'dashboard') {
+    renderDashboard(area);
+  } else if (modulo === 'admin') {
+    // Redirigir al módulo de administración
+    window.location.href = '/modules/admin/index.html';
+  } else {
+    renderEnConstruccion(area, nombres[modulo]);
+  }
+}
+
+// ── Dashboard principal ────────────────────────────────────────────
+function renderDashboard(area) {
+  const ahora = new Date();
+  const hora  = ahora.getHours();
+  let saludo  = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches';
+
+  area.innerHTML = `
+    <div class="fadeIn">
+      <div class="page-header">
+        <div>
+          <h1>${saludo}, ${perfil_usuario?.nombre?.split(' ')[0] || 'Wendy'} 👋</h1>
+          <p>${fechaHoy()} &nbsp;·&nbsp; ${empresa_activa?.nombre || ''}</p>
+        </div>
+      </div>
+
+      <!-- Stats rápidas -->
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icono azul">🏢</div>
+          <div class="stat-info">
+            <div class="numero" id="stat-empresas">—</div>
+            <div class="etiqueta">Empresas operadoras</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icono verde">👤</div>
+          <div class="stat-info">
+            <div class="numero" id="stat-usuarios">—</div>
+            <div class="etiqueta">Usuarios activos</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icono amarillo">🏦</div>
+          <div class="stat-info">
+            <div class="numero" id="stat-bancos">—</div>
+            <div class="etiqueta">Bancos disponibles</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icono azul">📄</div>
+          <div class="stat-info">
+            <div class="numero" id="stat-documentos">—</div>
+            <div class="etiqueta">Tipos de documento</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Módulos disponibles -->
+      <div class="card mb-24">
+        <h3 style="margin-bottom:16px">Módulos del sistema</h3>
+        <div class="grid-3" style="gap:12px">
+          ${renderTarjetaModulo('⚙️', 'Administración', 'Empresas, usuarios, catálogos globales', 'admin', true)}
+          ${renderTarjetaModulo('📒', 'Contabilidad', 'Asientos, mayor, estados financieros', 'contabilidad', false)}
+          ${renderTarjetaModulo('🏦', 'Tesorería', 'Cuentas bancarias, movimientos, conciliación', 'tesoreria', false)}
+          ${renderTarjetaModulo('👥', 'Planilla', 'Trabajadores, remuneraciones, CTS, gratificación', 'planilla', false)}
+          ${renderTarjetaModulo('📋', 'Tributaria', 'IGV, renta, detracciones, cronograma SUNAT', 'tributaria', false)}
+          ${renderTarjetaModulo('🔍', 'OCR', 'Lectura automática de comprobantes PDF', 'ocr', false)}
+          ${renderTarjetaModulo('📊', 'Reportes', 'Exportación y análisis multi-empresa', 'reportes', false)}
+        </div>
+      </div>
+
+      <!-- Info de empresa activa -->
+      <div class="card">
+        <h3 style="margin-bottom:16px">Empresa activa</h3>
+        <div class="grid-2">
+          <div>
+            <p class="text-muted text-sm">Nombre</p>
+            <p class="font-medium">${escapar(empresa_activa?.nombre || '—')}</p>
+          </div>
+          <div>
+            <p class="text-muted text-sm">RUC</p>
+            <p class="font-medium">${escapar(empresa_activa?.ruc || '—')}</p>
+          </div>
+          <div>
+            <p class="text-muted text-sm">Rol</p>
+            <p class="font-medium">
+              <span class="badge badge-primario">${escapar(empresa_activa?.rol || 'SUPER_ADMIN')}</span>
+            </p>
+          </div>
+          <div>
+            <p class="text-muted text-sm">Estado</p>
+            <p class="font-medium">
+              <span class="badge badge-activo">Activa</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Cargar estadísticas en paralelo
+  cargarStats();
+}
+
+function renderTarjetaModulo(icono, nombre, desc, id, disponible) {
+  const cursor  = disponible ? 'cursor:pointer' : 'cursor:default; opacity:0.65';
+  const onclick = disponible ? `onclick="navegarA('${id}')"` : '';
+  const tag     = disponible
+    ? `<span class="badge badge-activo" style="font-size:11px">Disponible</span>`
+    : `<span class="badge" style="background:#EDF2F7;color:#718096;font-size:11px">Próximamente</span>`;
+  return `
+    <div class="card" style="padding:16px; ${cursor}; transition:box-shadow 0.2s"
+         ${onclick}
+         onmouseover="if(${disponible}) this.style.boxShadow='0 4px 12px rgba(0,0,0,0.12)'"
+         onmouseout="this.style.boxShadow=''">
+      <div style="font-size:28px; margin-bottom:8px">${icono}</div>
+      <div style="font-weight:600; margin-bottom:4px">${nombre}</div>
+      <div class="text-muted text-sm" style="margin-bottom:10px">${desc}</div>
+      ${tag}
+    </div>`;
+}
+
+async function cargarStats() {
+  // Empresas
+  const { count: cEmpresas } = await _supabase
+    .from('empresas_operadoras').select('*', { count: 'exact', head: true }).eq('activa', true);
+  document.getElementById('stat-empresas').textContent = cEmpresas ?? '—';
+
+  // Usuarios
+  const { count: cUsuarios } = await _supabase
+    .from('usuarios').select('*', { count: 'exact', head: true }).eq('activo', true);
+  document.getElementById('stat-usuarios').textContent = cUsuarios ?? '—';
+
+  // Bancos
+  const { count: cBancos } = await _supabase
+    .from('catalogo_bancos').select('*', { count: 'exact', head: true }).eq('activo', true);
+  document.getElementById('stat-bancos').textContent = cBancos ?? '—';
+
+  // Tipos documento
+  const { count: cDocs } = await _supabase
+    .from('catalogo_tipos_documento').select('*', { count: 'exact', head: true }).eq('activo', true);
+  document.getElementById('stat-documentos').textContent = cDocs ?? '—';
+}
+
+// ── Módulo "En construcción" ──────────────────────────────────────
+function renderEnConstruccion(area, nombre) {
+  const entregas = {
+    'Contabilidad': '1C',
+    'Tesorería':    '1B',
+    'Planilla':     '1C',
+    'Tributaria':   '1D',
+    'OCR':          '1B',
+    'Reportes':     '1E'
+  };
+  area.innerHTML = `
+    <div class="en-construccion fadeIn">
+      <div class="icono-grande">🚧</div>
+      <h2>${nombre}</h2>
+      <p>Este módulo está en desarrollo y estará disponible próximamente.</p>
+      <div class="entrega-tag">📦 Entrega ${entregas[nombre] || '—'}</div>
+      <button class="btn btn-secundario" onclick="navegarA('dashboard')" style="margin-top:8px">
+        ← Volver al Dashboard
+      </button>
+    </div>`;
+}
+
+// ── Sidebar móvil ─────────────────────────────────────────────────
+function abrirSidebar() {
+  document.getElementById('sidebar').classList.add('abierto');
+  document.getElementById('sidebar-overlay').classList.add('visible');
+}
+function cerrarSidebar() {
+  document.getElementById('sidebar').classList.remove('abierto');
+  document.getElementById('sidebar-overlay').classList.remove('visible');
+}
+
+// ── Cambiar empresa ────────────────────────────────────────────────
+function cambiarEmpresa() {
+  sessionStorage.removeItem('nexum_empresa_activa');
+  window.location.href = '/selector.html';
+}
+
+// ── Modal cambiar contraseña ──────────────────────────────────────
+function abrirCambiarPassword() {
+  document.getElementById('modal-password').style.display = 'flex';
+  document.getElementById('nueva-password').value = '';
+  document.getElementById('confirmar-password').value = '';
+  document.getElementById('alerta-password-modal').classList.remove('visible');
+  document.getElementById('exito-password-modal').classList.remove('visible');
+}
+function cerrarModalPassword() {
+  document.getElementById('modal-password').style.display = 'none';
+}
+
+async function guardarNuevaPassword() {
+  const nueva     = document.getElementById('nueva-password').value;
+  const confirmar = document.getElementById('confirmar-password').value;
+  const alerta    = document.getElementById('alerta-password-modal');
+  const exito     = document.getElementById('exito-password-modal');
+  const btn       = document.getElementById('btn-guardar-pass');
+
+  alerta.classList.remove('visible');
+  exito.classList.remove('visible');
+
+  if (nueva.length < 8) {
+    alerta.textContent = 'La contraseña debe tener al menos 8 caracteres.';
+    alerta.classList.add('visible'); return;
+  }
+  if (nueva !== confirmar) {
+    alerta.textContent = 'Las contraseñas no coinciden.';
+    alerta.classList.add('visible'); return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Guardando…';
+
+  const { error } = await _supabase.auth.updateUser({ password: nueva });
+  btn.disabled = false;
+  btn.textContent = 'Guardar contraseña';
+
+  if (error) {
+    alerta.textContent = 'Error al cambiar la contraseña. Intenta de nuevo.';
+    alerta.classList.add('visible');
+  } else {
+    exito.textContent = '✓ Contraseña actualizada correctamente.';
+    exito.classList.add('visible');
+    setTimeout(() => cerrarModalPassword(), 2000);
+  }
+}
+
+// ── Cerrar sesión ─────────────────────────────────────────────────
+async function confirmarCerrarSesion() {
+  const ok = await confirmar('¿Seguro que deseas cerrar sesión?');
+  if (ok) await cerrarSesion();
+}
+</script>
+</body>
+</html>
