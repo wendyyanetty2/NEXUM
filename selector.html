@@ -96,6 +96,36 @@
       }
 
       if (empresas.length === 0) {
+        // Super-admin sin empresas: acceso directo para crear la primera
+        if (perfilUsuario.es_super_admin) {
+          const empresaGlobal = {
+            id: null,
+            nombre: 'NEXUM — Administración Global',
+            nombre_corto: 'GLOBAL',
+            ruc: '00000000000',
+            color_primario: '#2D3748',
+            activa: true,
+            rol: 'SUPER_ADMIN'
+          };
+          contenedor.innerHTML = `
+            <div style="text-align:center; padding:12px 0 4px">
+              <div style="font-size:40px; margin-bottom:12px">🏗️</div>
+              <p style="color:var(--color-texto); font-weight:600; margin-bottom:6px">
+                Aún no tienes empresas creadas
+              </p>
+              <p style="color:var(--color-texto-suave); font-size:13px; margin-bottom:20px">
+                Como super-admin puedes crear las empresas operadoras ahora
+              </p>
+              <button class="btn btn-primario" onclick="irACrearEmpresas()" style="width:100%">
+                ⚙️ Ir a crear mis empresas
+              </button>
+              <div style="margin:12px 0; color:var(--color-texto-suave); font-size:12px">— o —</div>
+              <button class="btn btn-secundario" onclick='seleccionarEmpresa(${JSON.stringify(empresaGlobal)})' style="width:100%">
+                Entrar en modo administración global
+              </button>
+            </div>`;
+          return;
+        }
         contenedor.innerHTML = `
           <div class="estado-vacio">
             <div class="icono">🏢</div>
@@ -145,6 +175,21 @@
     function iniciales(nombre) {
       return nombre.split(' ').slice(0, 2)
         .map(p => p[0]).join('').toUpperCase();
+    }
+
+    function irACrearEmpresas() {
+      // Entra en modo global para crear la primera empresa
+      const empresaGlobal = {
+        id: null,
+        nombre: 'NEXUM — Administración Global',
+        nombre_corto: 'GLOBAL',
+        ruc: '00000000000',
+        color_primario: '#2D3748',
+        activa: true,
+        rol: 'SUPER_ADMIN'
+      };
+      guardarEmpresaActiva(empresaGlobal);
+      window.location.href = '/modules/admin/index.html';
     }
   </script>
 </body>
