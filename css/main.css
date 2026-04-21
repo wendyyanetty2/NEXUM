@@ -249,7 +249,14 @@ h4 { font-size: 1rem;     font-weight: 600; }
   border-top-color: var(--color-secundario);
   border-radius: 50%; animation: girar 0.7s linear infinite;
 }
-@keyframes girar { to { transform: rotate(360deg); } }
+@keyframes girar  { to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Fade-in wrapper ─────────────────────────────────────────── */
+.fadeIn { animation: fadeIn 0.2s ease; }
+
+/* ── Tabla con scroll horizontal en móvil ─────────────────────── */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 /* ── Estado vacío ────────────────────────────────────────────── */
 .estado-vacio {
@@ -315,6 +322,8 @@ h4 { font-size: 1rem;     font-weight: 600; }
 .badge-warning { background: #FEFCBF; color: #744210; }
 .badge-info    { background: #E9D8FD; color: #44337A; }
 .badge-critico { background: #FED7D7; color: #742A2A; }
+.badge-cargo   { background: #EBF8FF; color: #2B6CB0; }
+.badge-abono   { background: #F0FFF4; color: #276749; }
 
 /* ── Btn-icono variantes ─────────────────────────────────────── */
 .btn-icono.peligro { color: var(--color-critico); }

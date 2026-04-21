@@ -396,3 +396,6 @@
   color: var(--color-texto);
   border-color: var(--color-borde);
 }
+[data-tema="oscuro"] .badge-cargo  { background: #1a2a3a; color: #63B3ED; }
+[data-tema="oscuro"] .badge-abono  { background: #1a2e22; color: #68D391; }
+[data-tema="oscuro"] .modal        { background: var(--color-bg-card); color: var(--color-texto); }
