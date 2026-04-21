@@ -3,7 +3,7 @@
  * Cachea recursos estáticos para uso offline básico
  */
 
-const CACHE_VERSION = 'nexum-v3.1.0';
+const CACHE_VERSION = 'nexum-v3.2.0';
 const RECURSOS_ESTATICOS = [
   '/',
   '/login.html',
@@ -45,6 +45,11 @@ const RECURSOS_ESTATICOS = [
   '/modules/tributaria/modules/tri-resumen.js',
   '/modules/ocr/index.html',
   '/modules/reportes/index.html',
+  '/modules/contabilidad/index.html',
+  '/modules/contabilidad/modules/con-plan-cuentas.js',
+  '/modules/contabilidad/modules/con-asientos.js',
+  '/modules/contabilidad/modules/con-mayor.js',
+  '/modules/contabilidad/modules/con-estados.js',
 ];
 
 // Instalación: pre-cachear recursos estáticos
