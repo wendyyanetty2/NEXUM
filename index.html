@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUM — El vínculo que sustenta</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; display:flex; align-items:center;
+           justify-content:center; min-height:100vh; margin:0;
+           background:#2D3748; color:#fff; }
+    .spinner { width:36px; height:36px; border:3px solid rgba(255,255,255,0.2);
+               border-top-color:#fff; border-radius:50%;
+               animation:girar 0.7s linear infinite; }
+    @keyframes girar { to { transform:rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <script>
+    // Redirige según estado de sesión
+    (async () => {
+      const { data: { session } } = await _supabase.auth.getSession();
+      if (session) {
+        // Verificar si tiene empresa activa en sessionStorage
+        const empresa = sessionStorage.getItem('nexum_empresa_activa');
+        window.location.href = empresa ? '/dashboard.html' : '/selector.html';
+      } else {
+        window.location.href = '/login.html';
+      }
+    })();
+  </script>
+</body>
+</html>

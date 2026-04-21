@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seleccionar empresa — NEXUM</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/auth.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/auth.js"></script>
+</head>
+<body class="auth-page">
+
+  <div class="auth-card selector-page">
+
+    <div class="auth-header">
+      <div class="logo-texto">NEXUM</div>
+      <div class="logo-claim">El vínculo que sustenta</div>
+    </div>
+
+    <div class="auth-body">
+      <h2 id="saludo">Hola,</h2>
+      <p class="subtitulo">Selecciona la empresa con la que deseas trabajar</p>
+
+      <div id="contenedor-empresas">
+        <div class="cargando">
+          <div class="spinner"></div>
+          <span>Cargando empresas…</span>
+        </div>
+      </div>
+
+      <div style="text-align:center; margin-top:24px;">
+        <button onclick="cerrarSesion()" class="btn btn-secundario btn-sm">
+          🚪 Cerrar sesión
+        </button>
+      </div>
+    </div>
+
+    <div class="auth-footer">
+      NEXUM v3.0 &nbsp;·&nbsp; © 2026 JVÑ / PEVAL
+    </div>
+  </div>
+
+  <script>
+    let perfilUsuario = null;
+
+    (async () => {
+      // Verificar sesión activa
+      const sesion = await obtenerSesion();
+      if (!sesion) { window.location.href = '/login.html'; return; }
+
+      // Obtener perfil
+      perfilUsuario = await obtenerPerfil();
+      if (!perfilUsuario) { await cerrarSesion(); return; }
+
+      document.getElementById('saludo').textContent =
+        `Hola, ${perfilUsuario.nombre.split(' ')[0]} 👋`;
+
+      await cargarEmpresas();
+    })();
+
+    async function cargarEmpresas() {
+      const contenedor = document.getElementById('contenedor-empresas');
+
+      let empresas = [];
+
+      if (perfilUsuario.es_super_admin) {
+        // Super-admin ve todas las empresas activas
+        const { data, error } = await _supabase
+          .from('empresas_operadoras')
+          .select('*')
+          .eq('activa', true)
+          .order('nombre');
+        if (error) { mostrarError(contenedor); return; }
+        empresas = (data || []).map(e => ({ ...e, rol: 'SUPER_ADMIN' }));
+      } else {
+        // Usuario normal: solo sus empresas asignadas
+        const { data, error } = await _supabase
+          .from('usuarios_empresas')
+          .select(`
+            rol,
+            empresa_operadora_id,
+            empresas_operadoras (*)
+          `)
+          .eq('usuario_id', perfilUsuario.id)
+          .eq('activo', true);
+
+        if (error) { mostrarError(contenedor); return; }
+        empresas = (data || [])
+          .filter(ue => ue.empresas_operadoras?.activa)
+          .map(ue => ({ ...ue.empresas_operadoras, rol: ue.rol }));
+      }
+
+      if (empresas.length === 0) {
+        contenedor.innerHTML = `
+          <div class="estado-vacio">
+            <div class="icono">🏢</div>
+            <p>No tienes empresas asignadas. Contacta al administrador.</p>
+          </div>`;
+        return;
+      }
+
+      // Si solo hay una empresa, seleccionar automáticamente
+      if (empresas.length === 1) {
+        seleccionarEmpresa(empresas[0]);
+        return;
+      }
+
+      // Renderizar grid de empresas
+      const html = `
+        <div class="empresa-grid">
+          ${empresas.map(e => `
+            <div class="empresa-card" onclick='seleccionarEmpresa(${JSON.stringify(e).replace(/'/g, "&#39;")})'>
+              <div class="empresa-iniciales"
+                   style="background:${e.color_primario || '#2C5282'}">
+                ${iniciales(e.nombre)}
+              </div>
+              <div class="empresa-nombre">${escapar(e.nombre)}</div>
+              <div class="empresa-ruc">RUC: ${escapar(e.ruc)}</div>
+              <div class="empresa-rol">
+                <span class="badge badge-primario">${escapar(e.rol)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>`;
+      contenedor.innerHTML = html;
+    }
+
+    function seleccionarEmpresa(empresa) {
+      guardarEmpresaActiva(empresa);
+      window.location.href = '/dashboard.html';
+    }
+
+    function mostrarError(contenedor) {
+      contenedor.innerHTML = `
+        <div class="alerta-error visible">
+          No se pudieron cargar las empresas. Intenta nuevamente.
+        </div>`;
+    }
+
+    function iniciales(nombre) {
+      return nombre.split(' ').slice(0, 2)
+        .map(p => p[0]).join('').toUpperCase();
+    }
+  </script>
+</body>
+</html>

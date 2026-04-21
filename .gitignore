@@ -1,0 +1,25 @@
+# Variables de entorno (nunca subir al repo)
+.env
+.env.local
+.env.*.local
+
+# Dependencias
+node_modules/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Cloudflare
+.wrangler/

@@ -1,0 +1,216 @@
+/* ═══════════════════════════════════════════════════════════════
+   NEXUM v3.0 — Estilos de autenticación (login / selector)
+   ═══════════════════════════════════════════════════════════════ */
+
+body.auth-page {
+  background: linear-gradient(135deg, #1a202c 0%, #2D3748 50%, #2C5282 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+/* ── Tarjeta central de auth ─────────────────────────────────── */
+.auth-card {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  width: 100%;
+  max-width: 420px;
+  overflow: hidden;
+  animation: fadeIn 0.35s ease;
+}
+
+.auth-header {
+  background: var(--color-primario);
+  padding: 32px 36px 24px;
+  text-align: center;
+}
+.auth-header .logo-texto {
+  font-size: 32px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 3px;
+  margin-bottom: 4px;
+}
+.auth-header .logo-claim {
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+  letter-spacing: 0.5px;
+}
+
+.auth-body {
+  padding: 32px 36px;
+}
+.auth-body h2 {
+  font-size: 1.25rem;
+  color: var(--color-primario);
+  margin-bottom: 6px;
+}
+.auth-body .subtitulo {
+  font-size: 13px;
+  color: var(--color-texto-suave);
+  margin-bottom: 24px;
+}
+
+/* ── Input con ícono ─────────────────────────────────────────── */
+.input-grupo {
+  position: relative;
+  margin-bottom: 16px;
+}
+.input-grupo label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-texto);
+  margin-bottom: 6px;
+}
+.input-grupo input {
+  width: 100%;
+  padding: 11px 42px 11px 14px;
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio);
+  font-family: var(--font);
+  font-size: 14px;
+  outline: none;
+  transition: border-color var(--transicion);
+}
+.input-grupo input:focus {
+  border-color: var(--color-secundario);
+  box-shadow: 0 0 0 3px rgba(44,82,130,0.12);
+}
+.input-grupo .toggle-pass {
+  position: absolute;
+  right: 12px;
+  top: 38px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--color-texto-suave);
+  padding: 2px;
+}
+.input-grupo .toggle-pass:hover { color: var(--color-primario); }
+
+/* ── Alerta de error en form ─────────────────────────────────── */
+.alerta-error {
+  background: #FFF5F5;
+  border: 1px solid #FED7D7;
+  border-radius: var(--radio);
+  padding: 10px 14px;
+  color: var(--color-critico);
+  font-size: 13px;
+  margin-bottom: 16px;
+  display: none;
+}
+.alerta-error.visible { display: block; }
+
+.alerta-exito {
+  background: #F0FFF4;
+  border: 1px solid #C6F6D5;
+  border-radius: var(--radio);
+  padding: 10px 14px;
+  color: var(--color-exito);
+  font-size: 13px;
+  margin-bottom: 16px;
+  display: none;
+}
+.alerta-exito.visible { display: block; }
+
+/* ── Enlace olvidé contraseña ────────────────────────────────── */
+.link-olvide {
+  display: block;
+  text-align: right;
+  font-size: 12px;
+  color: var(--color-secundario);
+  margin-bottom: 20px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.link-olvide:hover { text-decoration: underline; }
+
+/* ── Botón submit ────────────────────────────────────────────── */
+.btn-submit {
+  width: 100%;
+  padding: 12px;
+  background: var(--color-secundario);
+  color: #fff;
+  border: none;
+  border-radius: var(--radio);
+  font-family: var(--font);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transicion);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-submit:hover:not(:disabled) { background: #2a4a7f; }
+.btn-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ── Panel recuperar contraseña (oculto por defecto) ─────────── */
+#panel-recuperar { display: none; }
+#panel-recuperar.visible { display: block; }
+#panel-login { display: block; }
+#panel-login.oculto { display: none; }
+
+/* ── Footer auth ─────────────────────────────────────────────── */
+.auth-footer {
+  text-align: center;
+  padding: 16px 36px 24px;
+  font-size: 12px;
+  color: var(--color-texto-suave);
+}
+
+/* ── Selector de empresa ─────────────────────────────────────── */
+.selector-page {
+  max-width: 640px;
+}
+.selector-page .auth-body h2 {
+  margin-bottom: 4px;
+}
+.empresa-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.empresa-card {
+  border: 2px solid var(--color-borde);
+  border-radius: var(--radio-lg);
+  padding: 18px;
+  cursor: pointer;
+  transition: all var(--transicion);
+  text-align: center;
+  background: #fff;
+}
+.empresa-card:hover {
+  border-color: var(--color-secundario);
+  box-shadow: var(--sombra-md);
+  transform: translateY(-2px);
+}
+.empresa-card .empresa-iniciales {
+  width: 52px; height: 52px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 700; color: #fff;
+  margin: 0 auto 10px;
+}
+.empresa-card .empresa-nombre {
+  font-size: 14px; font-weight: 600; color: var(--color-primario);
+}
+.empresa-card .empresa-ruc {
+  font-size: 12px; color: var(--color-texto-suave); margin-top: 3px;
+}
+.empresa-card .empresa-rol {
+  margin-top: 8px;
+}
+
+@media (max-width: 480px) {
+  .auth-body { padding: 24px 24px; }
+  .auth-header { padding: 24px 24px 20px; }
+  .empresa-grid { grid-template-columns: 1fr; }
+}
