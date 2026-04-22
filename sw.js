@@ -3,7 +3,7 @@
  * Cachea recursos estáticos para uso offline básico
  */
 
-const CACHE_VERSION = 'nexum-v3.2.0';
+const CACHE_VERSION = 'nexum-v3.3.0';
 const RECURSOS_ESTATICOS = [
   '/',
   '/login.html',
@@ -36,6 +36,10 @@ const RECURSOS_ESTATICOS = [
   '/modules/tesoreria/modules/tes-cuentas.js',
   '/modules/tesoreria/modules/tes-movimientos.js',
   '/modules/tesoreria/modules/tes-importar.js',
+  '/modules/tesoreria/modules/tes-importar-mbd.js',
+  '/modules/conciliacion/index.html',
+  '/modules/conciliacion/modules/con-conciliar.js',
+  '/modules/conciliacion/modules/con-historial.js',
   '/modules/planilla/index.html',
   '/modules/planilla/modules/pla-periodos.js',
   '/modules/planilla/modules/pla-detalle.js',

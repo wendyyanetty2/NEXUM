@@ -78,6 +78,10 @@
       <a class="nav-item" id="nav-contabilidad" onclick="navegarA('contabilidad')">
         <span class="icono">📒</span> Contabilidad
       </a>
+
+      <a class="nav-item" id="nav-conciliacion" onclick="navegarA('conciliacion')">
+        <span class="icono">🔗</span> Conciliación
+      </a>
     </nav>
 
     <!-- Pie del sidebar -->
@@ -210,6 +214,7 @@ function navegarA(modulo) {
     ocr:          'OCR',
     reportes:     'Reportes',
     contabilidad: 'Contabilidad',
+    conciliacion: 'Conciliación',
   };
   document.getElementById('breadcrumb').innerHTML =
     `NEXUM &rsaquo; <span>${nombres[modulo] || modulo}</span>`;
@@ -229,6 +234,7 @@ function navegarA(modulo) {
     ocr:         '/modules/ocr/index.html',
     reportes:      '/modules/reportes/index.html',
     contabilidad:  '/modules/contabilidad/index.html',
+    conciliacion:  '/modules/conciliacion/index.html',
   };
 
   if (modulo === 'dashboard') {
@@ -299,6 +305,7 @@ function renderDashboard(area) {
           ${renderTarjetaModulo('🔍', 'OCR', 'Lectura de comprobantes PDF e imágenes', 'ocr', true)}
           ${renderTarjetaModulo('📊', 'Reportes', 'Exportación y análisis multi-empresa', 'reportes', true)}
           ${renderTarjetaModulo('📒', 'Contabilidad', 'Asientos, mayor, estados financieros', 'contabilidad', true)}
+          ${renderTarjetaModulo('🔗', 'Conciliación', 'Cruza movimientos bancarios con comprobantes y RH', 'conciliacion', true)}
         </div>
       </div>
 

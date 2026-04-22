@@ -7,6 +7,7 @@ const NEXUM_MODULOS = [
   { id: 'admin',        icono: '⚙️', nombre: 'Administración', href: '/modules/admin/index.html' },
   { id: 'catalogos',    icono: '🗂️', nombre: 'Catálogos',      href: '/modules/catalogos/index.html' },
   { id: 'tesoreria',    icono: '🏦', nombre: 'Tesorería',      href: '/modules/tesoreria/index.html' },
+  { id: 'conciliacion', icono: '🔗', nombre: 'Conciliación',   href: '/modules/conciliacion/index.html' },
   { id: 'planilla',     icono: '👥', nombre: 'Planilla',       href: '/modules/planilla/index.html' },
   { id: 'tributaria',   icono: '📋', nombre: 'Tributaria',     href: '/modules/tributaria/index.html' },
   { id: 'ocr',          icono: '🔍', nombre: 'OCR',            href: '/modules/ocr/index.html' },

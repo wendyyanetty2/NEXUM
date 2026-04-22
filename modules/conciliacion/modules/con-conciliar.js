@@ -1,0 +1,634 @@
+// ═══════════════════════════════════════════════════════════════
+// Conciliación — Tab Conciliar
+// ═══════════════════════════════════════════════════════════════
+
+let _con_resultados    = { exactos: [], posibles: [], sin_match: [] };
+let _con_tab_activo    = 'exactos';
+let _con_periodo_actual = null;
+let _con_cuenta_actual  = null;
+
+async function renderTabConciliar(area) {
+  area.innerHTML = `
+    <div class="fadeIn">
+
+      <!-- Paso 1: Seleccionar periodo y cuenta -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:16px">Paso 1: Seleccionar periodo</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-items:end">
+          <div class="campo" style="margin-bottom:0">
+            <label class="label-filtro">Mes</label>
+            <input type="month" id="con-periodo" class="input-buscar w-full">
+          </div>
+          <div class="campo" style="margin-bottom:0">
+            <label class="label-filtro">Cuenta bancaria (opcional)</label>
+            <select id="con-cuenta" class="input-buscar w-full">
+              <option value="">Todas las cuentas</option>
+            </select>
+          </div>
+          <div>
+            <button class="btn btn-primario w-full" onclick="_conIniciar()">
+              🔗 Iniciar conciliación
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resumen de resultados -->
+      <div id="con-resumen" style="display:none;margin-bottom:16px">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+          <div class="card" style="text-align:center;border-left:4px solid #22c55e;padding:16px">
+            <div style="font-size:28px;font-weight:700;color:#22c55e" id="con-cnt-exactos">0</div>
+            <div class="text-muted text-sm">Matches exactos</div>
+          </div>
+          <div class="card" style="text-align:center;border-left:4px solid #f59e0b;padding:16px">
+            <div style="font-size:28px;font-weight:700;color:#f59e0b" id="con-cnt-posibles">0</div>
+            <div class="text-muted text-sm">Posibles matches</div>
+          </div>
+          <div class="card" style="text-align:center;border-left:4px solid #ef4444;padding:16px">
+            <div style="font-size:28px;font-weight:700;color:#ef4444" id="con-cnt-sinmatch">0</div>
+            <div class="text-muted text-sm">Sin match</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs internos y tabla -->
+      <div id="con-tabs-wrap" style="display:none">
+        <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-primario" id="con-itab-exactos"
+                  onclick="_conActivarSubtab('exactos')">🟢 Exactos</button>
+          <button class="btn btn-sm btn-secundario" id="con-itab-posibles"
+                  onclick="_conActivarSubtab('posibles')">🟡 Posibles</button>
+          <button class="btn btn-sm btn-secundario" id="con-itab-sinmatch"
+                  onclick="_conActivarSubtab('sin_match')">🔴 Sin match</button>
+          <div style="flex:1"></div>
+          <button class="btn btn-sm btn-secundario" onclick="_conExportarAprobados()">
+            📥 Exportar aprobados
+          </button>
+        </div>
+        <div id="con-tabla-wrap"></div>
+      </div>
+
+      <!-- Estado vacío -->
+      <div id="con-vacio" class="card" style="text-align:center;padding:48px;color:var(--color-texto-suave)">
+        <div style="font-size:48px;margin-bottom:12px">🔗</div>
+        <p style="font-weight:500">Selecciona un periodo e inicia la conciliación</p>
+        <p class="text-muted text-sm">El sistema cruzará automáticamente los movimientos con compras, ventas y RH</p>
+      </div>
+
+    </div>`;
+
+  await _conCargarCuentas();
+
+  const hoy  = new Date();
+  const yyyy = hoy.getFullYear();
+  const mm   = String(hoy.getMonth() + 1).padStart(2, '0');
+  const el   = document.getElementById('con-periodo');
+  if (el) el.value = `${yyyy}-${mm}`;
+}
+
+async function _conCargarCuentas() {
+  const { data } = await _supabase
+    .from('cuentas_bancarias')
+    .select('id, nombre_alias, moneda')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('activo', true)
+    .order('nombre_alias');
+  const sel = document.getElementById('con-cuenta');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Todas las cuentas</option>' +
+    (data || []).map(c =>
+      `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`
+    ).join('');
+}
+
+async function _conIniciar() {
+  const periodoEl = document.getElementById('con-periodo');
+  const cuentaEl  = document.getElementById('con-cuenta');
+  const periodo   = periodoEl?.value;
+  const cuentaId  = cuentaEl?.value || null;
+
+  if (!periodo) { mostrarToast('Selecciona un periodo', 'atencion'); return; }
+
+  _con_periodo_actual = periodo;
+  _con_cuenta_actual  = cuentaId;
+
+  document.getElementById('con-vacio').style.display    = 'none';
+  document.getElementById('con-resumen').style.display  = 'none';
+  document.getElementById('con-tabs-wrap').style.display = 'none';
+
+  const tablaWrap = document.getElementById('con-tabla-wrap');
+  if (tablaWrap) tablaWrap.innerHTML = `
+    <div class="cargando" style="padding:40px">
+      <div class="spinner"></div><span>Ejecutando conciliación…</span>
+    </div>`;
+
+  document.getElementById('con-resumen').style.display   = 'block';
+  document.getElementById('con-tabs-wrap').style.display = 'block';
+
+  try {
+    _con_resultados = await _ejecutarConciliacion(periodo, cuentaId);
+
+    document.getElementById('con-cnt-exactos').textContent  = _con_resultados.exactos.length;
+    document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
+    document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
+
+    _conActivarSubtab(_con_tab_activo);
+
+  } catch (err) {
+    if (tablaWrap) tablaWrap.innerHTML = `<div class="alerta-error">${escapar(err.message)}</div>`;
+  }
+}
+
+async function _ejecutarConciliacion(periodo, cuentaId) {
+  const [yyyy, mm] = periodo.split('-');
+  const inicio = `${yyyy}-${mm}-01`;
+  const fin    = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
+
+  let qMov = _supabase
+    .from('movimientos')
+    .select('*')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .gte('fecha', inicio)
+    .lte('fecha', fin)
+    .eq('estado_doc', 'PENDIENTE');
+
+  if (cuentaId) qMov = qMov.eq('cuenta_bancaria_id', cuentaId);
+
+  const [resMovs, resCompras, resVentas, resRh] = await Promise.all([
+    qMov,
+    _supabase
+      .from('registro_compras')
+      .select('*')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('periodo', periodo)
+      .eq('estado', 'EMITIDO'),
+    _supabase
+      .from('registro_ventas')
+      .select('*')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('periodo', periodo)
+      .eq('estado', 'EMITIDO'),
+    _supabase
+      .from('rh_registros')
+      .select('*, prestadores_servicios(nombre, dni)')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('periodo', periodo)
+      .eq('estado', 'EMITIDO'),
+  ]);
+
+  const movBanco = resMovs.data   || [];
+  const compras  = (resCompras.data || []).map(d => ({ ...d, _tipo: 'COMPRA', total: d.total || d.importe_total || 0, ruc: d.ruc_proveedor || d.ruc || null, fecha_doc: d.fecha_emision || d.fecha || null }));
+  const ventas   = (resVentas.data  || []).map(d => ({ ...d, _tipo: 'VENTA',  total: d.total || d.importe_total || 0, ruc: d.ruc_cliente   || d.ruc || null, fecha_doc: d.fecha_emision || d.fecha || null }));
+  const rhRegs   = (resRh.data      || []).map(d => ({ ...d, _tipo: 'RH',     total: d.monto_neto || 0, ruc: d.prestadores_servicios?.dni || null, fecha_doc: d.fecha_emision || null }));
+
+  const documentos = [...compras, ...ventas, ...rhRegs];
+
+  const exactos   = [];
+  const posibles  = [];
+  const sin_match = [];
+  const usadosDoc = new Set();
+
+  for (const mov of movBanco) {
+    let mejorScore = -1;
+    let mejorDoc   = null;
+
+    for (const doc of documentos) {
+      if (usadosDoc.has(doc.id)) continue;
+      const s = _calcularScore(mov, doc);
+      if (s > mejorScore) { mejorScore = s; mejorDoc = doc; }
+    }
+
+    if (mejorDoc && mejorScore >= 80) {
+      usadosDoc.add(mejorDoc.id);
+      exactos.push({ mov, doc: mejorDoc, score: mejorScore });
+    } else if (mejorDoc && mejorScore >= 40) {
+      posibles.push({ mov, doc: mejorDoc, score: mejorScore });
+    } else {
+      sin_match.push({ mov });
+    }
+  }
+
+  return { exactos, posibles, sin_match };
+}
+
+function _calcularScore(movimiento, documento) {
+  let score = 0;
+
+  const montoMov = Math.abs(parseFloat(movimiento.importe) || 0);
+  const montoDoc = Math.abs(parseFloat(documento.total)    || 0);
+  const diff     = Math.abs(montoMov - montoDoc);
+
+  if (diff === 0) score += 50;
+  else if (diff <= 5) score += 40;
+  else if (montoDoc > 0 && diff / montoDoc < 0.02) score += 30;
+
+  const fechaMov = movimiento.fecha ? new Date(movimiento.fecha) : null;
+  const fechaDoc = documento.fecha_doc ? new Date(documento.fecha_doc) : null;
+  if (fechaMov && fechaDoc) {
+    const dias = Math.abs((fechaMov - fechaDoc) / (1000 * 60 * 60 * 24));
+    if (dias === 0) score += 30;
+    else if (dias <= 3) score += 20;
+    else if (dias <= 7) score += 10;
+  }
+
+  const rucMov = (movimiento.ruc_dni_raw || '').toString().trim();
+  const rucDoc = (documento.ruc         || '').toString().trim();
+  if (rucMov && rucDoc && rucMov === rucDoc) score += 20;
+
+  return score;
+}
+
+function _conActivarSubtab(tab) {
+  _con_tab_activo = tab;
+
+  ['exactos','posibles','sinmatch'].forEach(t => {
+    const btn = document.getElementById('con-itab-' + t);
+    if (btn) {
+      btn.className = 'btn btn-sm ' + (
+        (t === 'sin_match' ? 'sinmatch' : t) === tab || t === tab
+          ? 'btn-primario'
+          : 'btn-secundario'
+      );
+    }
+  });
+
+  const mapBtn = { exactos: 'exactos', posibles: 'posibles', sin_match: 'sinmatch' };
+  Object.keys(mapBtn).forEach(k => {
+    const btn = document.getElementById('con-itab-' + mapBtn[k]);
+    if (btn) btn.className = 'btn btn-sm ' + (k === tab ? 'btn-primario' : 'btn-secundario');
+  });
+
+  const wrap = document.getElementById('con-tabla-wrap');
+  if (!wrap) return;
+
+  if (tab === 'exactos')   _renderTablaExactos(wrap);
+  if (tab === 'posibles')  _renderTablaPosibles(wrap);
+  if (tab === 'sin_match') _renderTablaSinMatch(wrap);
+}
+
+// ── Tabla Exactos ─────────────────────────────────────────────────
+function _renderTablaExactos(wrap) {
+  const lista = _con_resultados.exactos;
+  if (!lista.length) {
+    wrap.innerHTML = '<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)"><p>Sin matches exactos para este periodo</p></div>';
+    return;
+  }
+
+  wrap.innerHTML = `
+    <div class="table-wrap">
+      <table class="tabla" style="font-size:12px">
+        <thead>
+          <tr>
+            <th>Movimiento</th>
+            <th>Fecha Mov</th>
+            <th>Monto</th>
+            <th>Documento match</th>
+            <th>Score</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="con-tbody-exactos">
+          ${lista.map((item, idx) => `
+            <tr id="con-row-ex-${idx}">
+              <td class="text-sm">
+                <div style="font-weight:500">${escapar((item.mov.descripcion || '').slice(0, 40))}</div>
+                <div class="text-muted" style="font-size:11px">${escapar(item.mov.numero_operacion || '—')}</div>
+              </td>
+              <td style="white-space:nowrap">${formatearFecha(item.mov.fecha)}</td>
+              <td style="white-space:nowrap">
+                <span class="${item.mov.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
+                  ${item.mov.naturaleza === 'CARGO' ? '-' : '+'}${formatearMoneda(Math.abs(item.mov.importe), item.mov.moneda)}
+                </span>
+              </td>
+              <td class="text-sm">
+                <div>
+                  <span class="badge badge-info" style="font-size:10px">${item.doc._tipo}</span>
+                  ${escapar((item.doc.numero_documento || item.doc.numero_rh || item.doc.serie_numero || item.doc.id?.slice(0,8) || '—'))}
+                </div>
+                <div class="text-muted" style="font-size:11px">
+                  ${escapar((item.doc.nombre_proveedor || item.doc.razon_social || item.doc.prestadores_servicios?.nombre || '—').slice(0,35))}
+                </div>
+                <div style="font-weight:500;font-size:11px">${formatearMoneda(item.doc.total, item.mov.moneda)}</div>
+              </td>
+              <td>
+                <span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">
+                  ${item.score}
+                </span>
+              </td>
+              <td>
+                <div style="display:flex;gap:4px;white-space:nowrap">
+                  <button class="btn btn-sm btn-primario"
+                          style="font-size:11px;padding:4px 8px"
+                          onclick="_aprobarMatch('${item.mov.id}','${item.doc._tipo}','${item.doc.id}',${item.score},'EXACTO',${idx},'ex')">
+                    ✓ Aprobar
+                  </button>
+                  <button class="btn btn-sm btn-secundario"
+                          style="font-size:11px;padding:4px 8px"
+                          onclick="_rechazarMatch(${idx},'ex')">
+                    ✗ Rechazar
+                  </button>
+                </div>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ── Tabla Posibles ────────────────────────────────────────────────
+function _renderTablaPosibles(wrap) {
+  const lista = _con_resultados.posibles;
+  if (!lista.length) {
+    wrap.innerHTML = '<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)"><p>Sin matches posibles para este periodo</p></div>';
+    return;
+  }
+
+  wrap.innerHTML = `
+    <div class="table-wrap">
+      <table class="tabla" style="font-size:12px">
+        <thead>
+          <tr>
+            <th>Movimiento</th>
+            <th>Fecha Mov</th>
+            <th>Monto</th>
+            <th>Posible match</th>
+            <th>Score</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lista.map((item, idx) => `
+            <tr id="con-row-pos-${idx}">
+              <td class="text-sm">
+                <div style="font-weight:500">${escapar((item.mov.descripcion || '').slice(0, 40))}</div>
+                <div class="text-muted" style="font-size:11px">${escapar(item.mov.numero_operacion || '—')}</div>
+              </td>
+              <td style="white-space:nowrap">${formatearFecha(item.mov.fecha)}</td>
+              <td style="white-space:nowrap">
+                <span class="${item.mov.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
+                  ${item.mov.naturaleza === 'CARGO' ? '-' : '+'}${formatearMoneda(Math.abs(item.mov.importe), item.mov.moneda)}
+                </span>
+              </td>
+              <td class="text-sm">
+                <div>
+                  <span class="badge badge-warning" style="font-size:10px">${item.doc._tipo}</span>
+                  ${escapar((item.doc.numero_documento || item.doc.numero_rh || item.doc.serie_numero || item.doc.id?.slice(0,8) || '—'))}
+                </div>
+                <div class="text-muted" style="font-size:11px">
+                  ${escapar((item.doc.nombre_proveedor || item.doc.razon_social || item.doc.prestadores_servicios?.nombre || '—').slice(0,35))}
+                </div>
+                <div style="font-weight:500;font-size:11px">${formatearMoneda(item.doc.total, item.mov.moneda)}</div>
+              </td>
+              <td>
+                <span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">
+                  ${item.score}
+                </span>
+              </td>
+              <td>
+                <div style="display:flex;gap:4px;white-space:nowrap">
+                  <button class="btn btn-sm btn-primario"
+                          style="font-size:11px;padding:4px 8px"
+                          onclick="_aprobarMatch('${item.mov.id}','${item.doc._tipo}','${item.doc.id}',${item.score},'POSIBLE',${idx},'pos')">
+                    ✓ Aprobar
+                  </button>
+                  <button class="btn btn-sm btn-secundario"
+                          style="font-size:11px;padding:4px 8px"
+                          onclick="_rechazarMatch(${idx},'pos')">
+                    ✗ Sin match
+                  </button>
+                </div>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ── Tabla Sin Match ───────────────────────────────────────────────
+function _renderTablaSinMatch(wrap) {
+  const lista = _con_resultados.sin_match;
+  if (!lista.length) {
+    wrap.innerHTML = '<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)"><p>Todos los movimientos tienen match</p></div>';
+    return;
+  }
+
+  const opciones = [
+    { v: '', t: '— Clasificar como —' },
+    { v: 'FACTURA',       t: 'FA — Factura' },
+    { v: 'RH',            t: 'RH — Recibo honorarios' },
+    { v: 'GASTO_DIRECTO', t: 'Gasto directo' },
+    { v: 'ITF',           t: 'ITF — Impuesto transacciones' },
+    { v: 'COMISION',      t: 'Comisión bancaria' },
+    { v: 'OTRO',          t: 'Otro' },
+  ];
+
+  wrap.innerHTML = `
+    <div class="table-wrap">
+      <table class="tabla" style="font-size:12px">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Descripción</th>
+            <th>Monto</th>
+            <th>Proveedor / Referencia</th>
+            <th>Clasificar como</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lista.map((item, idx) => `
+            <tr id="con-row-sm-${idx}">
+              <td style="white-space:nowrap">${formatearFecha(item.mov.fecha)}</td>
+              <td class="text-sm">${escapar((item.mov.descripcion || '').slice(0, 50))}</td>
+              <td style="white-space:nowrap">
+                <span class="${item.mov.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
+                  ${item.mov.naturaleza === 'CARGO' ? '-' : '+'}${formatearMoneda(Math.abs(item.mov.importe), item.mov.moneda)}
+                </span>
+              </td>
+              <td class="text-sm text-muted">${escapar((item.mov.nombre_proveedor_raw || item.mov.observaciones || '—').slice(0,35))}</td>
+              <td>
+                <select id="con-clas-${idx}" class="input-buscar" style="font-size:12px;padding:4px 8px">
+                  ${opciones.map(o => `<option value="${o.v}">${o.t}</option>`).join('')}
+                </select>
+              </td>
+              <td>
+                <button class="btn btn-sm btn-primario"
+                        style="font-size:11px;padding:4px 10px"
+                        onclick="_guardarClasificacion('${item.mov.id}',${idx})">
+                  Guardar
+                </button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ── Aprobar match ─────────────────────────────────────────────────
+async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefijo) {
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const { error: errMov } = await _supabase
+    .from('movimientos')
+    .update({
+      estado_doc:        'EMITIDO',
+      conciliado:        true,
+      fecha_conciliacion: hoy,
+    })
+    .eq('id', movId);
+
+  if (errMov) { mostrarToast('Error al actualizar movimiento: ' + errMov.message, 'error'); return; }
+
+  const { error: errCon } = await _supabase
+    .from('conciliaciones')
+    .insert({
+      empresa_operadora_id: empresa_activa.id,
+      movimiento_id:        movId,
+      doc_tipo:             docTipo,
+      doc_id:               docId || null,
+      score,
+      tipo_match:           tipoMatch,
+      estado:               'APROBADO',
+      usuario_id:           perfil_usuario?.id || null,
+    });
+
+  if (errCon) { mostrarToast('Error al registrar conciliación: ' + errCon.message, 'error'); return; }
+
+  const fila = document.getElementById(`con-row-${prefijo}-${idx}`);
+  if (fila) {
+    fila.style.opacity    = '0.4';
+    fila.style.transition = 'opacity 0.3s';
+    fila.querySelectorAll('button').forEach(b => b.disabled = true);
+  }
+
+  mostrarToast('Match aprobado', 'exito');
+
+  if (prefijo === 'ex') {
+    _con_resultados.exactos  = _con_resultados.exactos.filter((_, i) => i !== idx);
+    document.getElementById('con-cnt-exactos').textContent = _con_resultados.exactos.length;
+  } else {
+    _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
+    document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
+  }
+}
+
+// ── Rechazar match ────────────────────────────────────────────────
+function _rechazarMatch(idx, prefijo) {
+  const fila = document.getElementById(`con-row-${prefijo}-${idx}`);
+  if (fila) {
+    fila.style.background = 'var(--color-danger-bg,#FFF5F5)';
+    fila.querySelectorAll('button').forEach(b => b.disabled = true);
+  }
+
+  if (prefijo === 'ex') {
+    const item = _con_resultados.exactos[idx];
+    if (item) {
+      _con_resultados.sin_match.push({ mov: item.mov });
+      _con_resultados.exactos = _con_resultados.exactos.filter((_, i) => i !== idx);
+      document.getElementById('con-cnt-exactos').textContent  = _con_resultados.exactos.length;
+      document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
+    }
+  } else {
+    const item = _con_resultados.posibles[idx];
+    if (item) {
+      _con_resultados.sin_match.push({ mov: item.mov });
+      _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
+      document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
+      document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
+    }
+  }
+}
+
+// ── Guardar clasificación sin match ──────────────────────────────
+async function _guardarClasificacion(movId, idx) {
+  const sel = document.getElementById(`con-clas-${idx}`);
+  const clas = sel?.value || '';
+  if (!clas) { mostrarToast('Selecciona una clasificación', 'atencion'); return; }
+
+  const { error } = await _supabase
+    .from('movimientos')
+    .update({
+      estado_doc:      'EMITIDO',
+      observaciones_2: clas,
+    })
+    .eq('id', movId);
+
+  if (error) { mostrarToast('Error al guardar: ' + error.message, 'error'); return; }
+
+  await _supabase.from('conciliaciones').insert({
+    empresa_operadora_id: empresa_activa.id,
+    movimiento_id:        movId,
+    doc_tipo:             'OTRO',
+    doc_id:               null,
+    score:                0,
+    tipo_match:           'MANUAL',
+    estado:               'APROBADO',
+    clasificacion_manual: clas,
+    usuario_id:           perfil_usuario?.id || null,
+  });
+
+  const fila = document.getElementById(`con-row-sm-${idx}`);
+  if (fila) {
+    fila.style.opacity = '0.4';
+    fila.querySelectorAll('button, select').forEach(b => b.disabled = true);
+  }
+
+  _con_resultados.sin_match = _con_resultados.sin_match.filter((_, i) => i !== idx);
+  document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
+  mostrarToast('Clasificación guardada', 'exito');
+}
+
+// ── Exportar aprobados ────────────────────────────────────────────
+async function _conExportarAprobados() {
+  if (!_con_periodo_actual) { mostrarToast('Primero ejecuta la conciliación', 'atencion'); return; }
+
+  const { data, error } = await _supabase
+    .from('movimientos')
+    .select('*')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('conciliado', true)
+    .gte('fecha', _con_periodo_actual + '-01')
+    .lte('fecha', _con_periodo_actual + '-31');
+
+  if (error) { mostrarToast('Error al obtener datos: ' + error.message, 'error'); return; }
+  if (!data?.length) { mostrarToast('Sin registros aprobados para exportar', 'atencion'); return; }
+
+  const filas = [
+    [
+      'N° Operación','Fecha Depósito','Descripción','Moneda','Monto',
+      'Proveedor/Empresa/Personal','RUC/DNI','Cotización','OC','Proyecto',
+      'Concepto','Empresa','Estado Doc','Nº Factura/DOC','Tipo DOC',
+      'Autorización','Observaciones','Detalles Compra/Servicio','Observaciones 2',
+      'Fecha Registro','Usuario',
+    ],
+    ...data.map(m => [
+      m.numero_operacion   || '',
+      m.fecha              || '',
+      m.descripcion        || '',
+      m.moneda             || 'PEN',
+      m.naturaleza === 'CARGO' ? -Math.abs(m.importe) : Math.abs(m.importe),
+      '',
+      m.ruc_dni_raw        || '',
+      m.cotizacion         || '',
+      m.oc                 || '',
+      '',
+      '',
+      empresa_activa.nombre || '',
+      m.estado_doc         || '',
+      m.numero_documento   || '',
+      m.tipo_documento_codigo || '',
+      '',
+      m.observaciones      || '',
+      m.detalles_servicio  || '',
+      m.observaciones_2    || '',
+      m.fecha_creacion?.slice(0,10) || '',
+      '',
+    ]),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(filas);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'REGISTRO');
+  XLSX.writeFile(wb, `MBD_Conciliado_${_con_periodo_actual}_${empresa_activa.ruc || ''}.xlsx`);
+  mostrarToast('Exportación completada', 'exito');
+}
