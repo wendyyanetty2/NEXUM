@@ -53,35 +53,80 @@ function importarRegistroRHSUNAT() {
   inp.click();
 }
 
-// ── Parser Registro de Compras ────────────────────────────────────
-// Formato: cód.oper | Fecha | Tipo comprobante | N°Serie | N°Comprobante |
-//          Tipo identidad | RUC/DNI proveedor | Razón social |
-//          Base Imp. | IGV | Adq.no gravadas | ISC | Otros trib. | Total | Tipo Cambio
+// ── Helpers columnas ──────────────────────────────────────────────
+function _sunatStr(val) {
+  if (val === null || val === undefined || val === '') return null;
+  return val.toString().trim().replace(/\s+/g, ' ') || null;
+}
+
+// RUC/DNI puede llegar como número grande — convertir sin notación científica
+function _sunatRUC(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return Math.round(val).toString().trim();
+  return val.toString().trim() || null;
+}
+
+function _sunatTDoc(val) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = parseInt(val);
+  return isNaN(n) ? val.toString().trim() : String(n).padStart(2, '0');
+}
+
+function _sunatNro(val) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = parseInt(val);
+  return isNaN(n) ? val.toString().trim() : String(n).padStart(8, '0');
+}
+
+function _sunatMonedaTri(val) {
+  if (!val) return 'PEN';
+  const s = val.toString().trim().toUpperCase();
+  if (['USD','2','US$','$'].includes(s)) return 'USD';
+  if (['EUR','3'].includes(s)) return 'EUR';
+  return 'PEN';
+}
+
+// ── Parser Registro de Compras SUNAT ─────────────────────────────
+// Formato descarga SUNAT (col 0-indexed, fila 0 = encabezados):
+//  [0]RUC empresa  [1]RazSoc  [2]Periodo  [3]CAR  [4]Fecha emision
+//  [5]Fecha vcto   [6]TipoCP  [7]Serie    [8]Año(concat-skip)
+//  [9]NroCP        [10]NroFin [11]TipoIdProv [12]NroDocProv
+//  [13]NombreProv  [14]BIGravDG [15]IGV_DG
+//  ...             [24]TotalCP [25]Moneda  [26]TipoCambio
+//  ...             [37]Detraccion
 function _procesarComprasSUNAT(buffer, nombre) {
   try {
-    const wb = XLSX.read(buffer, { type: 'array', cellDates: false });
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-    const data = rows.slice(1).filter(r => r[1] !== '' || r[13] !== '');
+    // Fila 0 = encabezados, datos desde fila 1
+    const data = rows.slice(1).filter(r => r[4] !== '' || r[24] !== '');
 
     const parsed = data.map((r, i) => {
-      const fecha = _sunatFecha(r[1]);
-      const total = _sunatNum(r[13]);
+      const fecha   = _sunatFecha(r[4]);
+      const total   = _sunatNum(r[24]);
+      const serie   = _sunatStr(r[7]);
+      const numero  = _sunatNro(r[9]);
+      const cdp     = serie && numero ? `${serie}-${numero}` : (serie || numero || null);
       return {
-        _fila:                i + 2,
+        _fila:                 i + 2,
         fecha,
-        periodo:              fecha ? fecha.slice(0,7) : null,
-        tipo_documento_codigo:(r[2] || '').toString().trim() || null,
-        serie:                (r[3] || '').toString().trim() || null,
-        numero:               (r[4] || '').toString().trim() || null,
-        ruc_proveedor:        (r[6] || '').toString().trim() || null,
-        nombre_proveedor:     (r[7] || '').toString().trim().replace(/\s+/g,' ') || null,
-        base_imponible:       _sunatNum(r[8]),
-        igv:                  _sunatNum(r[9]),
+        fecha_vencimiento:     _sunatFecha(r[5]),
+        periodo:               fecha ? fecha.slice(0, 7) : null,
+        tipo_documento_codigo: _sunatTDoc(r[6]),
+        serie,
+        numero,
+        cdp,
+        ruc_proveedor:         _sunatRUC(r[12]),
+        nombre_proveedor:      _sunatStr(r[13]),
+        base_imponible:        _sunatNum(r[14]),
+        igv:                   _sunatNum(r[15]),
         total,
-        tipo_cambio:          _sunatNum(r[14]) || 1,
-        _ok:                  !!fecha && total !== 0,
+        moneda:                _sunatMonedaTri(r[25]),
+        tipo_cambio:           _sunatNum(r[26]) || 1,
+        codigo_detraccion:     _sunatStr(r[37]),
+        _ok:                   !!fecha && total !== 0,
       };
     });
 
@@ -89,35 +134,44 @@ function _procesarComprasSUNAT(buffer, nombre) {
   } catch (err) { mostrarToast('Error al leer archivo: ' + err.message, 'error'); }
 }
 
-// ── Parser Registro de Ventas ─────────────────────────────────────
-// Formato: cód.operac | Fecha | Tipo | Serie | Número |
-//          RUC cliente | Razón social | Base imp. | Base transf.grat. | ISC |
-//          IGV y/o IPM | Otros trib. | Total | Tipo Cambio
+// ── Parser Registro de Ventas SUNAT ──────────────────────────────
+// Formato descarga SUNAT (col 0-indexed, fila 0 = encabezados):
+//  [0]RUC  [1]RazSoc  [2]Periodo  [3]CAR  [4]Fecha emision
+//  [5]FechaVcto  [6]TipoCP  [7]Serie  [8]NroCP  [9]NroFin
+//  [10]TipoIdCli [11]NroDocCli  [12]NombreCli
+//  [13]ValFacExp [14]BIGravada  [15]DsctoBi  [16]IGV
+//  ...           [25]TotalCP   [26]Moneda    [27]TipoCambio
 function _procesarVentasSUNAT(buffer, nombre) {
   try {
-    const wb = XLSX.read(buffer, { type: 'array', cellDates: false });
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-    const data = rows.slice(1).filter(r => r[1] !== '' || r[12] !== '');
+    const data = rows.slice(1).filter(r => r[4] !== '' || r[25] !== '');
 
     const parsed = data.map((r, i) => {
-      const fecha = _sunatFecha(r[1]);
-      const total = _sunatNum(r[12]);
+      const fecha   = _sunatFecha(r[4]);
+      const total   = _sunatNum(r[25]);
+      const serie   = _sunatStr(r[7]);
+      const numero  = _sunatNro(r[8]);
+      const cdp     = serie && numero ? `${serie}-${numero}` : (serie || numero || null);
       return {
-        _fila:                i + 2,
+        _fila:                 i + 2,
         fecha,
-        periodo:              fecha ? fecha.slice(0,7) : null,
-        tipo_documento_codigo:(r[2] || '').toString().trim() || null,
-        serie:                (r[3] || '').toString().trim() || null,
-        numero:               (r[4] || '').toString().trim() || null,
-        ruc_cliente:          (r[5] || '').toString().trim() || null,
-        nombre_cliente:       (r[6] || '').toString().trim().replace(/\s+/g,' ') || null,
-        base_imponible:       _sunatNum(r[7]),
-        igv:                  _sunatNum(r[10]),
+        fecha_vencimiento:     _sunatFecha(r[5]),
+        periodo:               fecha ? fecha.slice(0, 7) : null,
+        tipo_documento_codigo: _sunatTDoc(r[6]),
+        serie,
+        numero,
+        cdp,
+        ruc_cliente:           _sunatRUC(r[11]),
+        nombre_cliente:        _sunatStr(r[12]),
+        base_imponible:        _sunatNum(r[14]),
+        igv:                   _sunatNum(r[16]),
         total,
-        tipo_cambio:          _sunatNum(r[13]) || 1,
-        _ok:                  !!fecha && total !== 0,
+        moneda:                _sunatMonedaTri(r[26]),
+        tipo_cambio:           _sunatNum(r[27]) || 1,
+        _ok:                   !!fecha && total !== 0,
       };
     });
 
@@ -186,28 +240,29 @@ function _mostrarPreviewSUNAT(datos, tipo, nombre) {
 
   let th = '', td = '';
   if (tipo === 'compras') {
-    th = '<th>Fecha</th><th>Tipo</th><th>Serie-N°</th><th>RUC Proveedor</th><th>Proveedor</th><th>Base Imp.</th><th>IGV</th><th>Total</th><th></th>';
+    th = '<th>Fecha</th><th>T.</th><th>CDP (Serie-Número)</th><th>RUC Proveedor</th><th>Proveedor</th><th>Base Imp.</th><th>IGV</th><th>Total</th><th>Detrac.</th><th></th>';
     td = muestra.map(r => `
       <tr ${!r._ok ? 'style="background:var(--color-danger-bg,#fff5f5)"':''}>
-        <td>${r.fecha||'—'}</td>
+        <td style="white-space:nowrap">${r.fecha||'—'}</td>
         <td class="text-mono text-sm">${escapar(r.tipo_documento_codigo||'—')}</td>
-        <td class="text-mono text-sm">${escapar((r.serie||'')+(r.numero?'-'+r.numero:''))}</td>
+        <td class="text-mono text-sm" style="white-space:nowrap">${escapar(r.cdp||'—')}</td>
         <td class="text-mono text-sm">${escapar(r.ruc_proveedor||'—')}</td>
-        <td class="text-sm">${escapar((r.nombre_proveedor||'').slice(0,30))}</td>
+        <td class="text-sm">${escapar((r.nombre_proveedor||'').slice(0,28))}</td>
         <td class="text-right">${formatearMoneda(r.base_imponible)}</td>
         <td class="text-right">${formatearMoneda(r.igv)}</td>
         <td class="text-right" style="font-weight:600">${formatearMoneda(r.total)}</td>
+        <td class="text-mono text-sm">${escapar(r.codigo_detraccion||'—')}</td>
         <td>${r._ok?'<span class="badge badge-activo" style="font-size:10px">OK</span>':'<span class="badge badge-inactivo" style="font-size:10px">Err</span>'}</td>
       </tr>`).join('');
   } else if (tipo === 'ventas') {
-    th = '<th>Fecha</th><th>Tipo</th><th>Serie-N°</th><th>RUC Cliente</th><th>Cliente</th><th>Base Imp.</th><th>IGV</th><th>Total</th><th></th>';
+    th = '<th>Fecha</th><th>T.</th><th>CDP (Serie-Número)</th><th>RUC Cliente</th><th>Cliente</th><th>Base Imp.</th><th>IGV</th><th>Total</th><th></th>';
     td = muestra.map(r => `
       <tr ${!r._ok ? 'style="background:var(--color-danger-bg,#fff5f5)"':''}>
-        <td>${r.fecha||'—'}</td>
+        <td style="white-space:nowrap">${r.fecha||'—'}</td>
         <td class="text-mono text-sm">${escapar(r.tipo_documento_codigo||'—')}</td>
-        <td class="text-mono text-sm">${escapar((r.serie||'')+(r.numero?'-'+r.numero:''))}</td>
+        <td class="text-mono text-sm" style="white-space:nowrap">${escapar(r.cdp||'—')}</td>
         <td class="text-mono text-sm">${escapar(r.ruc_cliente||'—')}</td>
-        <td class="text-sm">${escapar((r.nombre_cliente||'').slice(0,30))}</td>
+        <td class="text-sm">${escapar((r.nombre_cliente||'').slice(0,28))}</td>
         <td class="text-right">${formatearMoneda(r.base_imponible)}</td>
         <td class="text-right">${formatearMoneda(r.igv)}</td>
         <td class="text-right" style="font-weight:600">${formatearMoneda(r.total)}</td>
@@ -284,6 +339,7 @@ async function _confirmarImportSUNAT() {
       empresa_operadora_id:  empresa_activa.id,
       periodo:               r.periodo,
       fecha_emision:         r.fecha,
+      fecha_vencimiento:     r.fecha_vencimiento,
       tipo_documento_codigo: r.tipo_documento_codigo,
       serie:                 r.serie,
       numero:                r.numero,
@@ -292,7 +348,9 @@ async function _confirmarImportSUNAT() {
       base_imponible:        r.base_imponible,
       igv:                   r.igv,
       total:                 r.total,
+      moneda:                r.moneda || 'PEN',
       tipo_cambio:           r.tipo_cambio || 1,
+      codigo_detraccion:     r.codigo_detraccion,
       estado:                'EMITIDO',
       usuario_id:            perfil_usuario?.id || null,
     }));
@@ -307,6 +365,7 @@ async function _confirmarImportSUNAT() {
       empresa_operadora_id:  empresa_activa.id,
       periodo:               r.periodo,
       fecha_emision:         r.fecha,
+      fecha_vencimiento:     r.fecha_vencimiento,
       tipo_documento_codigo: r.tipo_documento_codigo,
       serie:                 r.serie,
       numero:                r.numero,
@@ -315,6 +374,7 @@ async function _confirmarImportSUNAT() {
       base_imponible:        r.base_imponible,
       igv:                   r.igv,
       total:                 r.total,
+      moneda:                r.moneda || 'PEN',
       tipo_cambio:           r.tipo_cambio || 1,
       estado:                'EMITIDO',
       usuario_id:            perfil_usuario?.id || null,
