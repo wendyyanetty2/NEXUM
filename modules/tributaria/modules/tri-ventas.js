@@ -42,6 +42,7 @@ async function renderTabVentas(area) {
           <span id="v-contador" class="text-muted text-sm"></span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-secundario btn-sm" onclick="exportarVentasExcel()">⬇ Excel</button>
+            <button class="btn btn-secundario btn-sm" onclick="importarRegistroVentasSUNAT()">📊 Importar SUNAT</button>
             <button class="btn btn-primario btn-sm"   onclick="abrirModalVenta(null)">+ Nueva venta</button>
           </div>
         </div>

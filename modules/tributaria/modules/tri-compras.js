@@ -40,6 +40,7 @@ async function renderTabCompras(area) {
           <span id="c-contador" class="text-muted text-sm"></span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-secundario btn-sm" onclick="exportarComprasExcel()">⬇ Excel</button>
+            <button class="btn btn-secundario btn-sm" onclick="importarRegistroComprasSUNAT()">📊 Importar SUNAT</button>
             <button class="btn btn-primario btn-sm"   onclick="abrirModalCompra(null)">+ Nueva compra</button>
           </div>
         </div>
