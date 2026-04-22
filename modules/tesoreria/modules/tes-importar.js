@@ -47,23 +47,32 @@ async function renderTabImportar(area) {
         <div class="card">
           <h3 style="margin-bottom:12px">📋 Formato requerido</h3>
           <p class="text-muted text-sm" style="margin-bottom:12px">
-            El archivo debe tener las siguientes columnas en la primera hoja:
+            Soporta 2 formatos automáticamente:
           </p>
           <div class="table-wrap">
-            <table class="tabla" style="font-size:12px">
-              <thead><tr><th>Columna</th><th>Ejemplo</th><th>¿Requerida?</th></tr></thead>
+            <table class="tabla" style="font-size:11px">
+              <thead><tr><th colspan="3" style="background:#EBF8FF;color:#2B6CB0">Formato BCP (EECC convertido de PDF)</th></tr>
+              <tr><th>Columna</th><th>Ejemplo</th><th>Notas</th></tr></thead>
               <tbody>
-                <tr><td><code>fecha</code></td><td>2026-04-15</td><td>✅ Sí</td></tr>
-                <tr><td><code>naturaleza</code></td><td>CARGO o ABONO</td><td>✅ Sí</td></tr>
-                <tr><td><code>importe</code></td><td>1500.00</td><td>✅ Sí</td></tr>
-                <tr><td><code>descripcion</code></td><td>PAGO PROVEEDOR</td><td>No</td></tr>
-                <tr><td><code>numero_operacion</code></td><td>0012345</td><td>No</td></tr>
-                <tr><td><code>moneda</code></td><td>PEN / USD / EUR</td><td>No (def: PEN)</td></tr>
+                <tr><td><code>Fecha</code></td><td>02/01/2026</td><td>DD/MM/YYYY</td></tr>
+                <tr><td><code>Descripcion</code></td><td>TRAN.CTAS.TERC.BM</td><td></td></tr>
+                <tr><td><code>Moneda</code></td><td>S/ o $</td><td>S/ = PEN, $ = USD</td></tr>
+                <tr><td><code>Monto</code></td><td>-1500 / 5000</td><td>Negativo=CARGO, Positivo=ABONO</td></tr>
+                <tr><td><code>Numero de Operacion</code></td><td>790418</td><td></td></tr>
+              </tbody>
+              <thead><tr><th colspan="3" style="background:#F0FFF4;color:#276749">Formato NEXUM (plantilla propia)</th></tr>
+              <tr><th>Columna</th><th>Ejemplo</th><th>¿Requerida?</th></tr></thead>
+              <tbody>
+                <tr><td><code>fecha</code></td><td>2026-04-15</td><td>✅</td></tr>
+                <tr><td><code>naturaleza</code></td><td>CARGO o ABONO</td><td>✅</td></tr>
+                <tr><td><code>importe</code></td><td>1500.00</td><td>✅</td></tr>
+                <tr><td><code>descripcion</code></td><td>PAGO PROVEEDOR</td><td></td></tr>
+                <tr><td><code>numero_operacion</code></td><td>0012345</td><td></td></tr>
               </tbody>
             </table>
           </div>
-          <p class="text-muted text-sm" style="margin-top:12px">
-            💡 La fecha puede estar en formato <code>YYYY-MM-DD</code> o <code>DD/MM/YYYY</code>.
+          <p class="text-muted text-sm" style="margin-top:10px">
+            💡 Para EECC del BCP: usa la hoja <code>ESTADO_CUENTA</code>. El sistema detecta el formato automáticamente.
           </p>
         </div>
       </div>
@@ -135,28 +144,67 @@ function procesarImportacion() {
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
-      const wb    = XLSX.read(e.target.result, { type: 'array', cellDates: true });
-      const ws    = wb.Sheets[wb.SheetNames[0]];
-      const rows  = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: false });
+
+      // Detectar hoja: preferir ESTADO_CUENTA (formato BCP), si no la primera
+      const wsName = wb.SheetNames.find(n => n.trim().toUpperCase() === 'ESTADO_CUENTA')
+                     || wb.SheetNames[0];
+      const ws   = wb.Sheets[wsName];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
       if (!rows.length) { mostrarToast('El archivo está vacío', 'atencion'); return; }
 
+      // Auto-detectar formato BCP: tiene columna "Monto" y "Descripcion" (sin tilde)
+      const primeraFila = rows[0] || {};
+      const esBCP = ('Monto' in primeraFila || 'monto' in primeraFila) &&
+                    ('Descripcion' in primeraFila || 'descripcion' in primeraFila) &&
+                    !('naturaleza' in primeraFila) && !('Naturaleza' in primeraFila);
+
+      const _monedaBCP = (v) => {
+        const s = (v || '').toString().trim();
+        if (s === 'S/' || s === 'S/.' || s === 'PEN') return 'PEN';
+        if (s === '$' || s === 'USD' || s === 'US$') return 'USD';
+        if (s === '€' || s === 'EUR') return 'EUR';
+        return 'PEN';
+      };
+
       imp_datos_preview = rows.map((r, i) => {
-        const fecha = _parsearFecha(r.fecha || r.Fecha || r.FECHA || '');
-        const nat   = (r.naturaleza || r.Naturaleza || r.NATURALEZA || '').toString().toUpperCase().trim();
-        const imp   = parseFloat(r.importe || r.Importe || r.IMPORTE || 0);
-        const ok    = fecha && (nat === 'CARGO' || nat === 'ABONO') && imp > 0;
+        let fecha, nat, imp, desc, nro_op, moneda;
+
+        if (esBCP) {
+          // Formato BCP: Fecha | Descripcion | Moneda | Monto | Numero de Operacion
+          fecha   = _parsearFecha(r['Fecha'] || r['fecha'] || '');
+          const m = parseFloat(r['Monto'] || r['monto'] || 0);
+          imp     = Math.abs(m);
+          nat     = m < 0 ? 'CARGO' : 'ABONO';
+          desc    = (r['Descripcion'] || r['descripcion'] || '').toString().trim();
+          nro_op  = (r['Numero de Operacion'] || r['Número de Operación'] || r['NroOp'] || '').toString().trim();
+          moneda  = _monedaBCP(r['Moneda'] || r['moneda']);
+        } else {
+          // Formato NEXUM estándar
+          fecha  = _parsearFecha(r.fecha || r.Fecha || r.FECHA || '');
+          nat    = (r.naturaleza || r.Naturaleza || r.NATURALEZA || '').toString().toUpperCase().trim();
+          imp    = parseFloat(r.importe || r.Importe || r.IMPORTE || 0);
+          desc   = (r.descripcion || r.Descripcion || r.DESCRIPCION || '').toString();
+          nro_op = (r.numero_operacion || r['Nro Operacion'] || r['Nro Op'] || '').toString();
+          moneda = (r.moneda || r.Moneda || 'PEN').toString().toUpperCase() || 'PEN';
+        }
+
+        const ok = !!fecha && (nat === 'CARGO' || nat === 'ABONO') && imp > 0;
         return {
-          _idx:      i + 2,
+          _idx: i + 2,
           fecha,
           naturaleza: nat,
-          importe:    imp,
-          descripcion: r.descripcion || r.Descripcion || r.DESCRIPCION || '',
-          numero_operacion: r.numero_operacion || r['Nro Operacion'] || r['Nro Op'] || '',
-          moneda: (r.moneda || r.Moneda || 'PEN').toString().toUpperCase() || 'PEN',
+          importe: imp,
+          descripcion: desc,
+          numero_operacion: nro_op,
+          moneda,
           _ok: ok,
         };
       });
+
+      // Notificar formato detectado
+      if (esBCP) mostrarToast(`Formato BCP detectado (${rows.length} filas)`, 'info');
 
       const preview = document.getElementById('imp-preview');
       const tbody   = document.getElementById('tbody-preview');
