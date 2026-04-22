@@ -62,6 +62,16 @@ async function renderTabMovimientos(area) {
             <input type="text" id="mov-buscar" oninput="filtrarMovimientos()" class="input-buscar w-full"
                    placeholder="Descripción, Nro…">
           </div>
+          <div>
+            <label class="label-filtro">FA/DOC/RH</label>
+            <select id="mov-estado-doc-f" onchange="filtrarMovimientos()" class="input-buscar w-full">
+              <option value="">Todos</option>
+              <option value="EMITIDO">Emitido</option>
+              <option value="PENDIENTE">Pendiente</option>
+              <option value="OBSERVADO">Observado</option>
+              <option value="CANCELADO">Cancelado</option>
+            </select>
+          </div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span id="mov-contador" class="text-muted text-sm"></span>
@@ -77,7 +87,7 @@ async function renderTabMovimientos(area) {
         <table class="tabla">
           <thead><tr>
             <th>Fecha</th><th>Cuenta</th><th>Naturaleza</th><th>Importe</th>
-            <th>Descripción</th><th>Nro Operación</th><th>Estado</th><th>Acciones</th>
+            <th>Descripción</th><th>Nro Operación</th><th>FA/DOC/RH</th><th>Estado</th><th>Acciones</th>
           </tr></thead>
           <tbody id="tbody-movimientos"></tbody>
         </table>
@@ -169,6 +179,14 @@ async function renderTabMovimientos(area) {
               <label>Medio de pago</label>
               <select id="mov-mediopago-f"></select>
             </div>
+            <div class="campo">
+              <label>Cotización</label>
+              <input type="text" id="mov-cotizacion" placeholder="N° cotización" autocomplete="off" data-form-type="other">
+            </div>
+            <div class="campo">
+              <label>OC (Orden de Compra)</label>
+              <input type="text" id="mov-oc" placeholder="N° orden de compra" autocomplete="off" data-form-type="other">
+            </div>
           </div>
 
           <p class="text-muted text-sm" style="margin:14px 0 12px">💰 Impuestos y detracción</p>
@@ -211,23 +229,40 @@ async function renderTabMovimientos(area) {
             </div>
           </div>
 
-          <p class="text-muted text-sm" style="margin:14px 0 12px">📌 Estado</p>
+          <p class="text-muted text-sm" style="margin:14px 0 12px">📌 Estado y documento</p>
           <div class="grid-2">
             <div class="campo">
-              <label>Estado</label>
+              <label>Entrega FA/DOC/RH</label>
+              <select id="mov-estado-doc-modal">
+                <option value="PENDIENTE">Pendiente</option>
+                <option value="EMITIDO">Emitido</option>
+                <option value="OBSERVADO">Observado</option>
+                <option value="CANCELADO">Cancelado</option>
+              </select>
+            </div>
+            <div class="campo">
+              <label>Estado del movimiento</label>
               <select id="mov-estado-modal">
                 <option value="PENDIENTE">Pendiente</option>
                 <option value="EMITIDO">Emitido</option>
                 <option value="APROBADO">Aprobado</option>
                 <option value="OBSERVADO">Observado</option>
                 <option value="EN_SIMULACION">En simulación</option>
-                <option value="REQUIERE_RH">Requiere RR.HH.</option>
+                <option value="REQUIERE_RH">Requiere RH</option>
                 <option value="ANULADO">Anulado</option>
               </select>
             </div>
             <div class="campo">
               <label>Observaciones</label>
-              <input type="text" id="mov-obs" placeholder="Observaciones adicionales">
+              <input type="text" id="mov-obs" placeholder="Observaciones" autocomplete="off" data-form-type="other">
+            </div>
+            <div class="campo col-2">
+              <label>Detalles del servicio / compra</label>
+              <input type="text" id="mov-detalles-servicio" placeholder="Descripción detallada del servicio o compra" autocomplete="off" data-form-type="other">
+            </div>
+            <div class="campo col-2">
+              <label>Observaciones 2</label>
+              <input type="text" id="mov-observaciones-2" placeholder="Observaciones adicionales" autocomplete="off" data-form-type="other">
             </div>
           </div>
         </div>
@@ -316,21 +351,23 @@ function _renderResumenMov() {
 }
 
 function filtrarMovimientos() {
-  const q        = (document.getElementById('mov-buscar')?.value || '').toLowerCase();
-  const cuenta   = document.getElementById('mov-cuenta')?.value || '';
-  const nat      = document.getElementById('mov-naturaleza')?.value || '';
-  const estado   = document.getElementById('mov-estado-f')?.value || '';
-  const desde    = document.getElementById('mov-desde')?.value || '';
-  const hasta    = document.getElementById('mov-hasta')?.value || '';
+  const q         = (document.getElementById('mov-buscar')?.value || '').toLowerCase();
+  const cuenta    = document.getElementById('mov-cuenta')?.value || '';
+  const nat       = document.getElementById('mov-naturaleza')?.value || '';
+  const estado    = document.getElementById('mov-estado-f')?.value || '';
+  const estadoDoc = document.getElementById('mov-estado-doc-f')?.value || '';
+  const desde     = document.getElementById('mov-desde')?.value || '';
+  const hasta     = document.getElementById('mov-hasta')?.value || '';
 
   movimientos_filtrada = movimientos_lista.filter(m => {
-    const matchQ  = !q || (m.descripcion||'').toLowerCase().includes(q) || (m.numero_operacion||'').includes(q);
-    const matchC  = !cuenta  || m.cuenta_bancaria_id === cuenta;
-    const matchN  = !nat     || m.naturaleza === nat;
-    const matchE  = !estado  || m.estado === estado;
-    const matchD  = !desde   || m.fecha >= desde;
-    const matchH  = !hasta   || m.fecha <= hasta;
-    return matchQ && matchC && matchN && matchE && matchD && matchH;
+    const matchQ   = !q         || (m.descripcion||'').toLowerCase().includes(q) || (m.numero_operacion||'').includes(q);
+    const matchC   = !cuenta    || m.cuenta_bancaria_id === cuenta;
+    const matchN   = !nat       || m.naturaleza === nat;
+    const matchE   = !estado    || m.estado === estado;
+    const matchED  = !estadoDoc || (m.estado_doc || 'PENDIENTE') === estadoDoc;
+    const matchD   = !desde     || m.fecha >= desde;
+    const matchH   = !hasta     || m.fecha <= hasta;
+    return matchQ && matchC && matchN && matchE && matchED && matchD && matchH;
   });
 
   const ctr = document.getElementById('mov-contador');
@@ -341,7 +378,7 @@ function filtrarMovimientos() {
 
 function limpiarFiltrosMov() {
   ['mov-buscar','mov-desde','mov-hasta'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  ['mov-cuenta','mov-naturaleza','mov-estado-f'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['mov-cuenta','mov-naturaleza','mov-estado-f','mov-estado-doc-f'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   filtrarMovimientos();
 }
 
@@ -356,6 +393,10 @@ function renderTablaMovimientos() {
     OBSERVADO: 'badge-warning', ANULADO: 'badge-inactivo', EN_SIMULACION: 'badge-info',
     REQUIERE_RH: 'badge-warning',
   };
+  const coloresDoc = {
+    EMITIDO: 'badge-activo', PENDIENTE: 'badge-warning',
+    OBSERVADO: 'badge-info', CANCELADO: 'badge-inactivo',
+  };
 
   tbody.innerHTML = pagina.length ? pagina.map(m => `
     <tr>
@@ -367,13 +408,14 @@ function renderTablaMovimientos() {
       </td>
       <td class="text-sm">${escapar((m.descripcion||'').slice(0,45))}${(m.descripcion||'').length>45?'…':''}</td>
       <td class="text-mono text-sm">${escapar(m.numero_operacion || '—')}</td>
+      <td><span class="badge ${coloresDoc[m.estado_doc || 'PENDIENTE'] || 'badge-warning'}" style="font-size:11px">${m.estado_doc || 'PENDIENTE'}</span></td>
       <td><span class="badge ${colores[m.estado] || 'badge-info'}" style="font-size:11px">${m.estado}</span></td>
       <td>
         <button class="btn-icono" onclick="abrirModalMovimiento('${m.id}')">✏️</button>
         <button class="btn-icono peligro" onclick="eliminarMovimiento('${m.id}')">🗑️</button>
       </td>
     </tr>`).join('') :
-    '<tr><td colspan="8" class="text-center text-muted">Sin movimientos</td></tr>';
+    '<tr><td colspan="9" class="text-center text-muted">Sin movimientos</td></tr>';
 
   const total = movimientos_filtrada.length;
   const pags  = Math.ceil(total / MOV_POR_PAG);
@@ -466,8 +508,13 @@ function abrirModalMovimiento(id) {
     document.getElementById('mov-nro-op').value        = m.numero_operacion || '';
     document.getElementById('mov-descripcion-f').value = m.descripcion || '';
     document.getElementById('mov-nro-doc').value       = m.numero_documento || '';
-    document.getElementById('mov-estado-modal').value  = m.estado;
-    document.getElementById('mov-obs').value           = m.observaciones || '';
+    document.getElementById('mov-estado-modal').value      = m.estado;
+    document.getElementById('mov-estado-doc-modal').value  = m.estado_doc || 'PENDIENTE';
+    document.getElementById('mov-obs').value                = m.observaciones || '';
+    document.getElementById('mov-cotizacion').value         = m.cotizacion || '';
+    document.getElementById('mov-oc').value                 = m.oc || '';
+    document.getElementById('mov-detalles-servicio').value  = m.detalles_servicio || '';
+    document.getElementById('mov-observaciones-2').value    = m.observaciones_2 || '';
     document.getElementById('mov-tiene-igv').checked   = m.tiene_igv;
     document.getElementById('mov-tiene-detrac').checked = m.tiene_detraccion;
     if (m.tiene_igv) {
@@ -492,8 +539,13 @@ function abrirModalMovimiento(id) {
     document.getElementById('mov-nro-op').value        = '';
     document.getElementById('mov-descripcion-f').value = '';
     document.getElementById('mov-nro-doc').value       = '';
-    document.getElementById('mov-estado-modal').value  = 'PENDIENTE';
-    document.getElementById('mov-obs').value           = '';
+    document.getElementById('mov-estado-modal').value      = 'PENDIENTE';
+    document.getElementById('mov-estado-doc-modal').value  = 'PENDIENTE';
+    document.getElementById('mov-obs').value                = '';
+    document.getElementById('mov-cotizacion').value         = '';
+    document.getElementById('mov-oc').value                 = '';
+    document.getElementById('mov-detalles-servicio').value  = '';
+    document.getElementById('mov-observaciones-2').value    = '';
     document.getElementById('mov-tiene-igv').checked   = false;
     document.getElementById('mov-tiene-detrac').checked = false;
     _poblarSelectsMov(null);
@@ -543,7 +595,12 @@ async function guardarMovimiento() {
     porcentaje_detraccion:   tieneD ? (parseFloat(document.getElementById('mov-pct-detrac').value) || null) : null,
     monto_detraccion:        tieneD ? (parseFloat(document.getElementById('mov-mto-detrac').value) || null) : null,
     estado:                  document.getElementById('mov-estado-modal').value,
+    estado_doc:              document.getElementById('mov-estado-doc-modal').value,
     observaciones:           document.getElementById('mov-obs').value.trim() || null,
+    cotizacion:              document.getElementById('mov-cotizacion').value.trim() || null,
+    oc:                      document.getElementById('mov-oc').value.trim() || null,
+    detalles_servicio:       document.getElementById('mov-detalles-servicio').value.trim() || null,
+    observaciones_2:         document.getElementById('mov-observaciones-2').value.trim() || null,
     usuario_id:              perfil_usuario?.id || null,
   };
 
@@ -578,6 +635,11 @@ function exportarMovimientosExcel() {
     Descripción: m.descripcion || '',
     'Nro Operación': m.numero_operacion || '',
     Estado:     m.estado,
+    'FA/DOC/RH': m.estado_doc || 'PENDIENTE',
+    Cotización: m.cotizacion || '',
+    OC:         m.oc || '',
+    'Detalles Servicio': m.detalles_servicio || '',
+    'Observaciones 2':   m.observaciones_2 || '',
     'Base Imponible': m.base_imponible || '',
     IGV:        m.igv || '',
     'Tiene Detracción': m.tiene_detraccion ? 'Sí' : 'No',
