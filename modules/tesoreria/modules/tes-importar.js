@@ -154,11 +154,14 @@ function procesarImportacion() {
 
       if (!rows.length) { mostrarToast('El archivo está vacío', 'atencion'); return; }
 
-      // Auto-detectar formato BCP: tiene columna "Monto" y "Descripcion" (sin tilde)
+      // Auto-detectar formato BCP
+      // Soporta EECC con columnas estándar ("Fecha", "Monto") y el formato
+      // exportado donde la fecha aparece como "Columna1" y el nro de op como "Numero de Operacion2"
       const primeraFila = rows[0] || {};
-      const esBCP = ('Monto' in primeraFila || 'monto' in primeraFila) &&
-                    ('Descripcion' in primeraFila || 'descripcion' in primeraFila) &&
-                    !('naturaleza' in primeraFila) && !('Naturaleza' in primeraFila);
+      const esBCP = (('Monto' in primeraFila || 'monto' in primeraFila) &&
+                     ('Descripcion' in primeraFila || 'descripcion' in primeraFila) &&
+                     !('naturaleza' in primeraFila) && !('Naturaleza' in primeraFila))
+                    || 'Columna1' in primeraFila;
 
       const _monedaBCP = (v) => {
         const s = (v || '').toString().trim();
@@ -172,13 +175,14 @@ function procesarImportacion() {
         let fecha, nat, imp, desc, nro_op, moneda;
 
         if (esBCP) {
-          // Formato BCP: Fecha | Descripcion | Moneda | Monto | Numero de Operacion
-          fecha   = _parsearFecha(r['Fecha'] || r['fecha'] || '');
+          // Formato BCP: acepta "Fecha" clásico y "Columna1" del EECC exportado
+          fecha   = _parsearFecha(r['Fecha'] || r['fecha'] || r['Columna1'] || '');
           const m = parseFloat(r['Monto'] || r['monto'] || 0);
           imp     = Math.abs(m);
           nat     = m < 0 ? 'CARGO' : 'ABONO';
-          desc    = (r['Descripcion'] || r['descripcion'] || '').toString().trim();
-          nro_op  = (r['Numero de Operacion'] || r['Número de Operación'] || r['NroOp'] || '').toString().trim();
+          desc    = (r['Descripcion'] || r['descripcion'] || r['Columna2'] || '').toString().trim();
+          // "Numero de Operacion2" es el nombre real en el EECC BCP exportado
+          nro_op  = (r['Numero de Operacion'] || r['Numero de Operacion2'] || r['Número de Operación'] || r['NroOp'] || '').toString().trim();
           moneda  = _monedaBCP(r['Moneda'] || r['moneda']);
         } else {
           // Formato NEXUM estándar

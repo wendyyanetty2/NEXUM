@@ -147,15 +147,16 @@ function _sunatHandleFile(file) {
     try {
       const wb   = XLSX.read(e.target.result, { type: 'array', cellDates: false });
       const ws   = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: null, raw: true });
+      // header:1 → arrays; evita problemas con tildes en nombres de columna
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
 
       if (!rows.length) { mostrarToast('El archivo está vacío', 'atencion'); return; }
 
-      // Auto-detectar tipo por encabezados
-      const keys = Object.keys(rows[0] || {});
+      // Auto-detectar tipo por encabezados (rows[0] es el array de cabeceras)
+      const headers = rows[0] || [];
       let tipoDetectado = null;
-      if (keys.some(k => k.trim() === 'BI Gravado DG'))  tipoDetectado = 'COMPRAS';
-      else if (keys.some(k => k.trim() === 'BI Gravada')) tipoDetectado = 'VENTAS';
+      if (headers.some(h => (h || '').toString().trim() === 'BI Gravado DG'))  tipoDetectado = 'COMPRAS';
+      else if (headers.some(h => (h || '').toString().trim() === 'BI Gravada')) tipoDetectado = 'VENTAS';
 
       if (tipoDetectado) {
         sunat_tipo_actual = tipoDetectado;
@@ -169,7 +170,8 @@ function _sunatHandleFile(file) {
       }
 
       const tipo = sunat_tipo_actual;
-      sunat_preview_datos = rows
+      // slice(1) omite la fila de cabeceras; datos empiezan en rows[1]
+      sunat_preview_datos = rows.slice(1)
         .map((r, i) => _sunatMapearFila(r, i, tipo))
         .filter(Boolean);
 
@@ -207,29 +209,35 @@ function _sunatConstruirCDP(serie, nroRaw) {
 }
 
 // ── Mapeo de cada fila al formato de movimiento ───────────────────
+// Índices de columna según el Excel SUNAT descargado (header:1):
+//   Compras: fecha=4, tipo_doc=6, serie=7, nro=9,  RUC=12, nombre=13,
+//            base=14, igv=15, total=24, moneda=25, tc=26, detraccion=37
+//   Ventas:  fecha=4, tipo_doc=6, serie=7, nro=8,  RUC=11, nombre=12,
+//            base=14, igv=16, total=25, moneda=26, tc=27
 function _sunatMapearFila(r, idx, tipo) {
-  const serie  = r['Serie del CDP'];
-  const nroRaw = r['Nro CP o Doc. Nro Inicial (Rango)'];
+  const esCompras = tipo === 'COMPRAS';
 
-  // Fila vacía
+  const serie  = (r[7]  || '').toString().trim();
+  const nroRaw = esCompras ? r[9] : r[8];
+
   if (!serie && !nroRaw) return null;
 
-  const cdp   = _sunatConstruirCDP(serie, nroRaw);
-  const fecha = _parsearFechaExcel(r['Fecha de emision']);
-  const total = Math.abs(parseFloat(r['Total CP']) || 0);
+  const cdp     = _sunatConstruirCDP(serie, nroRaw);
+  const fecha   = _parsearFechaExcel(r[4]);
+  const total   = Math.abs(parseFloat(esCompras ? r[24] : r[25]) || 0);
 
   const _ok    = !!fecha && total > 0;
   const _error = !fecha ? 'Sin fecha' : total === 0 ? 'Total = 0' : null;
 
-  const moneda    = _sunatMoneda(r['Moneda']);
-  const tipoDoc   = _sunatTipoDocCodigo(r['Tipo CP/Doc.']);
-  const entidad   = (r['Apellidos Nombres / Razon Social'] || '').toString().trim();
+  const moneda  = _sunatMoneda(esCompras ? r[25] : r[26]);
+  const tipoDoc = _sunatTipoDocCodigo(r[6]);
+  const entidad = (r[esCompras ? 13 : 12] || '').toString().trim();
 
-  const base = parseFloat(tipo === 'COMPRAS' ? r['BI Gravado DG']  : r['BI Gravada'])  || 0;
-  const igv  = parseFloat(tipo === 'COMPRAS' ? r['IGV / IPM DG']   : r['IGV / IPM'])   || 0;
+  const base = parseFloat(r[14]) || 0;
+  const igv  = parseFloat(r[esCompras ? 15 : 16]) || 0;
 
-  const detraccion = tipo === 'COMPRAS'
-    ? (r['Detraccion'] ? String(r['Detraccion']).trim() : null)
+  const detraccion = esCompras
+    ? (r[37] ? String(r[37]).trim() : null)
     : null;
 
   return {

@@ -16,8 +16,9 @@ async function renderTabImportarMBD(area) {
           </button>
         </div>
         <p class="text-muted text-sm" style="margin-bottom:20px">
-          Sube el archivo MBD (.xlsx / .xlsm). La hoja debe llamarse <strong>REGISTRO</strong>,
-          encabezados en fila 3 y datos desde fila 4. Usa "Descargar Plantilla" para obtener el formato correcto con tus catálogos precargados.
+          Sube el archivo MBD (.xlsx / .xlsm). El sistema acepta cualquier nombre de hoja
+          y detecta automáticamente la fila de encabezados. Usa "Descargar Plantilla" para obtener
+          el formato con tus catálogos precargados.
         </p>
 
         <div id="mbd-drop-zone"
@@ -154,19 +155,30 @@ function _mbdHandleFile(file) {
     try {
       const wb = XLSX.read(e.target.result, { type: 'array', cellDates: false });
 
-      const wsName = wb.SheetNames.find(n => n.trim().toUpperCase() === 'REGISTRO');
-      if (!wsName) {
-        mostrarToast('No se encontró la hoja "REGISTRO" en el archivo', 'error');
-        if (info) info.style.display = 'none';
-        return;
-      }
-
+      // Acepta hoja "REGISTRO" (plantilla NEXUM) o cualquier primera hoja
+      const wsName = wb.SheetNames.find(n => n.trim().toUpperCase() === 'REGISTRO')
+                     || wb.SheetNames[0];
       const ws   = wb.Sheets[wsName];
       const rng  = XLSX.utils.decode_range(ws['!ref'] || 'A1');
       const filas = [];
 
-      // Fila 3 = headers (index 2), datos desde fila 4 (index 3)
-      for (let r = 3; r <= rng.e.r; r++) {
+      // Detectar fila de encabezados automáticamente (busca en las primeras 5 filas)
+      const _celVal = (ri, ci) => {
+        const c = ws[XLSX.utils.encode_cell({ r: ri, c: ci })];
+        return c ? c.v : null;
+      };
+      let headerRow = 0;
+      for (let ri = 0; ri < Math.min(5, rng.e.r); ri++) {
+        const v0 = (_celVal(ri, 0) || '').toString().toLowerCase();
+        const v1 = (_celVal(ri, 1) || '').toString().toLowerCase();
+        if (v1.includes('fecha') || v0.includes('operaci') || v0.includes('n°') || v0.includes('nro')) {
+          headerRow = ri;
+          break;
+        }
+      }
+      const dataStart = headerRow + 1;
+
+      for (let r = dataStart; r <= rng.e.r; r++) {
         const cel = (col) => {
           const addr = XLSX.utils.encode_cell({ r, c: col });
           const c    = ws[addr];
