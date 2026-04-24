@@ -1,0 +1,392 @@
+/* ============================================================
+   NEXUM — Contabilidad: Registro de Compras SUNAT (PLE)
+   ============================================================ */
+
+const TIPOS_DOC_ID_C = {'1':'DNI','4':'Carnet Extranjería','6':'RUC','7':'Pasaporte','0':'Otros'};
+
+function renderTabCompras(area) {
+  const hoy = new Date();
+  const mesActual = String(hoy.getMonth() + 1).padStart(2, '0');
+  const anioActual = hoy.getFullYear();
+  const periodoActual = `${anioActual}${mesActual}`;
+
+  area.innerHTML = `
+    <div class="fadeIn">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="c-periodo" value="${periodoActual}" placeholder="YYYYMM"
+            style="width:100px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+          <input type="text" id="c-buscar" placeholder="Buscar proveedor, serie…"
+            style="width:200px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+          <button onclick="cargarCompras()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="exportarExcelCompras()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar PLE</button>
+          <button onclick="abrirModalCompra()" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">+ Nueva compra</button>
+        </div>
+      </div>
+      <div id="c-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
+      <div id="c-tabla-wrap" style="overflow-x:auto;">
+        <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('c-buscar').addEventListener('keydown', e => { if(e.key==='Enter') cargarCompras(); });
+  cargarCompras();
+}
+
+async function cargarCompras() {
+  const periodo = document.getElementById('c-periodo')?.value.trim();
+  const buscar  = document.getElementById('c-buscar')?.value.trim().toLowerCase();
+  const wrap    = document.getElementById('c-tabla-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>';
+
+  let q = _supabase.from('contabilidad_compras').select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .order('fecha_emision', { ascending: false });
+  if (periodo) q = q.eq('periodo', periodo);
+
+  const { data, error } = await q;
+  if (error) { wrap.innerHTML = `<p class="error-texto">Error: ${escapar(error.message)}</p>`; return; }
+
+  let filas = data || [];
+  if (buscar) filas = filas.filter(r =>
+    (r.proveedor||'').toLowerCase().includes(buscar) ||
+    (r.serie_cdp||'').toLowerCase().includes(buscar) ||
+    (r.nro_doc_identidad||'').toLowerCase().includes(buscar)
+  );
+
+  const totalBI  = filas.reduce((s,r) => s + Number(r.bi_gravado_dg||0), 0);
+  const totalIGV = filas.reduce((s,r) => s + Number(r.igv_ipm_dg||0), 0);
+  const totalCP  = filas.reduce((s,r) => s + Number(r.total_cp||0), 0);
+  const resumen  = document.getElementById('c-resumen');
+  if (resumen) resumen.innerHTML = `
+    <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
+      <div style="font-size:11px;opacity:.8">BI GRAVADO DG</div>
+      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalBI)}</div>
+    </div>
+    <div style="background:#2C7A7B;color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
+      <div style="font-size:11px;opacity:.8">IGV / IPM DG</div>
+      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalIGV)}</div>
+    </div>
+    <div style="background:var(--color-critico);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
+      <div style="font-size:11px;opacity:.8">TOTAL COMPRAS</div>
+      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalCP)}</div>
+    </div>
+    <div style="background:#4A5568;color:#fff;padding:12px 16px;border-radius:8px;min-width:120px">
+      <div style="font-size:11px;opacity:.8">COMPROBANTES</div>
+      <div style="font-size:18px;font-weight:700">${filas.length}</div>
+    </div>
+  `;
+
+  if (!filas.length) {
+    wrap.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin registros en este período.</p>';
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="tabla-nexum">
+      <thead><tr>
+        <th>Período</th><th>Fecha Emisión</th><th>Tipo CP</th><th>Serie</th><th>N° Inicial</th>
+        <th>Tipo Doc ID</th><th>N° Documento</th><th>Proveedor</th>
+        <th style="text-align:right">B.I. Grav. DG</th>
+        <th style="text-align:right">IGV/IPM DG</th>
+        <th style="text-align:right">Total CP</th>
+        <th>Moneda</th><th style="text-align:center">Acc.</th>
+      </tr></thead>
+      <tbody>
+        ${filas.map(r => `
+          <tr>
+            <td>${escapar(r.periodo)}</td>
+            <td style="white-space:nowrap">${formatearFecha(r.fecha_emision)}</td>
+            <td style="text-align:center">${escapar(String(r.tipo_cp_doc))}</td>
+            <td>${escapar(r.serie_cdp)}</td>
+            <td style="text-align:right">${escapar(String(r.nro_cp_inicial))}</td>
+            <td>${escapar(TIPOS_DOC_ID_C[r.tipo_doc_identidad]||r.tipo_doc_identidad)}</td>
+            <td>${escapar(r.nro_doc_identidad)}</td>
+            <td>${escapar(truncar(r.proveedor,28))}</td>
+            <td style="text-align:right">${formatearMoneda(r.bi_gravado_dg, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td style="text-align:right">${formatearMoneda(r.igv_ipm_dg, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td style="text-align:right;font-weight:600">${formatearMoneda(r.total_cp, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td>${escapar(r.moneda)}</td>
+            <td style="text-align:center;white-space:nowrap">
+              <button onclick="abrirModalCompra('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
+              <button onclick="eliminarCompra('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} comprobante(s)</p>
+  `;
+}
+
+async function abrirModalCompra(id = null) {
+  let item = null;
+  if (id) {
+    const { data } = await _supabase.from('contabilidad_compras').select('*').eq('id', id).single();
+    item = data;
+  }
+  const hoy = new Date().toISOString().slice(0,10);
+  const periodo = item?.periodo || (() => { const d=new Date(); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}`; })();
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)cerrarModalCompra()">
+      <div class="modal" style="max-width:860px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>🛒 ${id?'Editar':'Nueva'} Compra — Registro PLE</h3>
+          <button class="modal-cerrar" onclick="cerrarModalCompra()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="c-alerta" class="alerta-error"></div>
+
+          <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:8px;text-transform:uppercase">Datos del comprobante</p>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+            <div class="campo"><label>RUC Empresa <span class="req">*</span></label>
+              <input type="text" id="c-ruc" value="${escapar(item?.ruc||empresa_activa.ruc||'')}" maxlength="11"></div>
+            <div class="campo" style="grid-column:span 2"><label>Razón Social <span class="req">*</span></label>
+              <input type="text" id="c-razon" value="${escapar(item?.razon_social||empresa_activa.nombre||'')}"></div>
+            <div class="campo"><label>Período <span class="req">*</span></label>
+              <input type="text" id="c-periodo-m" value="${periodo}" placeholder="YYYYMM" maxlength="6"></div>
+            <div class="campo"><label>CAR SUNAT</label>
+              <input type="text" id="c-car" value="${escapar(item?.car_sunat||'')}"></div>
+            <div class="campo"><label>Fecha Emisión <span class="req">*</span></label>
+              <input type="date" id="c-fecha" value="${item?.fecha_emision||hoy}"></div>
+            <div class="campo"><label>Fecha Vcto/Pago</label>
+              <input type="date" id="c-fecha-vcto" value="${item?.fecha_vcto_pago||''}"></div>
+            <div class="campo"><label>Tipo CP/Doc <span class="req">*</span></label>
+              <input type="number" id="c-tipo-cp" value="${item?.tipo_cp_doc||1}"></div>
+            <div class="campo"><label>Serie CDP <span class="req">*</span></label>
+              <input type="text" id="c-serie" value="${escapar(item?.serie_cdp||'')}" placeholder="F001"></div>
+            <div class="campo"><label>Año</label>
+              <input type="number" id="c-anio" value="${item?.anio||new Date().getFullYear()}"></div>
+            <div class="campo"><label>N° CP Inicial <span class="req">*</span></label>
+              <input type="number" id="c-nro-ini" value="${item?.nro_cp_inicial||''}"></div>
+            <div class="campo"><label>N° CP Final</label>
+              <input type="number" id="c-nro-fin" value="${item?.nro_cp_final||''}"></div>
+          </div>
+
+          <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:8px;text-transform:uppercase">Datos del proveedor</p>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+            <div class="campo"><label>Tipo Doc ID <span class="req">*</span></label>
+              <select id="c-tipo-id">
+                ${Object.entries(TIPOS_DOC_ID_C).map(([k,v])=>`<option value="${k}" ${(item?.tipo_doc_identidad||'6')===k?'selected':''}>${k} — ${v}</option>`).join('')}
+              </select></div>
+            <div class="campo"><label>N° Doc Identidad <span class="req">*</span></label>
+              <input type="text" id="c-nro-id" value="${escapar(item?.nro_doc_identidad||'')}"></div>
+            <div class="campo" style="grid-column:span 2"><label>Proveedor <span class="req">*</span></label>
+              <input type="text" id="c-proveedor" value="${escapar(item?.proveedor||'')}"></div>
+          </div>
+
+          <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:8px;text-transform:uppercase">Importes</p>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px">
+            <div class="campo"><label>BI Grav. DG <span class="req">*</span></label>
+              <input type="number" id="c-bi-dg" step="0.01" value="${item?.bi_gravado_dg||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>IGV/IPM DG <span class="req">*</span></label>
+              <input type="number" id="c-igv-dg" step="0.01" value="${item?.igv_ipm_dg||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>BI Grav. DGNG</label>
+              <input type="number" id="c-bi-dgng" step="0.01" value="${item?.bi_gravado_dgng||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>IGV/IPM DGNG</label>
+              <input type="number" id="c-igv-dgng" step="0.01" value="${item?.igv_ipm_dgng||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>BI Grav. DNG</label>
+              <input type="number" id="c-bi-dng" step="0.01" value="${item?.bi_gravado_dng||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>IGV/IPM DNG</label>
+              <input type="number" id="c-igv-dng" step="0.01" value="${item?.igv_ipm_dng||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>Valor Adq. NG</label>
+              <input type="number" id="c-adq-ng" step="0.01" value="${item?.valor_adq_ng||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>ISC</label>
+              <input type="number" id="c-isc" step="0.01" value="${item?.isc||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>ICBPER</label>
+              <input type="number" id="c-icb" step="0.01" value="${item?.icbper||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label>Otros Trib.</label>
+              <input type="number" id="c-otros" step="0.01" value="${item?.otros_trib_cargos||0}" onchange="calcTotalCompra()"></div>
+            <div class="campo"><label style="font-weight:700;color:var(--color-secundario)">Total CP <span class="req">*</span></label>
+              <input type="number" id="c-total" step="0.01" value="${item?.total_cp||0}" style="font-weight:600"></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+            <div class="campo"><label>Moneda <span class="req">*</span></label>
+              <select id="c-moneda">
+                <option value="PEN" ${(item?.moneda||'PEN')==='PEN'?'selected':''}>PEN — Soles</option>
+                <option value="USD" ${item?.moneda==='USD'?'selected':''}>USD — Dólares</option>
+              </select></div>
+            <div class="campo"><label>Tipo Cambio <span class="req">*</span></label>
+              <input type="number" id="c-tc" step="0.0001" value="${item?.tipo_cambio||1}"></div>
+            <div class="campo"><label>Detracción</label>
+              <input type="number" id="c-detraccion" step="0.01" value="${item?.detraccion||0}"></div>
+            <div class="campo"><label>Est. Comp.</label>
+              <input type="number" id="c-est" value="${item?.est_comp||1}"></div>
+          </div>
+
+          <details style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase">Doc. Modificado / Adicionales</summary>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px">
+              <div class="campo"><label>Fecha Emisión Mod.</label>
+                <input type="date" id="c-fecha-mod" value="${item?.fecha_emision_mod||''}"></div>
+              <div class="campo"><label>Tipo CP Mod.</label>
+                <input type="number" id="c-tipo-mod" value="${item?.tipo_cp_modificado||''}"></div>
+              <div class="campo"><label>Serie CP Mod.</label>
+                <input type="text" id="c-serie-mod" value="${escapar(item?.serie_cp_modificado||'')}"></div>
+              <div class="campo"><label>N° CP Mod.</label>
+                <input type="text" id="c-nro-mod" value="${escapar(item?.nro_cp_modificado||'')}"></div>
+              <div class="campo"><label>COD. DAM o DSI</label>
+                <input type="text" id="c-dam" value="${escapar(item?.cod_dam_dsi||'')}"></div>
+              <div class="campo"><label>Clasif. Bss y Sss</label>
+                <input type="text" id="c-clasif" value="${escapar(item?.clasif_bss_sss||'')}"></div>
+              <div class="campo"><label>ID Proyecto</label>
+                <input type="text" id="c-proyecto" value="${escapar(item?.id_proyecto||'')}"></div>
+              <div class="campo"><label>% Part.</label>
+                <input type="number" id="c-porc" step="0.0001" value="${item?.porc_part||0}"></div>
+              <div class="campo"><label>IMB</label>
+                <input type="number" id="c-imb" step="0.01" value="${item?.imb||0}"></div>
+              <div class="campo"><label>CAR Orig / Ind E o I</label>
+                <input type="text" id="c-car-orig" value="${escapar(item?.car_orig||'')}"></div>
+              <div class="campo"><label>Tipo Nota</label>
+                <input type="text" id="c-tipo-nota" value="${escapar(item?.tipo_nota||'')}"></div>
+              <div class="campo"><label>Incal</label>
+                <input type="number" id="c-incal" step="0.01" value="${item?.incal||0}"></div>
+            </div>
+          </details>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="cerrarModalCompra()">Cancelar</button>
+          <button class="btn btn-primario" onclick="guardarCompra('${id||''}')">💾 Guardar</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function calcTotalCompra() {
+  const n = id => parseFloat(document.getElementById(id)?.value)||0;
+  const total = n('c-bi-dg') + n('c-igv-dg') + n('c-bi-dgng') + n('c-igv-dgng') +
+    n('c-bi-dng') + n('c-igv-dng') + n('c-adq-ng') + n('c-isc') + n('c-icb') + n('c-otros');
+  const el = document.getElementById('c-total');
+  if (el) el.value = total.toFixed(2);
+}
+
+function cerrarModalCompra() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function guardarCompra(id) {
+  const alerta = document.getElementById('c-alerta');
+  alerta.classList.remove('visible');
+
+  const ruc    = document.getElementById('c-ruc').value.trim();
+  const razon  = document.getElementById('c-razon').value.trim();
+  const periodo = document.getElementById('c-periodo-m').value.trim();
+  const fecha  = document.getElementById('c-fecha').value;
+  const tipoCp = parseInt(document.getElementById('c-tipo-cp').value);
+  const serie  = document.getElementById('c-serie').value.trim();
+  const nroIni = parseInt(document.getElementById('c-nro-ini').value);
+  const tipoId = document.getElementById('c-tipo-id').value;
+  const nroId  = document.getElementById('c-nro-id').value.trim();
+  const proveedor = document.getElementById('c-proveedor').value.trim();
+
+  if (!ruc||!razon||!periodo||!fecha||isNaN(tipoCp)||!serie||isNaN(nroIni)||!tipoId||!nroId||!proveedor) {
+    alerta.textContent = 'Complete todos los campos requeridos (*)'; alerta.classList.add('visible'); return;
+  }
+  if (!/^\d{6}$/.test(periodo)) {
+    alerta.textContent = 'El período debe tener formato YYYYMM'; alerta.classList.add('visible'); return;
+  }
+
+  const n = id => parseFloat(document.getElementById(id)?.value)||0;
+  const payload = {
+    empresa_id: empresa_activa.id,
+    ruc, razon_social: razon, periodo,
+    car_sunat: document.getElementById('c-car').value.trim()||null,
+    fecha_emision: fecha,
+    fecha_vcto_pago: document.getElementById('c-fecha-vcto').value||null,
+    tipo_cp_doc: tipoCp, serie_cdp: serie,
+    anio: parseInt(document.getElementById('c-anio').value)||null,
+    nro_cp_inicial: nroIni,
+    nro_cp_final: parseInt(document.getElementById('c-nro-fin').value)||null,
+    tipo_doc_identidad: tipoId, nro_doc_identidad: nroId, proveedor,
+    bi_gravado_dg: n('c-bi-dg'), igv_ipm_dg: n('c-igv-dg'),
+    bi_gravado_dgng: n('c-bi-dgng'), igv_ipm_dgng: n('c-igv-dgng'),
+    bi_gravado_dng: n('c-bi-dng'), igv_ipm_dng: n('c-igv-dng'),
+    valor_adq_ng: n('c-adq-ng'), isc: n('c-isc'), icbper: n('c-icb'),
+    otros_trib_cargos: n('c-otros'), total_cp: n('c-total'),
+    moneda: document.getElementById('c-moneda').value,
+    tipo_cambio: parseFloat(document.getElementById('c-tc').value)||1,
+    detraccion: n('c-detraccion'),
+    est_comp: parseInt(document.getElementById('c-est').value)||1,
+    fecha_emision_mod: document.getElementById('c-fecha-mod').value||null,
+    tipo_cp_modificado: parseInt(document.getElementById('c-tipo-mod').value)||null,
+    serie_cp_modificado: document.getElementById('c-serie-mod').value.trim()||null,
+    cod_dam_dsi: document.getElementById('c-dam').value.trim()||null,
+    nro_cp_modificado: document.getElementById('c-nro-mod').value.trim()||null,
+    clasif_bss_sss: document.getElementById('c-clasif').value.trim()||null,
+    id_proyecto: document.getElementById('c-proyecto').value.trim()||null,
+    porc_part: parseFloat(document.getElementById('c-porc').value)||null,
+    imb: n('c-imb'), car_orig: document.getElementById('c-car-orig').value.trim()||null,
+    tipo_nota: document.getElementById('c-tipo-nota').value.trim()||null,
+    incal: n('c-incal'),
+    creado_por: perfil_usuario.id,
+    fecha_actualizacion: new Date().toISOString(),
+  };
+
+  let error;
+  if (id) ({ error } = await _supabase.from('contabilidad_compras').update(payload).eq('id', id));
+  else    ({ error } = await _supabase.from('contabilidad_compras').insert(payload));
+
+  if (error) { alerta.textContent = 'Error: ' + error.message; alerta.classList.add('visible'); return; }
+  mostrarToast(id ? 'Compra actualizada.' : 'Compra registrada.', 'exito');
+  cerrarModalCompra();
+  cargarCompras();
+}
+
+async function eliminarCompra(id) {
+  const ok = await confirmar('¿Eliminar este comprobante de compra?', { btnOk: 'Eliminar', btnColor: '#C53030' });
+  if (!ok) return;
+  const { error } = await _supabase.from('contabilidad_compras').delete().eq('id', id);
+  if (error) { mostrarToast('Error al eliminar.', 'error'); return; }
+  mostrarToast('Registro eliminado.', 'exito');
+  cargarCompras();
+}
+
+async function exportarExcelCompras() {
+  const periodo = document.getElementById('c-periodo')?.value.trim();
+  let q = _supabase.from('contabilidad_compras').select('*')
+    .eq('empresa_id', empresa_activa.id).order('fecha_emision');
+  if (periodo) q = q.eq('periodo', periodo);
+  const { data } = await q;
+  if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
+
+  const cab = [
+    'RUC','Apellidos y Nombres o Razón social','Periodo','CAR SUNAT',
+    'Fecha de emisión','Fecha Vcto/Pago','Tipo CP/Doc.','Serie del CDP','Año',
+    'Nro CP Nro Inicial (Rango)','Nro Final (Rango)','Tipo Doc Identidad',
+    'Nro Doc Identidad','Apellidos Nombres/ Razón Social',
+    'BI Gravado DG','IGV / IPM DG','BI Gravado DGNG','IGV / IPM DGNG',
+    'BI Gravado DNG','IGV / IPM DNG','Valor Adq. NG','ISC','ICBPER',
+    'Otros Trib/ Cargos','Total CP','Moneda','Tipo de Cambio',
+    'Fecha Emisión Doc Modificado','Tipo CP Modificado','Serie CP Modificado',
+    'COD. DAM O DSI','Nro CP Modificado','Clasif de Bss y Sss',
+    'ID Proyecto Operadores','PorcPart','IMB','CAR Orig/ Ind E o I',
+    'Detracción','Tipo de Nota','Est. Comp.','Incal'
+  ];
+  const filas = data.map(r => [
+    r.ruc, r.razon_social, r.periodo, r.car_sunat,
+    r.fecha_emision, r.fecha_vcto_pago, r.tipo_cp_doc, r.serie_cdp, r.anio,
+    r.nro_cp_inicial, r.nro_cp_final, r.tipo_doc_identidad, r.nro_doc_identidad, r.proveedor,
+    r.bi_gravado_dg, r.igv_ipm_dg, r.bi_gravado_dgng, r.igv_ipm_dgng,
+    r.bi_gravado_dng, r.igv_ipm_dng, r.valor_adq_ng, r.isc, r.icbper,
+    r.otros_trib_cargos, r.total_cp, r.moneda, r.tipo_cambio,
+    r.fecha_emision_mod, r.tipo_cp_modificado, r.serie_cp_modificado,
+    r.cod_dam_dsi, r.nro_cp_modificado, r.clasif_bss_sss,
+    r.id_proyecto, r.porc_part, r.imb, r.car_orig,
+    r.detraccion, r.tipo_nota, r.est_comp, r.incal
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
+  XLSX.writeFile(wb, `RC_${empresa_activa.nombre_corto}_${periodo||'todos'}.xlsx`);
+  mostrarToast('Exportado en formato PLE.', 'exito');
+}
