@@ -1,531 +1,501 @@
-// ═══════════════════════════════════════════════════════════════
-// Tesorería — Importar MBD (Manual de Bancos Detallado)
-// ═══════════════════════════════════════════════════════════════
+/* ============================================================
+   NEXUM — Tesorería: Módulo MBD (Movimientos Bancarios Diarios)
+   ============================================================ */
 
-let mbd_datos_preview = [];
+const CONCEPTOS_MBD = [
+  '1° Quincena','2° Quincena','AFP','Almuerzo','Alquiler',
+  'Banca BCP','Cena','Certificación','Cochera','Combustible',
+  'Comisión','Comisión BCP','Compras','Cursos','Declaración',
+  'Depositos','Desayuno','EECC BCP','EPS','Examen Medico',
+  'Impuesto BCP','Liquidación','Mantenimiento BCP','NPS',
+  'Pago de Prestamo','Pago de Proyecto','Pago de Servicio',
+  'Peaje','Planilla De Movilidad','Prestamo','Reembolso',
+  'RH','SCTR','Seguro','Servicio','SSOMA','Tramites',
+  'Transporte','Ventas'
+];
+const EMPRESAS_MBD = [
+  'AFP','Banco BCP','Club Retamas','EPA SAC','EPS',
+  'ESTADO DE CUENTA','FIBRAFORTE S.A.','GEOMECANICA','Hidromedick',
+  'Huaraz','Impuesto BCP','Instituto','Jesús del Norte',
+  'JVÑ GENERAL SERVICES SAC','La victoria','Mall bellavista',
+  'MANTENIMIENTO BCP','Medicentro','MedickCenter',
+  'PEVAL CORPORATION EIRL','San Gabriel','San Juan Bautista',
+  'San Pablo','Santa Martha','SUPESA','TEMPLO - SAN PABLO','Torre San Pedro'
+];
+const TIPOS_DOC_MBD = [
+  {val:'FA',lab:'FA — Factura'},{val:'BO',lab:'BO — Boletas'},
+  {val:'BP',lab:'BP — Boletas de Pago'},{val:'RH',lab:'RH — Recibo por honorarios'},
+  {val:'TK',lab:'TK — Ticket'},{val:'PM',lab:'PM — Planilla de Movilidad'},
+  {val:'AT',lab:'AT — App de taxi'},{val:'DL',lab:'DL — Delivery'},
+  {val:'PJ',lab:'PJ — Ticket de peaje'},{val:'SB',lab:'SB — Recibo de luz/agua/gas'},
+  {val:'VB',lab:'VB — Voucher de banco'},{val:'OT',lab:'OT — Comprobante sin serie legible'}
+];
+const AUTORIZACIONES_MBD = [
+  'Johanys Valencia','Alexis Valencia','Administración',
+  'Wendy Ortega','Isabel Peche','Segundo Valencia',
+  'Mantenimiento BCP','Impuesto BCP','Comisión BCP','Estado de Cuenta'
+];
 
-async function renderTabImportarMBD(area) {
+function renderTabImportarMBD(area) {
+  const hoy = new Date();
+  const mesActual = String(hoy.getMonth() + 1).padStart(2, '0');
+  const anioActual = hoy.getFullYear();
+
   area.innerHTML = `
     <div class="fadeIn">
-
-      <div class="card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:4px">
-          <h3>📂 Importar MBD desde Excel</h3>
-          <button class="btn btn-secundario btn-sm" onclick="exportarPlantillaMBD()">
-            📋 Descargar Plantilla MBD
-          </button>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select id="mbd-filtro-mes" style="${estiloSelect()}">
+            ${Array.from({length:12},(_,i)=>{
+              const m = String(i+1).padStart(2,'0');
+              const nom = new Date(2000,i,1).toLocaleString('es-PE',{month:'long'});
+              return `<option value="${m}" ${m===mesActual?'selected':''}>${nom.charAt(0).toUpperCase()+nom.slice(1)}</option>`;
+            }).join('')}
+          </select>
+          <select id="mbd-filtro-anio" style="${estiloSelect()}">
+            ${[anioActual-1, anioActual, anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('')}
+          </select>
+          <input id="mbd-buscar" type="text" placeholder="Buscar…" style="${estiloInput()};width:180px">
+          <button onclick="cargarMBD()" style="${estiloBtnSecundario()}">🔍 Filtrar</button>
         </div>
-        <p class="text-muted text-sm" style="margin-bottom:20px">
-          Sube el archivo MBD (.xlsx / .xlsm). El sistema acepta cualquier nombre de hoja
-          y detecta automáticamente la fila de encabezados. Usa "Descargar Plantilla" para obtener
-          el formato con tus catálogos precargados.
-        </p>
-
-        <div id="mbd-drop-zone"
-          style="border:2px dashed var(--color-borde);border-radius:var(--radio);
-                 padding:40px 20px;text-align:center;cursor:pointer;
-                 transition:border-color 0.2s,background 0.2s;margin-bottom:16px"
-          ondragover="event.preventDefault();this.style.borderColor='var(--color-primario)';this.style.background='var(--color-fondo-2)'"
-          ondragleave="this.style.borderColor='var(--color-borde)';this.style.background=''"
-          ondrop="_mbdHandleDrop(event)"
-          onclick="document.getElementById('mbd-file-input').click()">
-          <div style="font-size:36px;margin-bottom:8px">📊</div>
-          <p style="font-weight:500;margin-bottom:4px">Arrastra el archivo MBD aquí</p>
-          <p class="text-muted text-sm">o haz clic para seleccionar</p>
-          <input type="file" id="mbd-file-input" accept=".xlsx,.xlsm"
-                 style="display:none" onchange="_mbdHandleFile(this.files[0])">
-        </div>
-
-        <div id="mbd-archivo-info" style="display:none" class="alerta-exito" style="margin-bottom:12px"></div>
-      </div>
-
-      <div id="mbd-preview-wrap" style="display:none" class="card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <h3>👁️ Vista previa — <span id="mbd-preview-count">0</span> registros</h3>
-          <div id="mbd-preview-resumen" class="text-sm text-muted"></div>
-        </div>
-        <div class="table-wrap" style="max-height:320px;overflow-y:auto">
-          <table class="tabla" style="font-size:12px">
-            <thead>
-              <tr>
-                <th>N° Op.</th>
-                <th>Fecha</th>
-                <th>Descripción</th>
-                <th>Monto</th>
-                <th>Proveedor</th>
-                <th>Estado Doc</th>
-                <th>Nro Doc</th>
-                <th>Val.</th>
-              </tr>
-            </thead>
-            <tbody id="mbd-tbody-preview"></tbody>
-          </table>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:16px">
-          <button class="btn btn-secundario" onclick="_mbdCancelarPreview()">Cancelar</button>
-          <button class="btn btn-primario" id="mbd-btn-confirmar" onclick="_mbdConfirmarImportacion()">
-            ✅ Confirmar importación
-          </button>
+        <div style="display:flex;gap:8px;">
+          <button onclick="importarExcelMBD()" style="${estiloBtnSecundario()}">📂 Importar Excel</button>
+          <button onclick="exportarExcelMBD()" style="${estiloBtnSecundario()}">📥 Exportar Excel</button>
+          <button onclick="abrirModalMBD()" style="${estiloBtnPrimario()}">+ Nuevo movimiento</button>
         </div>
       </div>
-
-      <div id="mbd-progreso" style="display:none" class="card" style="margin-bottom:16px">
-        <p id="mbd-progreso-texto" class="text-muted text-sm" style="margin-bottom:8px">Preparando...</p>
-        <div style="height:6px;background:var(--color-borde);border-radius:3px;overflow:hidden">
-          <div id="mbd-progreso-barra" style="height:100%;background:var(--color-primario);width:0;transition:width 0.3s"></div>
-        </div>
+      <div id="mbd-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
+      <div id="mbd-tabla-wrap" style="overflow-x:auto;">
+        <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
       </div>
+    </div>
+    <input type="file" id="mbd-file-input" accept=".xlsx,.xls" style="display:none" onchange="procesarImportMBD(this)">
+  `;
 
-      <div class="card">
-        <h3 style="margin-bottom:12px">📜 Historial de importaciones MBD</h3>
-        <div id="mbd-historial">
-          <div class="text-center text-muted text-sm" style="padding:20px">Cargando…</div>
-        </div>
-      </div>
-    </div>`;
-
-  await _mbdCargarHistorial();
+  document.getElementById('mbd-buscar').addEventListener('keydown', e => { if (e.key === 'Enter') cargarMBD(); });
+  cargarMBD();
 }
 
-// ── Parseo de fechas Excel ────────────────────────────────────────
-function _parsearFechaExcel(val) {
-  if (val === null || val === undefined || val === '') return null;
+async function cargarMBD() {
+  const mes   = document.getElementById('mbd-filtro-mes')?.value;
+  const anio  = document.getElementById('mbd-filtro-anio')?.value;
+  const buscar = document.getElementById('mbd-buscar')?.value.trim().toLowerCase();
+  const wrap  = document.getElementById('mbd-tabla-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>';
 
-  if (typeof val === 'number') {
-    const fecha = new Date(Math.round((val - 25569) * 86400 * 1000));
-    if (isNaN(fecha.getTime())) return null;
-    const y = fecha.getUTCFullYear();
-    const m = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(fecha.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
+  const desde = `${anio}-${mes}-01`;
+  const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
-  if (val instanceof Date) {
-    if (isNaN(val.getTime())) return null;
-    const y = val.getUTCFullYear();
-    const m = String(val.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(val.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
+  let q = _supabase.from('tesoreria_mbd').select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .gte('fecha_deposito', desde)
+    .lte('fecha_deposito', hasta)
+    .order('fecha_deposito', { ascending: false });
 
-  const s = val.toString().trim();
+  const { data, error } = await q;
+  if (error) { wrap.innerHTML = `<p class="error-texto">Error al cargar: ${escapar(error.message)}</p>`; return; }
 
-  // DD/MM/YYYY HH:MM
-  const reDateTime = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/;
-  const mdt = s.match(reDateTime);
-  if (mdt) {
-    const [, d, mo, y] = mdt;
-    return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
-  }
-
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-
-  const dt = new Date(s);
-  return isNaN(dt.getTime()) ? null : dt.toISOString().slice(0, 10);
-}
-
-// ── Drag & Drop handlers ──────────────────────────────────────────
-function _mbdHandleDrop(e) {
-  e.preventDefault();
-  const dropZone = document.getElementById('mbd-drop-zone');
-  if (dropZone) {
-    dropZone.style.borderColor = 'var(--color-borde)';
-    dropZone.style.background  = '';
-  }
-  const file = e.dataTransfer?.files?.[0];
-  if (!file) return;
-  if (!file.name.match(/\.(xlsx|xlsm)$/i)) {
-    mostrarToast('Solo se aceptan archivos .xlsx o .xlsm', 'atencion');
-    return;
-  }
-  _mbdHandleFile(file);
-}
-
-function _mbdHandleFile(file) {
-  if (!file) return;
-  const info = document.getElementById('mbd-archivo-info');
-  if (info) {
-    info.style.display = 'block';
-    info.textContent   = `📂 ${file.name} (${(file.size / 1024).toFixed(1)} KB) — leyendo…`;
-  }
-
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: false });
-
-      // Acepta hoja "REGISTRO" (plantilla NEXUM) o cualquier primera hoja
-      const wsName = wb.SheetNames.find(n => n.trim().toUpperCase() === 'REGISTRO')
-                     || wb.SheetNames[0];
-      const ws   = wb.Sheets[wsName];
-      const rng  = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      const filas = [];
-
-      // Detectar fila de encabezados automáticamente (busca en las primeras 5 filas)
-      const _celVal = (ri, ci) => {
-        const c = ws[XLSX.utils.encode_cell({ r: ri, c: ci })];
-        return c ? c.v : null;
-      };
-      let headerRow = 0;
-      for (let ri = 0; ri < Math.min(5, rng.e.r); ri++) {
-        const v0 = (_celVal(ri, 0) || '').toString().toLowerCase();
-        const v1 = (_celVal(ri, 1) || '').toString().toLowerCase();
-        if (v1.includes('fecha') || v0.includes('operaci') || v0.includes('n°') || v0.includes('nro')) {
-          headerRow = ri;
-          break;
-        }
-      }
-      const dataStart = headerRow + 1;
-
-      for (let r = dataStart; r <= rng.e.r; r++) {
-        const cel = (col) => {
-          const addr = XLSX.utils.encode_cell({ r, c: col });
-          const c    = ws[addr];
-          return c ? c.v : null;
-        };
-
-        const colA = cel(0);
-        // Saltar filas completamente vacías
-        if (colA === null && cel(1) === null && cel(2) === null) continue;
-
-        const importeRaw = parseFloat(cel(4)) || 0;
-        const estadoDocRaw = (cel(12) || '').toString().trim().toUpperCase();
-        const estadosValidos = ['EMITIDO','PENDIENTE','OBSERVADO','CANCELADO'];
-        const estado_doc = estadosValidos.includes(estadoDocRaw) ? estadoDocRaw : 'PENDIENTE';
-
-        const fechaParsed = _parsearFechaExcel(cel(1));
-
-        filas.push({
-          _fila:                r + 1,
-          numero_operacion:     colA !== null ? colA.toString().trim() : null,
-          fecha:                fechaParsed,
-          descripcion:          cel(2) !== null ? cel(2).toString().trim() : null,
-          moneda:               cel(3) !== null ? cel(3).toString().trim().toUpperCase() : 'PEN',
-          importe:              importeRaw,
-          naturaleza:           importeRaw < 0 ? 'CARGO' : 'ABONO',
-          nombre_proveedor_raw: cel(5) !== null ? cel(5).toString().trim() : null,
-          ruc_dni_raw:          cel(6) !== null ? cel(6).toString().trim() : null,
-          cotizacion:           cel(7) !== null ? cel(7).toString().trim() : null,
-          oc:                   cel(8) !== null ? cel(8).toString().trim() : null,
-          proyecto_raw:         cel(9)  !== null ? cel(9).toString().trim()  : null,
-          concepto_raw:         cel(10) !== null ? cel(10).toString().trim() : null,
-          empresa_raw:          cel(11) !== null ? cel(11).toString().trim() : null,
-          estado_doc,
-          numero_documento:     cel(13) !== null ? cel(13).toString().trim() : null,
-          tipo_documento_codigo: cel(14) !== null ? cel(14).toString().trim() : null,
-          autorizacion_raw:     cel(15) !== null ? cel(15).toString().trim() : null,
-          observaciones:        cel(16) !== null ? cel(16).toString().trim() : null,
-          detalles_servicio:    cel(17) !== null ? cel(17).toString().trim() : null,
-          observaciones_2:      cel(18) !== null ? cel(18).toString().trim() : null,
-          _ok: !!fechaParsed && importeRaw !== 0,
-        });
-      }
-
-      mbd_datos_preview = filas;
-      _mbdMostrarPreview(file.name, filas);
-
-    } catch (err) {
-      mostrarToast('Error al leer el archivo: ' + err.message, 'error');
-      if (info) info.style.display = 'none';
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
-
-function _mbdMostrarPreview(nombre, filas) {
-  const wrap  = document.getElementById('mbd-preview-wrap');
-  const tbody = document.getElementById('mbd-tbody-preview');
-  const info  = document.getElementById('mbd-archivo-info');
-  if (!wrap || !tbody) return;
-
-  const validos  = filas.filter(f => f._ok).length;
-  const errores  = filas.length - validos;
-  const muestra  = filas.slice(0, 10);
-
-  if (info) info.textContent = `📂 ${nombre} — ${filas.length} filas leídas`;
-
-  document.getElementById('mbd-preview-count').textContent = filas.length;
-  document.getElementById('mbd-preview-resumen').textContent =
-    `✅ ${validos} válidos  ⚠️ ${errores} con errores (se omitirán)`;
-
-  const coloresEstado = {
-    EMITIDO:   'badge-activo',
-    PENDIENTE: 'badge-warning',
-    OBSERVADO: 'badge-info',
-    CANCELADO: 'badge-inactivo',
-  };
-
-  tbody.innerHTML = muestra.map(f => `
-    <tr ${!f._ok ? 'style="background:var(--color-danger-bg,#FFF5F5)"' : ''}>
-      <td class="text-mono" style="white-space:nowrap">${escapar(f.numero_operacion || '—')}</td>
-      <td style="white-space:nowrap">${f.fecha || '<span class="text-rojo">—</span>'}</td>
-      <td class="text-sm">${escapar((f.descripcion || '').slice(0, 35))}${(f.descripcion||'').length > 35 ? '…' : ''}</td>
-      <td class="text-right" style="white-space:nowrap">
-        ${f.importe !== 0
-          ? `<span class="${f.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">${f.naturaleza === 'CARGO' ? '-' : ''}${formatearMoneda(Math.abs(f.importe), f.moneda)}</span>`
-          : '<span class="text-rojo">—</span>'}
-      </td>
-      <td class="text-sm">${escapar((f.nombre_proveedor_raw || '—').slice(0, 30))}</td>
-      <td><span class="badge ${coloresEstado[f.estado_doc] || 'badge-info'}" style="font-size:10px">${f.estado_doc}</span></td>
-      <td class="text-mono text-sm">${escapar(f.numero_documento || '—')}</td>
-      <td>${f._ok
-        ? '<span class="badge badge-activo" style="font-size:10px">OK</span>'
-        : '<span class="badge badge-inactivo" style="font-size:10px">Error</span>'}</td>
-    </tr>`).join('');
-
-  if (filas.length > 10) {
-    const extra = filas.length - 10;
-    tbody.innerHTML += `
-      <tr>
-        <td colspan="8" class="text-center text-muted text-sm" style="padding:8px">
-          … y ${extra} filas más (no se muestran en la preview)
-        </td>
-      </tr>`;
-  }
-
-  wrap.style.display = 'block';
-}
-
-function _mbdCancelarPreview() {
-  mbd_datos_preview = [];
-  const wrap  = document.getElementById('mbd-preview-wrap');
-  const info  = document.getElementById('mbd-archivo-info');
-  const input = document.getElementById('mbd-file-input');
-  if (wrap)  wrap.style.display  = 'none';
-  if (info)  info.style.display  = 'none';
-  if (input) input.value         = '';
-}
-
-async function _mbdConfirmarImportacion() {
-  const validos = mbd_datos_preview.filter(f => f._ok);
-  if (!validos.length) {
-    mostrarToast('No hay registros válidos para importar', 'atencion');
-    return;
-  }
-
-  const btn = document.getElementById('mbd-btn-confirmar');
-  if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
-
-  const progWrap = document.getElementById('mbd-progreso');
-  const progTxt  = document.getElementById('mbd-progreso-texto');
-  const progBarra= document.getElementById('mbd-progreso-barra');
-  if (progWrap) progWrap.style.display = 'block';
-
-  const nombreArchivo = document.getElementById('mbd-file-input')?.files[0]?.name || 'MBD.xlsx';
-
-  const { data: lote, error: errLote } = await _supabase
-    .from('lotes_importacion')
-    .insert({
-      empresa_operadora_id: empresa_activa.id,
-      cuenta_bancaria_id:   null,
-      nombre_archivo:       nombreArchivo,
-      tipo_fuente:          'MANUAL',
-      total_registros:      mbd_datos_preview.length,
-      estado:               'PROCESANDO',
-      usuario_id:           perfil_usuario?.id || null,
-    })
-    .select()
-    .single();
-
-  if (errLote) {
-    mostrarToast('Error al crear lote: ' + errLote.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar importación'; }
-    if (progWrap) progWrap.style.display = 'none';
-    return;
-  }
-
-  const movs = validos.map(f => ({
-    empresa_operadora_id:  empresa_activa.id,
-    cuenta_bancaria_id:    null,
-    fecha:                 f.fecha,
-    naturaleza:            f.naturaleza,
-    importe:               Math.abs(f.importe),
-    moneda:                f.moneda || 'PEN',
-    descripcion:           f.descripcion || null,
-    numero_operacion:      f.numero_operacion || null,
-    tipo_documento_codigo: f.tipo_documento_codigo || null,
-    numero_documento:      f.numero_documento || null,
-    cotizacion:            f.cotizacion || null,
-    oc:                    f.oc || null,
-    estado_doc:            f.estado_doc,
-    observaciones:         f.observaciones || null,
-    detalles_servicio:     f.detalles_servicio || null,
-    observaciones_2:       f.observaciones_2 || null,
-    estado:                'PENDIENTE',
-    conciliado:            false,
-    lote_importacion:      lote.id,
-    usuario_id:            perfil_usuario?.id || null,
-  }));
-
-  let ok = 0;
-  let errCount = 0;
-  const TAMANO_LOTE = 50;
-
-  for (let i = 0; i < movs.length; i += TAMANO_LOTE) {
-    const chunk = movs.slice(i, i + TAMANO_LOTE);
-    const { error } = await _supabase.from('movimientos').insert(chunk);
-    if (error) {
-      errCount += chunk.length;
-    } else {
-      ok += chunk.length;
-    }
-    const pct = Math.round(((i + chunk.length) / movs.length) * 100);
-    if (progTxt)   progTxt.textContent   = `Importando ${Math.min(i + TAMANO_LOTE, movs.length)}/${movs.length}…`;
-    if (progBarra) progBarra.style.width = pct + '%';
-  }
-
-  await _supabase.from('lotes_importacion').update({
-    estado:          errCount === 0 ? 'COMPLETADO' : 'ERROR',
-    registros_ok:    ok,
-    registros_error: errCount,
-  }).eq('id', lote.id);
-
-  if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar importación'; }
-  if (progWrap) progWrap.style.display = 'none';
-
-  mostrarToast(
-    `✓ ${ok} registros importados${errCount ? `, ${errCount} errores` : ''}`,
-    errCount > 0 ? 'atencion' : 'exito'
+  let filas = data || [];
+  if (buscar) filas = filas.filter(r =>
+    (r.descripcion||'').toLowerCase().includes(buscar) ||
+    (r.proveedor_empresa_personal||'').toLowerCase().includes(buscar) ||
+    (r.concepto||'').toLowerCase().includes(buscar) ||
+    (r.empresa||'').toLowerCase().includes(buscar) ||
+    (r.nro_factura_doc||'').toLowerCase().includes(buscar) ||
+    (r.ruc_dni||'').toLowerCase().includes(buscar)
   );
 
-  _mbdCancelarPreview();
-  await _mbdCargarHistorial();
-}
+  renderResumenMBD(filas);
 
-async function _mbdCargarHistorial() {
-  const cont = document.getElementById('mbd-historial');
-  if (!cont) return;
-
-  const { data } = await _supabase
-    .from('lotes_importacion')
-    .select('*')
-    .eq('empresa_operadora_id', empresa_activa.id)
-    .eq('tipo_fuente', 'MANUAL')
-    .order('fecha_creacion', { ascending: false })
-    .limit(10);
-
-  const lista = data || [];
-  if (!lista.length) {
-    cont.innerHTML = '<p class="text-center text-muted text-sm" style="padding:12px">Sin importaciones MBD registradas</p>';
+  if (!filas.length) {
+    wrap.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin movimientos en este período.</p>';
     return;
   }
 
-  const colores = { COMPLETADO: 'badge-activo', PROCESANDO: 'badge-warning', ERROR: 'badge-inactivo' };
-
-  cont.innerHTML = `
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:13px">
-        <thead>
+  wrap.innerHTML = `
+    <table class="tabla-nexum">
+      <thead><tr>
+        <th>Fecha</th><th>N° Op.</th><th>Monto</th><th>Mon.</th>
+        <th>Proveedor / Empresa</th><th>Concepto</th><th>Empresa</th>
+        <th>Doc.</th><th>N° Doc</th><th>Estado</th><th>Autorización</th>
+        <th style="text-align:center">Acc.</th>
+      </tr></thead>
+      <tbody>
+        ${filas.map(r => `
           <tr>
-            <th>Fecha</th>
-            <th>Archivo</th>
-            <th>Total</th>
-            <th>OK</th>
-            <th>Errores</th>
-            <th>Estado</th>
+            <td style="white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
+            <td>${escapar(r.nro_operacion_bancaria||'—')}</td>
+            <td style="text-align:right;font-weight:600;color:${r.monto>=0?'var(--color-exito)':'var(--color-critico)'}">${formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td>${escapar(r.moneda||'S/')}</td>
+            <td>${escapar(truncar(r.proveedor_empresa_personal||'—',25))}</td>
+            <td>${escapar(r.concepto||'—')}</td>
+            <td>${escapar(truncar(r.empresa||'—',20))}</td>
+            <td><span class="badge-doc">${escapar(r.tipo_doc||'—')}</span></td>
+            <td>${escapar(r.nro_factura_doc||'—')}</td>
+            <td><span class="badge-estado-${(r.entrega_doc||'').toLowerCase().replace(/\s/g,'-')}">${escapar(r.entrega_doc||'—')}</span></td>
+            <td>${escapar(truncar(r.autorizacion||'—',18))}</td>
+            <td style="text-align:center;white-space:nowrap">
+              <button onclick="abrirModalMBD('${r.id}')" style="${estiloBtnIcono()}" title="Editar">✏️</button>
+              <button onclick="eliminarMBD('${r.id}')" style="${estiloBtnIcono('danger')}" title="Eliminar">🗑️</button>
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          ${lista.map(l => `
-            <tr>
-              <td style="white-space:nowrap">${formatearFecha(l.fecha_creacion?.slice(0,10))}</td>
-              <td class="text-sm">${escapar(l.nombre_archivo)}</td>
-              <td class="text-center">${l.total_registros}</td>
-              <td class="text-center text-verde">${l.registros_ok}</td>
-              <td class="text-center ${l.registros_error > 0 ? 'text-rojo' : ''}">${l.registros_error}</td>
-              <td><span class="badge ${colores[l.estado] || 'badge-info'}" style="font-size:11px">${l.estado}</span></td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>`;
+        `).join('')}
+      </tbody>
+    </table>
+    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} registro(s)</p>
+    ${estilosBadge()}
+  `;
 }
 
-// ── Exportar Plantilla MBD con catálogos precargados ─────────────
-async function exportarPlantillaMBD() {
-  mostrarToast('Generando plantilla con tus catálogos…', 'info');
+function renderResumenMBD(filas) {
+  const div = document.getElementById('mbd-resumen');
+  if (!div) return;
+  const totalS = filas.filter(r=>r.moneda!=='USD').reduce((s,r)=>s+Number(r.monto),0);
+  const totalD = filas.filter(r=>r.moneda==='USD').reduce((s,r)=>s+Number(r.monto),0);
+  const pendientes = filas.filter(r=>r.entrega_doc==='PENDIENTE').length;
+  div.innerHTML = `
+    <div style="${estiloCard('var(--color-exito)')}">
+      <div style="font-size:11px;opacity:.8">TOTAL SOLES</div>
+      <div style="font-size:20px;font-weight:700">${formatearMoneda(totalS,'PEN')}</div>
+    </div>
+    ${totalD ? `<div style="${estiloCard('#2B6CB0')}">
+      <div style="font-size:11px;opacity:.8">TOTAL USD</div>
+      <div style="font-size:20px;font-weight:700">${formatearMoneda(totalD,'USD')}</div>
+    </div>` : ''}
+    <div style="${estiloCard(pendientes>0?'var(--color-atencion)':'#4A5568')}">
+      <div style="font-size:11px;opacity:.8">PENDIENTES DE DOC</div>
+      <div style="font-size:20px;font-weight:700">${pendientes}</div>
+    </div>
+    <div style="${estiloCard('#4A5568')}">
+      <div style="font-size:11px;opacity:.8">TOTAL MOVIMIENTOS</div>
+      <div style="font-size:20px;font-weight:700">${filas.length}</div>
+    </div>
+  `;
+}
 
-  const eid = empresa_activa.id;
-  const [resAut, resTiposDoc, resConceptos, resProyectos, resEmpresas] = await Promise.all([
-    _supabase.from('autorizaciones').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('catalogo_tipos_documento').select('codigo,nombre').eq('activo', true).order('nombre'),
-    _supabase.from('conceptos').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('proyectos').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('empresas_clientes').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+let _mbdDatos = [];
+
+async function abrirModalMBD(id = null) {
+  let item = null;
+  if (id) {
+    const { data } = await _supabase.from('tesoreria_mbd').select('*').eq('id', id).single();
+    item = data;
+  }
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)cerrarModalMBD()">
+      <div class="modal" style="max-width:780px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>📊 ${id ? 'Editar' : 'Nuevo'} Movimiento Bancario</h3>
+          <button class="modal-cerrar" onclick="cerrarModalMBD()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="mbd-alerta" class="alerta-error"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+            <div class="campo">
+              <label>Fecha <span class="req">*</span></label>
+              <input type="date" id="mbd-fecha" value="${item?.fecha_deposito||new Date().toISOString().slice(0,10)}">
+            </div>
+            <div class="campo">
+              <label>Monto <span class="req">*</span></label>
+              <input type="number" id="mbd-monto" step="0.01" placeholder="0.00" value="${item?.monto||''}">
+            </div>
+            <div class="campo">
+              <label>Moneda</label>
+              <select id="mbd-moneda">
+                <option value="S/" ${item?.moneda==='S/'?'selected':''}>S/ — Soles</option>
+                <option value="USD" ${item?.moneda==='USD'?'selected':''}>USD — Dólares</option>
+              </select>
+            </div>
+            <div class="campo">
+              <label>N° Operación Bancaria</label>
+              <input type="text" id="mbd-nro-op" value="${item?.nro_operacion_bancaria||''}" placeholder="Opcional">
+            </div>
+            <div class="campo" style="grid-column:span 2">
+              <label>Descripción</label>
+              <input type="text" id="mbd-descripcion" value="${escapar(item?.descripcion||'')}" placeholder="Descripción del movimiento">
+            </div>
+            <div class="campo" style="grid-column:span 2">
+              <label>Proveedor / Empresa / Personal</label>
+              <input type="text" id="mbd-proveedor" value="${escapar(item?.proveedor_empresa_personal||'')}" placeholder="Nombre">
+            </div>
+            <div class="campo">
+              <label>RUC / DNI</label>
+              <input type="text" id="mbd-ruc-dni" value="${escapar(item?.ruc_dni||'')}" placeholder="Documento">
+            </div>
+            <div class="campo">
+              <label>Concepto</label>
+              <select id="mbd-concepto">
+                <option value="">— Seleccionar —</option>
+                ${CONCEPTOS_MBD.map(c=>`<option value="${c}" ${item?.concepto===c?'selected':''}>${c}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Empresa</label>
+              <select id="mbd-empresa">
+                <option value="">— Seleccionar —</option>
+                ${EMPRESAS_MBD.map(e=>`<option value="${e}" ${item?.empresa===e?'selected':''}>${e}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Tipo DOC</label>
+              <select id="mbd-tipo-doc">
+                <option value="">— Seleccionar —</option>
+                ${TIPOS_DOC_MBD.map(t=>`<option value="${t.val}" ${item?.tipo_doc===t.val?'selected':''}>${t.lab}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Estado Entrega DOC</label>
+              <select id="mbd-entrega-doc">
+                ${['PENDIENTE','OBSERVADO','EMITIDO','CANCELADO'].map(e=>`<option value="${e}" ${(item?.entrega_doc||'PENDIENTE')===e?'selected':''}>${e}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>N° Factura / DOC</label>
+              <input type="text" id="mbd-nro-factura" value="${escapar(item?.nro_factura_doc||'')}" placeholder="Serie-Número">
+            </div>
+            <div class="campo">
+              <label>Autorización</label>
+              <select id="mbd-autorizacion">
+                <option value="">— Seleccionar —</option>
+                ${AUTORIZACIONES_MBD.map(a=>`<option value="${a}" ${item?.autorizacion===a?'selected':''}>${a}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Cotización</label>
+              <input type="text" id="mbd-cotizacion" value="${escapar(item?.cotizacion||'')}">
+            </div>
+            <div class="campo">
+              <label>OC</label>
+              <input type="text" id="mbd-oc" value="${escapar(item?.oc||'')}">
+            </div>
+            <div class="campo">
+              <label>Proyecto</label>
+              <input type="text" id="mbd-proyecto" value="${escapar(item?.proyecto||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Detalles Compra / Servicio</label>
+              <input type="text" id="mbd-detalles" value="${escapar(item?.detalles_compra_servicio||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Observaciones</label>
+              <input type="text" id="mbd-obs" value="${escapar(item?.observaciones||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Obs. 2</label>
+              <input type="text" id="mbd-obs2" value="${escapar(item?.observaciones_2||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Obs. 3</label>
+              <input type="text" id="mbd-obs3" value="${escapar(item?.observaciones_3||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Obs. 4</label>
+              <input type="text" id="mbd-obs4" value="${escapar(item?.observaciones_4||'')}">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="cerrarModalMBD()">Cancelar</button>
+          <button class="btn btn-primario" onclick="guardarMBD('${id||''}')">💾 Guardar</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function cerrarModalMBD() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function guardarMBD(id) {
+  const alerta = document.getElementById('mbd-alerta');
+  alerta.classList.remove('visible');
+
+  const fecha  = document.getElementById('mbd-fecha').value;
+  const monto  = parseFloat(document.getElementById('mbd-monto').value);
+
+  if (!fecha) { alerta.textContent = 'La fecha es requerida.'; alerta.classList.add('visible'); return; }
+  if (isNaN(monto)) { alerta.textContent = 'Ingrese un monto válido.'; alerta.classList.add('visible'); return; }
+
+  const payload = {
+    empresa_id:               empresa_activa.id,
+    fecha_deposito:           fecha,
+    monto,
+    moneda:                   document.getElementById('mbd-moneda').value,
+    nro_operacion_bancaria:   document.getElementById('mbd-nro-op').value.trim()||null,
+    descripcion:              document.getElementById('mbd-descripcion').value.trim()||null,
+    proveedor_empresa_personal: document.getElementById('mbd-proveedor').value.trim()||null,
+    ruc_dni:                  document.getElementById('mbd-ruc-dni').value.trim()||null,
+    concepto:                 document.getElementById('mbd-concepto').value||null,
+    empresa:                  document.getElementById('mbd-empresa').value||null,
+    tipo_doc:                 document.getElementById('mbd-tipo-doc').value||null,
+    entrega_doc:              document.getElementById('mbd-entrega-doc').value,
+    nro_factura_doc:          document.getElementById('mbd-nro-factura').value.trim()||null,
+    autorizacion:             document.getElementById('mbd-autorizacion').value||null,
+    cotizacion:               document.getElementById('mbd-cotizacion').value.trim()||null,
+    oc:                       document.getElementById('mbd-oc').value.trim()||null,
+    proyecto:                 document.getElementById('mbd-proyecto').value.trim()||null,
+    detalles_compra_servicio: document.getElementById('mbd-detalles').value.trim()||null,
+    observaciones:            document.getElementById('mbd-obs').value.trim()||null,
+    observaciones_2:          document.getElementById('mbd-obs2').value.trim()||null,
+    observaciones_3:          document.getElementById('mbd-obs3').value.trim()||null,
+    observaciones_4:          document.getElementById('mbd-obs4').value.trim()||null,
+    creado_por:               perfil_usuario.id,
+    fecha_actualizacion:      new Date().toISOString(),
+  };
+
+  let error;
+  if (id) {
+    ({ error } = await _supabase.from('tesoreria_mbd').update(payload).eq('id', id));
+  } else {
+    ({ error } = await _supabase.from('tesoreria_mbd').insert(payload));
+  }
+
+  if (error) { alerta.textContent = 'Error al guardar: ' + error.message; alerta.classList.add('visible'); return; }
+  mostrarToast(id ? 'Movimiento actualizado.' : 'Movimiento registrado.', 'exito');
+  cerrarModalMBD();
+  cargarMBD();
+}
+
+async function eliminarMBD(id) {
+  const ok = await confirmar('¿Eliminar este movimiento?', { btnOk: 'Eliminar', btnColor: '#C53030' });
+  if (!ok) return;
+  const { error } = await _supabase.from('tesoreria_mbd').delete().eq('id', id);
+  if (error) { mostrarToast('Error al eliminar.', 'error'); return; }
+  mostrarToast('Movimiento eliminado.', 'exito');
+  cargarMBD();
+}
+
+function importarExcelMBD() {
+  document.getElementById('mbd-file-input').click();
+}
+
+async function procesarImportMBD(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'binary', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+      if (rows.length < 2) { mostrarToast('El archivo no tiene datos.', 'atencion'); return; }
+
+      const toDate = v => {
+        if (!v) return null;
+        if (v instanceof Date) return v.toISOString().slice(0,10);
+        const d = new Date(v);
+        return isNaN(d) ? null : d.toISOString().slice(0,10);
+      };
+      const toNum = v => {
+        const n = parseFloat(v);
+        return isNaN(n) ? null : n;
+      };
+
+      const registros = rows.slice(1).filter(r => r[4] !== null && r[4] !== undefined).map(r => ({
+        empresa_id:               empresa_activa.id,
+        nro_operacion_bancaria:   r[0]?.toString()||null,
+        fecha_deposito:           toDate(r[1]),
+        descripcion:              r[2]?.toString()||null,
+        moneda:                   r[3]?.toString()||'S/',
+        monto:                    toNum(r[4]),
+        proveedor_empresa_personal: r[5]?.toString()||null,
+        ruc_dni:                  r[6]?.toString()||null,
+        cotizacion:               r[7]?.toString()||null,
+        oc:                       r[8]?.toString()||null,
+        proyecto:                 r[9]?.toString()||null,
+        concepto:                 r[10]?.toString()||null,
+        empresa:                  r[11]?.toString()||null,
+        entrega_doc:              r[12]?.toString()||'PENDIENTE',
+        nro_factura_doc:          r[13]?.toString()||null,
+        tipo_doc:                 r[14]?.toString()||null,
+        autorizacion:             r[15]?.toString()||null,
+        observaciones:            r[16]?.toString()||null,
+        detalles_compra_servicio: r[17]?.toString()||null,
+        observaciones_2:          r[18]?.toString()||null,
+        observaciones_3:          r[19]?.toString()||null,
+        observaciones_4:          r[20]?.toString()||null,
+        creado_por:               perfil_usuario.id,
+      })).filter(r => r.fecha_deposito && r.monto !== null);
+
+      if (!registros.length) { mostrarToast('No se encontraron filas válidas.', 'atencion'); return; }
+
+      const { error } = await _supabase.from('tesoreria_mbd').insert(registros);
+      if (error) { mostrarToast('Error al importar: ' + error.message, 'error'); return; }
+      mostrarToast(`${registros.length} movimiento(s) importado(s).`, 'exito');
+      cargarMBD();
+    } catch(err) {
+      mostrarToast('Error al leer el archivo.', 'error');
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+
+async function exportarExcelMBD() {
+  const mes  = document.getElementById('mbd-filtro-mes')?.value;
+  const anio = document.getElementById('mbd-filtro-anio')?.value;
+  const desde = `${anio}-${mes}-01`;
+  const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
+
+  const { data } = await _supabase.from('tesoreria_mbd').select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .gte('fecha_deposito', desde).lte('fecha_deposito', hasta)
+    .order('fecha_deposito');
+
+  if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
+
+  const cabecera = ['N° Op. Bancaria','Fecha Depósito','Descripción','Moneda','Monto',
+    'Proveedor/Empresa/Personal','RUC/DNI','Cotización','OC','Proyecto','Concepto','Empresa',
+    'Entrega FA/DOC/RRHH','N° Factura o DOC','Tipo DOC','Autorización','Observaciones',
+    'Detalles Compra/Servicio','Observaciones 2','Observaciones 3','Observaciones 4'];
+
+  const filas = data.map(r => [
+    r.nro_operacion_bancaria, r.fecha_deposito, r.descripcion, r.moneda, r.monto,
+    r.proveedor_empresa_personal, r.ruc_dni, r.cotizacion, r.oc, r.proyecto, r.concepto, r.empresa,
+    r.entrega_doc, r.nro_factura_doc, r.tipo_doc, r.autorizacion, r.observaciones,
+    r.detalles_compra_servicio, r.observaciones_2, r.observaciones_3, r.observaciones_4
   ]);
 
-  const autorizaciones = (resAut.data    || []).map(a => a.nombre);
-  const tiposDoc       = (resTiposDoc.data || []).map(t => `${t.codigo} - ${t.nombre}`);
-  const conceptos      = (resConceptos.data || []).map(c => c.nombre);
-  const proyectos      = (resProyectos.data || []).map(p => p.nombre);
-  const empresas       = (resEmpresas.data  || []).map(e => e.nombre);
-
-  const encabezados = [
-    'N° Operación bancaria',
-    'Fecha Depósito (DD/MM/YYYY)',
-    'Descripción / Detalle Operación',
-    'Moneda (PEN/USD/EUR)',
-    'Importe (CARGO=negativo, ABONO=positivo)',
-    'Proveedor / Empresa / Personal',
-    'RUC / DNI',
-    'Cotización',
-    'OC (Orden de Compra)',
-    'Proyecto',
-    'Concepto',
-    'Empresa',
-    'Entrega FA/DOC/RH (EMITIDO/PENDIENTE/OBSERVADO/CANCELADO)',
-    'Nº Factura / Boleta / DOC',
-    'Tipo DOC (código)',
-    'Autorización',
-    'Observaciones',
-    'Detalles Compra/Servicio',
-    'Observaciones 2',
-  ];
-
+  const ws = XLSX.utils.aoa_to_sheet([cabecera, ...filas]);
   const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Movimientos');
+  XLSX.writeFile(wb, `MBD_${empresa_activa.nombre_corto}_${anio}${mes}.xlsx`);
+  mostrarToast('Archivo exportado.', 'exito');
+}
 
-  // ── Hoja REGISTRO ───────────────────────────────────────────────
-  const registroData = [
-    [`PLANTILLA MBD — ${empresa_activa.nombre} — ${new Date().toLocaleDateString('es-PE')}`,
-     ...Array(18).fill('')],
-    ['⚠ NO modificar la estructura. Fila 3 = encabezados. Datos desde fila 4. Ver hoja LISTAS para valores válidos.',
-     ...Array(18).fill('')],
-    encabezados,
-    ...Array(10).fill(Array(19).fill('')),
-  ];
-
-  const wsReg = XLSX.utils.aoa_to_sheet(registroData);
-  wsReg['!cols'] = [
-    {wch:18},{wch:16},{wch:38},{wch:10},{wch:12},
-    {wch:30},{wch:14},{wch:14},{wch:14},{wch:20},
-    {wch:22},{wch:22},{wch:32},{wch:18},{wch:14},
-    {wch:20},{wch:28},{wch:32},{wch:28},
-  ];
-  XLSX.utils.book_append_sheet(wb, wsReg, 'REGISTRO');
-
-  // ── Hoja LISTAS (valores válidos de catálogos) ──────────────────
-  const maxLen = Math.max(autorizaciones.length, tiposDoc.length, conceptos.length,
-                          proyectos.length, empresas.length, 4);
-
-  const listasData = [
-    ['AUTORIZACIONES', 'TIPOS DOCUMENTO', 'CONCEPTOS', 'PROYECTOS',
-     'EMPRESAS CLIENTES', 'ENTREGA FA/DOC/RH', 'MONEDAS'],
-    ...Array.from({ length: maxLen }, (_, i) => [
-      autorizaciones[i] || '',
-      tiposDoc[i]       || '',
-      conceptos[i]      || '',
-      proyectos[i]      || '',
-      empresas[i]       || '',
-      ['EMITIDO', 'PENDIENTE', 'OBSERVADO', 'CANCELADO'][i] || '',
-      ['PEN', 'USD', 'EUR'][i] || '',
-    ]),
-  ];
-
-  const wsListas = XLSX.utils.aoa_to_sheet(listasData);
-  wsListas['!cols'] = Array(7).fill({ wch: 30 });
-  XLSX.utils.book_append_sheet(wb, wsListas, 'LISTAS');
-
-  const fecha = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `Plantilla_MBD_${empresa_activa.nombre.replace(/\s+/g, '_')}_${fecha}.xlsx`);
-  mostrarToast('✓ Plantilla descargada. Hoja LISTAS tiene los valores válidos para cada campo.', 'exito');
+/* ── Helpers de estilo ─────────────────────────────────────── */
+function estiloSelect() {
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+}
+function estiloInput() {
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+}
+function estiloBtnPrimario() {
+  return 'padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500';
+}
+function estiloBtnSecundario() {
+  return 'padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px';
+}
+function estiloBtnIcono(tipo) {
+  const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)';
+  const co = tipo === 'danger' ? '#C53030' : 'var(--color-secundario)';
+  return `padding:4px 8px;background:${bg};color:${co};border:none;border-radius:4px;cursor:pointer;font-size:13px`;
+}
+function estiloCard(color) {
+  return `background:${color};color:#fff;padding:12px 16px;border-radius:8px;min-width:140px`;
+}
+function estilosBadge() {
+  return `<style>
+    .badge-doc{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--color-secundario);color:#fff}
+    .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
+    .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
+    .badge-estado-emitido{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#2F855A;color:#fff}
+    .badge-estado-cancelado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#4A5568;color:#fff}
+  </style>`;
 }
