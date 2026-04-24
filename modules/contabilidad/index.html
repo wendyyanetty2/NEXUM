@@ -27,15 +27,18 @@
       <div class="page-header">
         <div>
           <h1>📒 Contabilidad</h1>
-          <p>Plan de cuentas PCGE, asientos, libro mayor y estados financieros</p>
+          <p>Registros SUNAT, plan de cuentas, asientos y estados financieros</p>
         </div>
       </div>
 
       <div style="display:flex;gap:4px;margin-bottom:24px;border-bottom:2px solid var(--color-borde);overflow-x:auto;">
-        <button class="tab-btn activo" id="tab-con-plan"     onclick="activarTab('con-plan')">📋 Plan de cuentas</button>
-        <button class="tab-btn"        id="tab-con-asientos" onclick="activarTab('con-asientos')">📝 Asientos</button>
-        <button class="tab-btn"        id="tab-con-mayor"    onclick="activarTab('con-mayor')">📖 Libro Mayor</button>
-        <button class="tab-btn"        id="tab-con-estados"  onclick="activarTab('con-estados')">📊 Estados Financieros</button>
+        <button class="tab-btn activo" id="tab-con-ventas"      onclick="activarTab('con-ventas')">📋 Reg. Ventas</button>
+        <button class="tab-btn"        id="tab-con-compras"     onclick="activarTab('con-compras')">🛒 Reg. Compras</button>
+        <button class="tab-btn"        id="tab-con-rh-rec"      onclick="activarTab('con-rh-rec')">🧾 RH Recibidas</button>
+        <button class="tab-btn"        id="tab-con-plan"        onclick="activarTab('con-plan')">📋 Plan de cuentas</button>
+        <button class="tab-btn"        id="tab-con-asientos"    onclick="activarTab('con-asientos')">📝 Asientos</button>
+        <button class="tab-btn"        id="tab-con-mayor"       onclick="activarTab('con-mayor')">📖 Libro Mayor</button>
+        <button class="tab-btn"        id="tab-con-estados"     onclick="activarTab('con-estados')">📊 Est. Financieros</button>
       </div>
 
       <div id="contenido-tab">
@@ -59,6 +62,9 @@
 .tab-btn.activo { color:var(--color-secundario); border-bottom-color:var(--color-secundario); }
 </style>
 
+<script src="../../modules/contabilidad/modules/con-ventas.js"></script>
+<script src="../../modules/contabilidad/modules/con-compras.js"></script>
+<script src="../../modules/contabilidad/modules/con-rh-recibidas.js"></script>
 <script src="../../modules/contabilidad/modules/con-plan-cuentas.js"></script>
 <script src="../../modules/contabilidad/modules/con-asientos.js"></script>
 <script src="../../modules/contabilidad/modules/con-mayor.js"></script>
@@ -74,7 +80,7 @@ let empresa_activa = null;
   perfil_usuario = resultado.perfil;
   empresa_activa = resultado.empresa;
   setBreadcrumb('Contabilidad');
-  activarTab('con-plan');
+  activarTab('con-ventas');
 })();
 
 function activarTab(tab) {
@@ -82,6 +88,9 @@ function activarTab(tab) {
   document.getElementById('tab-' + tab).classList.add('activo');
   const area = document.getElementById('contenido-tab');
   const mapa = {
+    'con-ventas':   () => renderTabVentas(area),
+    'con-compras':  () => renderTabCompras(area),
+    'con-rh-rec':   () => renderTabRHRecibidas(area),
     'con-plan':     () => renderTabPlanCuentas(area),
     'con-asientos': () => renderTabAsientos(area),
     'con-mayor':    () => renderTabMayor(area),
