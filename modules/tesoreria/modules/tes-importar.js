@@ -345,7 +345,7 @@ async function cargarHistorialImportaciones() {
   cont.innerHTML = `
     <div class="table-wrap">
       <table class="tabla" style="font-size:13px">
-        <thead><tr><th>Fecha</th><th>Archivo</th><th>Cuenta</th><th>Fuente</th><th>Total</th><th>OK</th><th>Errores</th><th>Estado</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Archivo</th><th>Cuenta</th><th>Fuente</th><th>Total</th><th>OK</th><th>Errores</th><th>Estado</th><th>Acc.</th></tr></thead>
         <tbody>${lista.map(l => `
           <tr>
             <td>${formatearFecha(l.fecha_creacion?.slice(0,10))}</td>
@@ -356,8 +356,33 @@ async function cargarHistorialImportaciones() {
             <td class="text-center text-verde">${l.registros_ok}</td>
             <td class="text-center ${l.registros_error > 0 ? 'text-rojo' : ''}">${l.registros_error}</td>
             <td><span class="badge ${colores[l.estado] || 'badge-info'}" style="font-size:11px">${l.estado}</span></td>
+            <td>
+              <button onclick="eliminarLoteEECC('${l.id}', ${l.registros_ok || 0})"
+                style="padding:3px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
+                title="Eliminar esta importación y sus movimientos">🗑️</button>
+            </td>
           </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
+}
+
+async function eliminarLoteEECC(loteId, cantMovimientos) {
+  const msg = cantMovimientos > 0
+    ? `¿Eliminar esta importación y sus ${cantMovimientos} movimiento(s)? Podrás volver a subir el archivo.`
+    : '¿Eliminar esta importación del historial?';
+  if (!await confirmar(msg, { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
+
+  if (cantMovimientos > 0) {
+    const { error: errMov } = await _supabase
+      .from('movimientos').delete().eq('lote_importacion', loteId);
+    if (errMov) { mostrarToast('Error al eliminar movimientos: ' + errMov.message, 'error'); return; }
+  }
+
+  const { error: errLote } = await _supabase
+    .from('lotes_importacion').delete().eq('id', loteId);
+  if (errLote) { mostrarToast('Error al eliminar registro: ' + errLote.message, 'error'); return; }
+
+  mostrarToast('Importación eliminada. Puedes volver a subir el archivo.', 'exito');
+  await cargarHistorialImportaciones();
 }

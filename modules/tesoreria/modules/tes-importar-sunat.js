@@ -442,7 +442,7 @@ async function _sunatCargarHistorial() {
     <div class="table-wrap">
       <table class="tabla" style="font-size:13px">
         <thead>
-          <tr><th>Fecha</th><th>Tipo</th><th>Archivo</th><th>Total</th><th>OK</th><th>Errores</th><th>Estado</th></tr>
+          <tr><th>Fecha</th><th>Tipo</th><th>Archivo</th><th>Total</th><th>OK</th><th>Errores</th><th>Estado</th><th>Acc.</th></tr>
         </thead>
         <tbody>
           ${lista.map(l => `
@@ -463,8 +463,33 @@ async function _sunatCargarHistorial() {
                   ${l.estado}
                 </span>
               </td>
+              <td>
+                <button onclick="_sunatEliminarLote('${l.id}', ${l.registros_ok || 0})"
+                  style="padding:3px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
+                  title="Eliminar importación y sus registros">🗑️</button>
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
+}
+
+async function _sunatEliminarLote(loteId, cantMovimientos) {
+  const msg = cantMovimientos > 0
+    ? `¿Eliminar esta importación y sus ${cantMovimientos} movimiento(s)? Podrás volver a subir el archivo.`
+    : '¿Eliminar esta importación del historial?';
+  if (!await confirmar(msg, { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
+
+  if (cantMovimientos > 0) {
+    const { error: errMov } = await _supabase
+      .from('movimientos').delete().eq('lote_importacion', loteId);
+    if (errMov) { mostrarToast('Error al eliminar movimientos: ' + errMov.message, 'error'); return; }
+  }
+
+  const { error: errLote } = await _supabase
+    .from('lotes_importacion').delete().eq('id', loteId);
+  if (errLote) { mostrarToast('Error al eliminar registro: ' + errLote.message, 'error'); return; }
+
+  mostrarToast('Importación eliminada. Puedes volver a subir el archivo.', 'exito');
+  await _sunatCargarHistorial();
 }

@@ -14,6 +14,7 @@ let mov_proyectos         = [];
 let mov_medios_pago       = [];
 let mov_tipos_op          = [];
 let mov_tipos_doc         = [];
+let mov_seleccionados     = new Set();
 
 async function renderTabMovimientos(area) {
   area.innerHTML = `
@@ -75,10 +76,15 @@ async function renderTabMovimientos(area) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span id="mov-contador" class="text-muted text-sm"></span>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()">🔄 Limpiar</button>
             <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()">⬇ Excel</button>
-            <button class="btn btn-primario btn-sm"   onclick="abrirModalMovimiento(null)">+ Nuevo</button>
+            <button id="btn-eliminar-sel" class="btn btn-sm"
+              style="display:none;background:#C53030;color:#fff;border:none;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-size:13px"
+              onclick="eliminarSeleccionadosMov()">
+              🗑️ Eliminar seleccionados (<span id="mov-sel-count">0</span>)
+            </button>
+            <button class="btn btn-primario btn-sm" onclick="abrirModalMovimiento(null)">+ Nuevo</button>
           </div>
         </div>
       </div>
@@ -86,6 +92,8 @@ async function renderTabMovimientos(area) {
       <div class="table-wrap">
         <table class="tabla">
           <thead><tr>
+            <th style="width:32px"><input type="checkbox" id="chk-todos-mov" title="Seleccionar todos"
+              onchange="seleccionarTodosMov(this.checked)"></th>
             <th>Fecha</th><th>Cuenta</th><th>Naturaleza</th><th>Importe</th>
             <th>Descripción</th><th>Nro Operación</th><th>FA/DOC/RH</th><th>Estado</th><th>Acciones</th>
           </tr></thead>
@@ -379,7 +387,41 @@ function filtrarMovimientos() {
 function limpiarFiltrosMov() {
   ['mov-buscar','mov-desde','mov-hasta'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   ['mov-cuenta','mov-naturaleza','mov-estado-f','mov-estado-doc-f'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  mov_seleccionados.clear();
+  _actualizarBtnEliminarSel();
   filtrarMovimientos();
+}
+
+function toggleSeleccionMov(id, checked) {
+  if (checked) mov_seleccionados.add(id);
+  else mov_seleccionados.delete(id);
+  _actualizarBtnEliminarSel();
+}
+
+function seleccionarTodosMov(checked) {
+  const inicio = (movimientos_pag - 1) * MOV_POR_PAG;
+  const pagina = movimientos_filtrada.slice(inicio, inicio + MOV_POR_PAG);
+  pagina.forEach(m => { if (checked) mov_seleccionados.add(m.id); else mov_seleccionados.delete(m.id); });
+  document.querySelectorAll('.chk-mov').forEach(el => el.checked = checked);
+  _actualizarBtnEliminarSel();
+}
+
+function _actualizarBtnEliminarSel() {
+  const btn = document.getElementById('btn-eliminar-sel');
+  const cnt = document.getElementById('mov-sel-count');
+  if (btn) btn.style.display = mov_seleccionados.size > 0 ? 'inline-flex' : 'none';
+  if (cnt) cnt.textContent = mov_seleccionados.size;
+}
+
+async function eliminarSeleccionadosMov() {
+  const ids = [...mov_seleccionados];
+  if (!ids.length) return;
+  if (!await confirmar(`¿Eliminar ${ids.length} movimiento(s) seleccionado(s)? Esta acción no se puede deshacer.`, { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
+  const { error } = await _supabase.from('movimientos').delete().in('id', ids);
+  if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ ${ids.length} movimiento(s) eliminado(s).`, 'exito');
+  mov_seleccionados.clear();
+  await cargarMovimientos();
 }
 
 function renderTablaMovimientos() {
@@ -400,6 +442,9 @@ function renderTablaMovimientos() {
 
   tbody.innerHTML = pagina.length ? pagina.map(m => `
     <tr>
+      <td><input type="checkbox" class="chk-mov" data-id="${m.id}"
+        ${mov_seleccionados.has(m.id) ? 'checked' : ''}
+        onchange="toggleSeleccionMov('${m.id}', this.checked)"></td>
       <td>${formatearFecha(m.fecha)}</td>
       <td class="text-sm">${escapar(m.cuentas_bancarias?.nombre_alias || '—')}</td>
       <td><span class="badge ${m.naturaleza === 'CARGO' ? 'badge-critico' : 'badge-activo'}" style="font-size:11px">${m.naturaleza}</span></td>

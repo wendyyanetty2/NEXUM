@@ -20,8 +20,10 @@ function renderTabCompras(area) {
             style="width:200px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)">
           <button onclick="cargarCompras()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="exportarExcelCompras()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar PLE</button>
+          <button onclick="document.getElementById('c-sunat-file').click()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📊 Importar SUNAT</button>
+          <input type="file" id="c-sunat-file" accept=".xlsx,.xls" style="display:none" onchange="_cSunatHandleFile(this)">
           <button onclick="abrirModalCompra()" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">+ Nueva compra</button>
         </div>
       </div>
@@ -389,4 +391,211 @@ async function exportarExcelCompras() {
   XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
   XLSX.writeFile(wb, `RC_${empresa_activa.nombre_corto}_${periodo||'todos'}.xlsx`);
   mostrarToast('Exportado en formato PLE.', 'exito');
+}
+
+// ── Importar SUNAT Excel con deduplicación ────────────────────────
+
+let _cSunatDatos = [];
+
+function _cSunatHandleFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const wb   = XLSX.read(e.target.result, { type: 'array', cellDates: false });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+      if (rows.length < 2) { mostrarToast('El archivo está vacío.', 'atencion'); return; }
+
+      mostrarToast('Leyendo archivo…', 'info');
+
+      const _fecha = v => {
+        if (!v) return null;
+        const s = v.toString().trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d,m,y]=s.split('/'); return `${y}-${m}-${d}`; }
+        const n = typeof v === 'number' ? new Date(Math.round((v - 25569) * 86400 * 1000)) : new Date(s);
+        return isNaN(n) ? null : n.toISOString().slice(0,10);
+      };
+      const _num  = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+      const _str  = v => (v ?? '').toString().trim();
+      const _mon  = v => { const s=_str(v).toUpperCase(); return ['USD','2','$'].includes(s)?'USD':'PEN'; };
+
+      _cSunatDatos = rows.slice(1).map((r, i) => {
+        const serie = _str(r[7]);
+        const nro   = parseInt(r[9]) || 0;
+        if (!serie && !nro) return null;
+        const fecha = _fecha(r[4]);
+        const total = Math.abs(_num(r[24]));
+        return {
+          _fila:    i + 2,
+          _clave:   `${serie}-${nro}`,
+          _ok:      !!fecha && total > 0,
+          empresa_id:           empresa_activa.id,
+          ruc:                  _str(empresa_activa.ruc || ''),
+          razon_social:         _str(empresa_activa.nombre || ''),
+          periodo:              fecha ? fecha.slice(0,7).replace('-','') : '',
+          car_sunat:            _str(r[3]),
+          fecha_emision:        fecha,
+          fecha_vcto_pago:      _fecha(r[5]) || null,
+          tipo_cp_doc:          parseInt(r[6]) || 1,
+          serie_cdp:            serie,
+          anio:                 parseInt(r[8]) || (fecha ? parseInt(fecha.slice(0,4)) : null),
+          nro_cp_inicial:       nro,
+          nro_cp_final:         parseInt(r[10]) || nro,
+          tipo_doc_identidad:   _str(r[11]) || '6',
+          nro_doc_identidad:    _str(r[12]),
+          proveedor:            _str(r[13]),
+          bi_gravado_dg:        _num(r[14]),
+          igv_ipm_dg:           _num(r[15]),
+          bi_gravado_dgng:      _num(r[16]),
+          igv_ipm_dgng:         _num(r[17]),
+          bi_gravado_dng:       _num(r[18]),
+          igv_ipm_dng:          _num(r[19]),
+          valor_adq_ng:         _num(r[20]),
+          isc:                  _num(r[21]),
+          icbper:               _num(r[22]),
+          otros_trib_cargos:    _num(r[23]),
+          total_cp:             total,
+          moneda:               _mon(r[25]),
+          tipo_cambio:          _num(r[26]) || 1,
+          est_comp:             parseInt(r[28]) || 1,
+          creado_por:           perfil_usuario.id,
+          fecha_actualizacion:  new Date().toISOString(),
+        };
+      }).filter(Boolean);
+
+      const periodo = document.getElementById('c-periodo')?.value.trim() ||
+        (_cSunatDatos[0]?.periodo || '');
+
+      const { data: existentes } = await _supabase
+        .from('contabilidad_compras').select('serie_cdp, nro_cp_inicial, total_cp')
+        .eq('empresa_id', empresa_activa.id)
+        .eq('periodo', periodo);
+
+      const mapExist = new Map((existentes||[]).map(r => [`${r.serie_cdp}-${r.nro_cp_inicial}`, r.total_cp]));
+
+      let nuevos = 0, actualizados = 0, sinCambios = 0, invalidos = 0;
+      _cSunatDatos.forEach(r => {
+        if (!r._ok) { invalidos++; return; }
+        const exist = mapExist.get(r._clave);
+        if (exist === undefined) r._estado = 'NUEVO';
+        else if (Math.abs(Number(exist) - r.total_cp) > 0.01) r._estado = 'ACTUALIZAR';
+        else r._estado = 'SIN_CAMBIO';
+        if (r._estado === 'NUEVO') nuevos++;
+        else if (r._estado === 'ACTUALIZAR') actualizados++;
+        else sinCambios++;
+      });
+
+      const mc = document.getElementById('modal-container');
+      mc.innerHTML = `
+        <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cSunatCerrar()">
+          <div class="modal" style="max-width:900px;width:95%;max-height:92vh;overflow-y:auto">
+            <div class="modal-header">
+              <h3>📊 Importar SUNAT — Registro de Compras</h3>
+              <button class="modal-cerrar" onclick="_cSunatCerrar()">✕</button>
+            </div>
+            <div class="modal-body">
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+                <div style="background:#2F855A;color:#fff;padding:10px 16px;border-radius:8px;text-align:center;min-width:100px">
+                  <div style="font-size:11px;opacity:.8">NUEVOS</div>
+                  <div style="font-size:20px;font-weight:700">${nuevos}</div>
+                </div>
+                <div style="background:#2C5282;color:#fff;padding:10px 16px;border-radius:8px;text-align:center;min-width:100px">
+                  <div style="font-size:11px;opacity:.8">SE ACTUALIZAN</div>
+                  <div style="font-size:20px;font-weight:700">${actualizados}</div>
+                </div>
+                <div style="background:#4A5568;color:#fff;padding:10px 16px;border-radius:8px;text-align:center;min-width:100px">
+                  <div style="font-size:11px;opacity:.8">SIN CAMBIOS</div>
+                  <div style="font-size:20px;font-weight:700">${sinCambios}</div>
+                </div>
+                ${invalidos ? `<div style="background:#C53030;color:#fff;padding:10px 16px;border-radius:8px;text-align:center;min-width:100px">
+                  <div style="font-size:11px;opacity:.8">OMITIDOS</div>
+                  <div style="font-size:20px;font-weight:700">${invalidos}</div>
+                </div>` : ''}
+              </div>
+              <div style="overflow-x:auto;max-height:320px;overflow-y:auto">
+                <table class="tabla-nexum" style="font-size:12px">
+                  <thead><tr>
+                    <th>Serie-N°</th><th>Fecha</th><th>Proveedor</th>
+                    <th style="text-align:right">BI Grav. DG</th>
+                    <th style="text-align:right">IGV</th>
+                    <th style="text-align:right">Total</th><th>Mon.</th><th>Estado</th>
+                  </tr></thead>
+                  <tbody>
+                    ${_cSunatDatos.filter(r=>r._ok).slice(0,30).map(r => {
+                      const color = r._estado==='NUEVO'?'#2F855A':r._estado==='ACTUALIZAR'?'#2C5282':'#4A5568';
+                      const label = r._estado==='NUEVO'?'NUEVO':r._estado==='ACTUALIZAR'?'ACTUALIZAR':'SIN CAMBIO';
+                      return `<tr>
+                        <td class="text-mono">${escapar(r._clave)}</td>
+                        <td style="white-space:nowrap">${r.fecha_emision||'—'}</td>
+                        <td style="font-size:11px">${escapar((r.proveedor||'—').slice(0,25))}</td>
+                        <td style="text-align:right">${formatearMoneda(r.bi_gravado_dg,r.moneda==='USD'?'USD':'PEN')}</td>
+                        <td style="text-align:right">${formatearMoneda(r.igv_ipm_dg,r.moneda==='USD'?'USD':'PEN')}</td>
+                        <td style="text-align:right;font-weight:600">${formatearMoneda(r.total_cp,r.moneda==='USD'?'USD':'PEN')}</td>
+                        <td>${escapar(r.moneda)}</td>
+                        <td><span style="font-size:10px;background:${color};color:#fff;padding:2px 6px;border-radius:8px">${label}</span></td>
+                      </tr>`;
+                    }).join('')}
+                    ${_cSunatDatos.filter(r=>r._ok).length > 30
+                      ? `<tr><td colspan="8" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_cSunatDatos.filter(r=>r._ok).length-30} más</td></tr>`
+                      : ''}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secundario" onclick="_cSunatCerrar()">Cancelar</button>
+              <button class="btn btn-primario" id="btn-conf-csunat" onclick="_cSunatConfirmar()"
+                ${!nuevos && !actualizados ? 'disabled' : ''}>
+                ✅ Importar ${nuevos + actualizados} registro(s)
+              </button>
+            </div>
+          </div>
+        </div>`;
+    } catch(err) {
+      mostrarToast('Error al leer el archivo: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function _cSunatCerrar() {
+  _cSunatDatos = [];
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function _cSunatConfirmar() {
+  const btn = document.getElementById('btn-conf-csunat');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
+
+  const nuevos     = _cSunatDatos.filter(r => r._ok && r._estado === 'NUEVO');
+  const actualizar = _cSunatDatos.filter(r => r._ok && r._estado === 'ACTUALIZAR');
+
+  let errCount = 0;
+
+  if (nuevos.length) {
+    const registros = nuevos.map(({ _fila, _ok, _estado, _clave, ...r }) => r);
+    const { error } = await _supabase.from('contabilidad_compras').insert(registros);
+    if (error) { errCount++; mostrarToast('Error al insertar: ' + error.message, 'error'); }
+  }
+
+  for (const r of actualizar) {
+    const { _fila, _ok, _estado, _clave, ...payload } = r;
+    const { error } = await _supabase.from('contabilidad_compras')
+      .update(payload)
+      .eq('empresa_id', empresa_activa.id)
+      .eq('serie_cdp', r.serie_cdp)
+      .eq('nro_cp_inicial', r.nro_cp_inicial);
+    if (error) errCount++;
+  }
+
+  _cSunatCerrar();
+  if (!errCount) mostrarToast(`✓ ${nuevos.length} nuevo(s) + ${actualizar.length} actualizado(s).`, 'exito');
+  else mostrarToast('Importación parcial. Revisa los datos.', 'atencion');
+  cargarCompras();
 }

@@ -68,8 +68,28 @@ function renderTabImportarMBD(area) {
       <div id="mbd-tabla-wrap" style="overflow-x:auto;">
         <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
       </div>
+
+      <div id="mbd-preview-wrap" style="display:none;margin-top:16px;border:1px solid var(--color-borde);border-radius:var(--radio);padding:16px;background:var(--color-fondo-2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          <h3 style="margin:0">👁️ Vista previa — <span id="mbd-prev-count">0</span> registros</h3>
+          <span id="mbd-prev-resumen" style="font-size:13px;color:var(--color-texto-suave)"></span>
+        </div>
+        <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
+          <table class="tabla-nexum">
+            <thead><tr>
+              <th>#</th><th>Fecha</th><th>Monto</th><th>Mon.</th>
+              <th>Proveedor / Personal</th><th>Concepto</th><th>Tipo Doc</th><th>Estado</th>
+            </tr></thead>
+            <tbody id="mbd-prev-tbody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button onclick="cancelarPreviewMBD()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">Cancelar</button>
+          <button onclick="confirmarImportMBD()" id="btn-confirmar-mbd" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">✅ Confirmar e importar</button>
+        </div>
+      </div>
     </div>
-    <input type="file" id="mbd-file-input" accept=".xlsx,.xls" style="display:none" onchange="procesarImportMBD(this)">
+    <input type="file" id="mbd-file-input" accept=".xlsx,.xls,.xlsm" style="display:none" onchange="procesarImportMBD(this)">
   `;
 
   document.getElementById('mbd-buscar').addEventListener('keydown', e => { if (e.key === 'Enter') cargarMBD(); });
@@ -374,67 +394,138 @@ function importarExcelMBD() {
   document.getElementById('mbd-file-input').click();
 }
 
-async function procesarImportMBD(input) {
+let _mbdDatosPreview = [];
+
+function procesarImportMBD(input) {
   const file = input.files[0];
   if (!file) return;
   input.value = '';
 
   const reader = new FileReader();
-  reader.onload = async e => {
+  reader.onload = e => {
     try {
-      const wb = XLSX.read(e.target.result, { type: 'binary', cellDates: true });
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
       if (rows.length < 2) { mostrarToast('El archivo no tiene datos.', 'atencion'); return; }
 
+      const cabeceras = (rows[0] || []).map(h => (h || '').toString().trim().toLowerCase());
+      const esTieneEncabezado = cabeceras.some(h => ['fecha', 'monto', 'fecha depósito', 'fecha deposito'].includes(h));
+      const inicio = esTieneEncabezado ? 1 : 1;
+
       const toDate = v => {
         if (!v) return null;
         if (v instanceof Date) return v.toISOString().slice(0,10);
-        const d = new Date(v);
-        return isNaN(d) ? null : d.toISOString().slice(0,10);
+        const s = v.toString().trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d,m,y]=s.split('/'); return `${y}-${m}-${d}`; }
+        const d = new Date(s); return isNaN(d) ? null : d.toISOString().slice(0,10);
       };
-      const toNum = v => {
-        const n = parseFloat(v);
-        return isNaN(n) ? null : n;
-      };
+      const toNum = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
 
-      const registros = rows.slice(1).filter(r => r[4] !== null && r[4] !== undefined).map(r => ({
-        empresa_id:               empresa_activa.id,
-        nro_operacion_bancaria:   r[0]?.toString()||null,
-        fecha_deposito:           toDate(r[1]),
-        descripcion:              r[2]?.toString()||null,
-        moneda:                   r[3]?.toString()||'S/',
-        monto:                    toNum(r[4]),
-        proveedor_empresa_personal: r[5]?.toString()||null,
-        ruc_dni:                  r[6]?.toString()||null,
-        cotizacion:               r[7]?.toString()||null,
-        oc:                       r[8]?.toString()||null,
-        proyecto:                 r[9]?.toString()||null,
-        concepto:                 r[10]?.toString()||null,
-        empresa:                  r[11]?.toString()||null,
-        entrega_doc:              r[12]?.toString()||'PENDIENTE',
-        nro_factura_doc:          r[13]?.toString()||null,
-        tipo_doc:                 r[14]?.toString()||null,
-        autorizacion:             r[15]?.toString()||null,
-        observaciones:            r[16]?.toString()||null,
-        detalles_compra_servicio: r[17]?.toString()||null,
-        observaciones_2:          r[18]?.toString()||null,
-        observaciones_3:          r[19]?.toString()||null,
-        observaciones_4:          r[20]?.toString()||null,
-        creado_por:               perfil_usuario.id,
-      })).filter(r => r.fecha_deposito && r.monto !== null);
+      _mbdDatosPreview = rows.slice(inicio).map((r, i) => {
+        const fecha = toDate(r[1]);
+        const monto = toNum(r[4]);
+        const ok    = !!fecha && monto !== null;
+        return {
+          _fila: i + inicio + 2,
+          _ok: ok,
+          _error: !fecha ? 'Sin fecha' : monto === null ? 'Sin monto' : null,
+          empresa_id:               empresa_activa.id,
+          nro_operacion_bancaria:   r[0]?.toString()||null,
+          fecha_deposito:           fecha,
+          descripcion:              r[2]?.toString()||null,
+          moneda:                   r[3]?.toString()||'S/',
+          monto,
+          proveedor_empresa_personal: r[5]?.toString()||null,
+          ruc_dni:                  r[6]?.toString()||null,
+          cotizacion:               r[7]?.toString()||null,
+          oc:                       r[8]?.toString()||null,
+          proyecto:                 r[9]?.toString()||null,
+          concepto:                 r[10]?.toString()||null,
+          empresa:                  r[11]?.toString()||null,
+          entrega_doc:              r[12]?.toString()||'PENDIENTE',
+          nro_factura_doc:          r[13]?.toString()||null,
+          tipo_doc:                 r[14]?.toString()||null,
+          autorizacion:             r[15]?.toString()||null,
+          observaciones:            r[16]?.toString()||null,
+          detalles_compra_servicio: r[17]?.toString()||null,
+          observaciones_2:          r[18]?.toString()||null,
+          observaciones_3:          r[19]?.toString()||null,
+          observaciones_4:          r[20]?.toString()||null,
+          creado_por:               perfil_usuario.id,
+        };
+      }).filter(r => r._fila > 0);
 
-      if (!registros.length) { mostrarToast('No se encontraron filas válidas.', 'atencion'); return; }
+      const validos  = _mbdDatosPreview.filter(r => r._ok).length;
+      const errores  = _mbdDatosPreview.length - validos;
+      const prevWrap = document.getElementById('mbd-preview-wrap');
+      const prevCnt  = document.getElementById('mbd-prev-count');
+      const prevRes  = document.getElementById('mbd-prev-resumen');
+      const prevBody = document.getElementById('mbd-prev-tbody');
+      if (!prevWrap || !prevBody) return;
 
-      const { error } = await _supabase.from('tesoreria_mbd').insert(registros);
-      if (error) { mostrarToast('Error al importar: ' + error.message, 'error'); return; }
-      mostrarToast(`${registros.length} movimiento(s) importado(s).`, 'exito');
-      cargarMBD();
+      if (prevCnt) prevCnt.textContent = _mbdDatosPreview.length;
+      if (prevRes) prevRes.textContent = `✅ ${validos} válidos  ⚠️ ${errores} con error (se omitirán)`;
+
+      const muestra = _mbdDatosPreview.slice(0, 20);
+      prevBody.innerHTML = muestra.map(r => `
+        <tr ${!r._ok ? 'style="background:rgba(197,48,48,.05)"' : ''}>
+          <td style="font-size:11px;color:var(--color-texto-suave)">${r._fila}</td>
+          <td style="white-space:nowrap">${r.fecha_deposito || `<span style="color:#C53030">${r._error}</span>`}</td>
+          <td style="text-align:right;font-weight:600">${r.monto !== null ? formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN') : '<span style="color:#C53030">—</span>'}</td>
+          <td>${escapar(r.moneda||'S/')}</td>
+          <td style="font-size:12px">${escapar((r.proveedor_empresa_personal||'—').slice(0,22))}</td>
+          <td style="font-size:12px">${escapar(r.concepto||'—')}</td>
+          <td style="font-size:12px">${escapar(r.tipo_doc||'—')}</td>
+          <td>${r._ok
+            ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">OK</span>'
+            : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px" title="${escapar(r._error||'')}">Error</span>`
+          }</td>
+        </tr>`).join('');
+
+      if (_mbdDatosPreview.length > 20) {
+        prevBody.innerHTML += `<tr><td colspan="8" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_mbdDatosPreview.length - 20} filas más</td></tr>`;
+      }
+
+      if (!validos) { mostrarToast('No hay filas válidas para importar.', 'atencion'); return; }
+      prevWrap.style.display = 'block';
+      prevWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } catch(err) {
-      mostrarToast('Error al leer el archivo.', 'error');
+      mostrarToast('Error al leer el archivo: ' + err.message, 'error');
     }
   };
-  reader.readAsBinaryString(file);
+  reader.readAsArrayBuffer(file);
+}
+
+function cancelarPreviewMBD() {
+  _mbdDatosPreview = [];
+  const w = document.getElementById('mbd-preview-wrap');
+  if (w) w.style.display = 'none';
+}
+
+async function confirmarImportMBD() {
+  const validos = _mbdDatosPreview.filter(r => r._ok);
+  if (!validos.length) { mostrarToast('No hay registros válidos.', 'atencion'); return; }
+
+  const btn = document.getElementById('btn-confirmar-mbd');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
+
+  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
+  const CHUNK = 50;
+  let ok = 0, errCount = 0;
+  for (let i = 0; i < registros.length; i += CHUNK) {
+    const { error } = await _supabase.from('tesoreria_mbd').insert(registros.slice(i, i + CHUNK));
+    if (error) errCount += Math.min(CHUNK, registros.length - i);
+    else ok += Math.min(CHUNK, registros.length - i);
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar e importar'; }
+  cancelarPreviewMBD();
+
+  if (errCount > 0) mostrarToast(`Importado: ${ok} OK, ${errCount} errores.`, 'atencion');
+  else mostrarToast(`✓ ${ok} movimiento(s) importado(s).`, 'exito');
+  cargarMBD();
 }
 
 async function exportarExcelMBD() {

@@ -31,6 +31,8 @@ function renderTabRHRecibidas(area) {
         </div>
         <div style="display:flex;gap:8px;">
           <button onclick="exportarExcelRHRecibidas()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar Excel</button>
+          <button onclick="document.getElementById('rhr-file-input').click()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📂 Importar Excel</button>
+          <input type="file" id="rhr-file-input" accept=".xlsx,.xls" style="display:none" onchange="procesarImportRHR(this)">
           <button onclick="abrirModalRHR()" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">+ Nuevo RH</button>
         </div>
       </div>
@@ -263,6 +265,138 @@ async function eliminarRHR(id) {
   const { error } = await _supabase.from('contabilidad_rh_recibidas').delete().eq('id', id);
   if (error) { mostrarToast('Error al eliminar.', 'error'); return; }
   mostrarToast('Registro eliminado.', 'exito');
+  cargarRHRecibidas();
+}
+
+let _rhrDatosPreview = [];
+
+function procesarImportRHR(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb   = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+      if (rows.length < 2) { mostrarToast('El archivo está vacío.', 'atencion'); return; }
+
+      const toDate = v => {
+        if (!v) return null;
+        if (v instanceof Date) return v.toISOString().slice(0,10);
+        const s = v.toString().trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d,m,y]=s.split('/'); return `${y}-${m}-${d}`; }
+        const d = new Date(s); return isNaN(d) ? null : d.toISOString().slice(0,10);
+      };
+      const toNum = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+
+      _rhrDatosPreview = rows.slice(1).map((r, i) => {
+        const fecha  = toDate(r[0]);
+        const nroRH  = r[1]?.toString().trim() || null;
+        const bruta  = toNum(r[7]);
+        const ok     = !!fecha && !!nroRH && bruta > 0;
+        return {
+          _fila: i + 2, _ok: ok,
+          _error: !fecha ? 'Sin fecha' : !nroRH ? 'Sin N° RH' : bruta <= 0 ? 'Sin monto' : null,
+          empresa_id:      empresa_activa.id,
+          fecha_emision:   fecha,
+          nro_rh:          nroRH,
+          tipo_doc_emisor: r[2]?.toString() || 'DNI',
+          nro_doc_emisor:  r[3]?.toString() || '',
+          nombre_emisor:   r[4]?.toString() || '',
+          descripcion:     r[5]?.toString() || '',
+          moneda:          r[6]?.toString() || 'SOLES',
+          renta_bruta:     bruta,
+          retencion:       toNum(r[8]),
+          renta_neta:      toNum(r[9]),
+          estado_pago:     r[10]?.toString() || 'PENDIENTE',
+          fecha_pago:      toDate(r[11]) || null,
+          nro_mbd:         r[12]?.toString() || null,
+          observaciones:   r[13]?.toString() || null,
+          creado_por:      perfil_usuario.id,
+          fecha_actualizacion: new Date().toISOString(),
+        };
+      });
+
+      const validos = _rhrDatosPreview.filter(r => r._ok).length;
+      const errores = _rhrDatosPreview.length - validos;
+
+      const mc = document.getElementById('modal-container');
+      mc.innerHTML = `
+        <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cerrarPrevRHR()">
+          <div class="modal" style="max-width:820px;width:95%;max-height:90vh;overflow-y:auto">
+            <div class="modal-header">
+              <h3>👁️ Vista previa — ${_rhrDatosPreview.length} registros</h3>
+              <button class="modal-cerrar" onclick="_cerrarPrevRHR()">✕</button>
+            </div>
+            <div class="modal-body">
+              <p style="margin-bottom:12px;font-size:13px;color:var(--color-texto-suave)">
+                ✅ <strong>${validos}</strong> válidos  ⚠️ <strong>${errores}</strong> con error (se omitirán)
+              </p>
+              <div style="overflow-x:auto;max-height:320px;overflow-y:auto">
+                <table class="tabla-nexum" style="font-size:12px">
+                  <thead><tr>
+                    <th>#</th><th>Fecha</th><th>N° RH</th><th>Emisor</th>
+                    <th>Desc.</th><th>Mon.</th><th style="text-align:right">Bruta</th>
+                    <th style="text-align:right">Ret.</th><th style="text-align:right">Neta</th><th>Estado</th>
+                  </tr></thead>
+                  <tbody>
+                    ${_rhrDatosPreview.map(r => `
+                      <tr ${!r._ok ? 'style="background:rgba(197,48,48,.05)"' : ''}>
+                        <td style="font-size:11px;color:var(--color-texto-suave)">${r._fila}</td>
+                        <td style="white-space:nowrap">${r.fecha_emision || `<span style="color:#C53030">${r._error}</span>`}</td>
+                        <td style="font-weight:600">${escapar(r.nro_rh||'—')}</td>
+                        <td style="font-size:11px">${escapar((r.nombre_emisor||'—').slice(0,20))}</td>
+                        <td style="font-size:11px">${escapar((r.descripcion||'—').slice(0,20))}</td>
+                        <td>${escapar(r.moneda||'—')}</td>
+                        <td style="text-align:right">${formatearMoneda(r.renta_bruta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
+                        <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.retencion, r.moneda==='DOLARES'?'USD':'PEN')}</td>
+                        <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.renta_neta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
+                        <td>${r._ok
+                          ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">OK</span>'
+                          : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px">${escapar(r._error)}</span>`
+                        }</td>
+                      </tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secundario" onclick="_cerrarPrevRHR()">Cancelar</button>
+              <button class="btn btn-primario" onclick="_confirmarImportRHR()" id="btn-conf-rhr"
+                ${!validos ? 'disabled' : ''}>✅ Importar ${validos} registro(s)</button>
+            </div>
+          </div>
+        </div>`;
+    } catch(err) {
+      mostrarToast('Error al leer el archivo: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function _cerrarPrevRHR() {
+  _rhrDatosPreview = [];
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function _confirmarImportRHR() {
+  const validos = _rhrDatosPreview.filter(r => r._ok);
+  if (!validos.length) return;
+
+  const btn = document.getElementById('btn-conf-rhr');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
+
+  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
+  const { error } = await _supabase.from('contabilidad_rh_recibidas').insert(registros);
+
+  _cerrarPrevRHR();
+  if (error) { mostrarToast('Error al importar: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ ${registros.length} RH importado(s).`, 'exito');
   cargarRHRecibidas();
 }
 
