@@ -767,7 +767,7 @@ async function _concAprobarMatchInterno(doc, banco) {
     doc_tipo:             doc._source,
     doc_id:               doc.id,
     score:                0,
-    tipo_match:           'SUGERIDO',
+    tipo_match:           'MANUAL',
     estado:               'APROBADO',
     usuario_id:           perfil_usuario?.id || null,
   }).then(() => {}).catch(() => {});

@@ -145,15 +145,20 @@ async function cargarRHRecibidas() {
 async function abrirModalRHR(id = null) {
   let item = null;
   if (id) {
-    const { data } = await _supabase.from('contabilidad_rh_recibidas').select('*').eq('id', id).single();
+    const { data } = await _supabase.from('rh_registros')
+      .select('*, prestadores_servicios(nombre, dni)')
+      .eq('id', id).single();
     item = data;
   }
-  const hoy = new Date().toISOString().slice(0,10);
+  const hoy       = new Date().toISOString().slice(0,10);
+  const monedaVal = item?.moneda === 'USD' ? 'USD' : 'PEN';
+  const nroDoc    = item?.prestadores_servicios?.dni  || item?.nro_doc_emisor || '';
+  const nombre    = item?.prestadores_servicios?.nombre || item?.nombre_emisor || '';
 
   const mc = document.getElementById('modal-container');
   mc.innerHTML = `
     <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)cerrarModalRHR()">
-      <div class="modal" style="max-width:640px;width:95%;max-height:90vh;overflow-y:auto">
+      <div class="modal" style="max-width:580px;width:95%;max-height:90vh;overflow-y:auto">
         <div class="modal-header">
           <h3>🧾 ${id?'Editar':'Nuevo'} RH Recibido</h3>
           <button class="modal-cerrar" onclick="cerrarModalRHR()">✕</button>
@@ -164,38 +169,32 @@ async function abrirModalRHR(id = null) {
             <div class="campo"><label>Fecha Emisión <span class="req">*</span></label>
               <input type="date" id="rhr-fecha" value="${item?.fecha_emision||hoy}"></div>
             <div class="campo"><label>N° RH <span class="req">*</span></label>
-              <input type="text" id="rhr-nro" value="${escapar(item?.nro_rh||'')}" placeholder="E001-68"></div>
-            <div class="campo"><label>Tipo Doc Emisor <span class="req">*</span></label>
-              <select id="rhr-tipo-doc">
-                <option value="DNI" ${(item?.tipo_doc_emisor||'DNI')==='DNI'?'selected':''}>DNI</option>
-                <option value="RUC" ${item?.tipo_doc_emisor==='RUC'?'selected':''}>RUC</option>
-              </select></div>
-            <div class="campo"><label>N° Doc Emisor <span class="req">*</span></label>
-              <input type="text" id="rhr-nro-doc" value="${escapar(item?.nro_doc_emisor||'')}" maxlength="11"></div>
-            <div class="campo" style="grid-column:span 2"><label>Nombre / Razón Social Emisor <span class="req">*</span></label>
-              <input type="text" id="rhr-nombre" value="${escapar(item?.nombre_emisor||'')}"></div>
-            <div class="campo" style="grid-column:span 2"><label>Descripción del Servicio <span class="req">*</span></label>
-              <input type="text" id="rhr-desc" value="${escapar(item?.descripcion||'')}"></div>
-            <div class="campo"><label>Moneda <span class="req">*</span></label>
+              <input type="text" id="rhr-nro" value="${escapar(item?.numero_rh||'')}" placeholder="E001-68"></div>
+            <div class="campo"><label>DNI / RUC Emisor <span class="req">*</span></label>
+              <input type="text" id="rhr-nro-doc" value="${escapar(nroDoc)}" maxlength="11" placeholder="12345678"></div>
+            <div class="campo"><label>Nombre Emisor <span class="req">*</span></label>
+              <input type="text" id="rhr-nombre" value="${escapar(nombre)}"></div>
+            <div class="campo" style="grid-column:span 2"><label>Concepto / Servicio <span class="req">*</span></label>
+              <input type="text" id="rhr-desc" value="${escapar(item?.concepto||'')}"></div>
+            <div class="campo"><label>Moneda</label>
               <select id="rhr-moneda">
-                <option value="SOLES" ${(item?.moneda||'SOLES')==='SOLES'?'selected':''}>Soles</option>
-                <option value="DOLARES" ${item?.moneda==='DOLARES'?'selected':''}>Dólares</option>
+                <option value="PEN" ${monedaVal==='PEN'?'selected':''}>Soles (PEN)</option>
+                <option value="USD" ${monedaVal==='USD'?'selected':''}>Dólares (USD)</option>
               </select></div>
+            <div class="campo"><label>Estado</label>
+              <select id="rhr-estado" ${item?.conciliado?'disabled':''}>
+                <option value="EMITIDO" ${(item?.estado||'EMITIDO')==='EMITIDO'?'selected':''}>Emitido</option>
+                <option value="ANULADO" ${item?.estado==='ANULADO'?'selected':''}>Anulado</option>
+              </select>
+              ${item?.conciliado?'<small style="color:#2F855A">✓ Pagado vía conciliación</small>':''}</div>
             <div class="campo"><label>Renta Bruta <span class="req">*</span></label>
-              <input type="number" id="rhr-bruta" step="0.01" value="${item?.renta_bruta||''}" onchange="calcRHR()"></div>
-            <div class="campo"><label>Retención (8%)</label>
-              <input type="number" id="rhr-retencion" step="0.01" value="${item?.retencion||0}" onchange="calcRHR()"></div>
-            <div class="campo"><label style="font-weight:700;color:var(--color-secundario)">Renta Neta <span class="req">*</span></label>
-              <input type="number" id="rhr-neta" step="0.01" value="${item?.renta_neta||''}">
-              <small style="color:var(--color-texto-suave)">Renta Bruta − Retención</small></div>
-            <div class="campo"><label>Estado de Pago <span class="req">*</span></label>
-              <select id="rhr-estado-pago">
-                ${['PENDIENTE','PAGADO','CANCELADO'].map(e=>`<option value="${e}" ${(item?.estado_pago||'PENDIENTE')===e?'selected':''}>${e}</option>`).join('')}
-              </select></div>
-            <div class="campo"><label>Fecha de Pago</label>
-              <input type="date" id="rhr-fecha-pago" value="${item?.fecha_pago||''}"></div>
-            <div class="campo"><label>N° Movimiento MBD</label>
-              <input type="text" id="rhr-nro-mbd" value="${escapar(item?.nro_mbd||'')}" placeholder="Referencia MBD"></div>
+              <input type="number" id="rhr-bruta" step="0.01" value="${item?.monto_bruto||''}" onchange="calcRHR()"></div>
+            <div class="campo"><label>Retención</label>
+              <input type="number" id="rhr-retencion" step="0.01" value="${item?.monto_retencion||0}" onchange="calcRHR()"></div>
+            <div class="campo" style="grid-column:span 2">
+              <label style="font-weight:700;color:var(--color-secundario)">Renta Neta</label>
+              <input type="number" id="rhr-neta" step="0.01" value="${item?.monto_neto||''}">
+              <small style="color:var(--color-texto-suave)">Bruta − Retención (editable)</small></div>
             <div class="campo" style="grid-column:span 2"><label>Observaciones</label>
               <input type="text" id="rhr-obs" value="${escapar(item?.observaciones||'')}"></div>
           </div>
@@ -222,44 +221,61 @@ function cerrarModalRHR() {
 }
 
 async function guardarRHR(id) {
-  const alerta = document.getElementById('rhr-alerta');
+  const alerta  = document.getElementById('rhr-alerta');
   alerta.classList.remove('visible');
 
-  const fecha  = document.getElementById('rhr-fecha').value;
-  const nroRH  = document.getElementById('rhr-nro').value.trim();
-  const nroDoc = document.getElementById('rhr-nro-doc').value.trim();
-  const nombre = document.getElementById('rhr-nombre').value.trim();
-  const desc   = document.getElementById('rhr-desc').value.trim();
-  const bruta  = parseFloat(document.getElementById('rhr-bruta').value);
-  const neta   = parseFloat(document.getElementById('rhr-neta').value);
+  const fecha   = document.getElementById('rhr-fecha').value;
+  const nroRH   = document.getElementById('rhr-nro').value.trim();
+  const nroDoc  = document.getElementById('rhr-nro-doc').value.trim();
+  const nombre  = document.getElementById('rhr-nombre').value.trim();
+  const concepto = document.getElementById('rhr-desc').value.trim();
+  const bruta   = parseFloat(document.getElementById('rhr-bruta').value);
+  const neta    = parseFloat(document.getElementById('rhr-neta').value);
 
-  if (!fecha||!nroRH||!nroDoc||!nombre||!desc||isNaN(bruta)||isNaN(neta)) {
-    alerta.textContent = 'Complete todos los campos requeridos (*)'; alerta.classList.add('visible'); return;
+  if (!fecha||!nroRH||!nroDoc||!nombre||!concepto||isNaN(bruta)||isNaN(neta)) {
+    alerta.textContent = 'Complete todos los campos requeridos (*)';
+    alerta.classList.add('visible'); return;
   }
 
+  // Buscar o crear prestador por DNI/RUC
+  let { data: ps } = await _supabase
+    .from('prestadores_servicios').select('id').eq('dni', nroDoc).maybeSingle();
+  if (!ps) {
+    const { data: nuevo, error: errPS } = await _supabase
+      .from('prestadores_servicios')
+      .insert({ dni: nroDoc, nombre, ruc: nroDoc.length === 11 ? nroDoc : null, activo: true })
+      .select('id').single();
+    if (errPS) { alerta.textContent = 'Error al registrar prestador: ' + errPS.message; alerta.classList.add('visible'); return; }
+    ps = nuevo;
+  }
+
+  const ret    = parseFloat(document.getElementById('rhr-retencion').value) || 0;
+  const moneda = document.getElementById('rhr-moneda').value;
+  const estado = document.getElementById('rhr-estado')?.value || 'EMITIDO';
+
   const payload = {
-    empresa_id:     empresa_activa.id,
-    fecha_emision:  fecha,
-    nro_rh:         nroRH,
-    tipo_doc_emisor: document.getElementById('rhr-tipo-doc').value,
-    nro_doc_emisor:  nroDoc,
-    nombre_emisor:   nombre,
-    descripcion:     desc,
-    moneda:          document.getElementById('rhr-moneda').value,
-    renta_bruta:     bruta,
-    retencion:       parseFloat(document.getElementById('rhr-retencion').value)||0,
-    renta_neta:      neta,
-    estado_pago:     document.getElementById('rhr-estado-pago').value,
-    fecha_pago:      document.getElementById('rhr-fecha-pago').value||null,
-    nro_mbd:         document.getElementById('rhr-nro-mbd').value.trim()||null,
-    observaciones:   document.getElementById('rhr-obs').value.trim()||null,
-    creado_por:      perfil_usuario.id,
-    fecha_actualizacion: new Date().toISOString(),
+    empresa_operadora_id: empresa_activa.id,
+    prestador_id:         ps.id,
+    periodo:              fecha.slice(0, 7),
+    fecha_emision:        fecha,
+    numero_rh:            nroRH,
+    concepto,
+    moneda,
+    monto_bruto:          bruta,
+    tiene_retencion:      ret > 0,
+    porcentaje_retencion: bruta > 0 ? Math.round(ret / bruta * 10000) / 100 : 0,
+    monto_retencion:      ret,
+    monto_neto:           neta,
+    estado,
+    observaciones:        document.getElementById('rhr-obs').value.trim() || null,
+    nro_doc_emisor:       nroDoc,
+    nombre_emisor:        nombre,
+    usuario_id:           perfil_usuario?.id || null,
   };
 
   let error;
-  if (id) ({ error } = await _supabase.from('contabilidad_rh_recibidas').update(payload).eq('id', id));
-  else    ({ error } = await _supabase.from('contabilidad_rh_recibidas').insert(payload));
+  if (id) ({ error } = await _supabase.from('rh_registros').update(payload).eq('id', id));
+  else    ({ error } = await _supabase.from('rh_registros').insert(payload));
 
   if (error) { alerta.textContent = 'Error: ' + error.message; alerta.classList.add('visible'); return; }
   mostrarToast(id ? 'RH actualizado.' : 'RH registrado.', 'exito');
@@ -268,10 +284,10 @@ async function guardarRHR(id) {
 }
 
 async function eliminarRHR(id) {
-  const ok = await confirmar('¿Eliminar este RH recibido?', { btnOk: 'Eliminar', btnColor: '#C53030' });
+  const ok = await confirmar('¿Eliminar este RH? Esta acción no se puede deshacer.', { btnOk: 'Eliminar', btnColor: '#C53030' });
   if (!ok) return;
-  const { error } = await _supabase.from('contabilidad_rh_recibidas').delete().eq('id', id);
-  if (error) { mostrarToast('Error al eliminar.', 'error'); return; }
+  const { error } = await _supabase.from('rh_registros').delete().eq('id', id);
+  if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
   mostrarToast('Registro eliminado.', 'exito');
   cargarRHRecibidas();
 }
