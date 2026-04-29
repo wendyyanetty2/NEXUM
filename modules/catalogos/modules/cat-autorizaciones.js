@@ -12,6 +12,7 @@ async function renderTabAutorizaciones(area) {
                oninput="renderTablaAutorizaciones()" style="max-width:280px">
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarAutorizacionesExcel()">⬇ Excel</button>
+          <button class="btn btn-secundario btn-sm" onclick="precargarAutorizaciones()" title="Insertar autorizaciones predefinidas (omite las que ya existen)">📋 Precargar datos</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalAutorizacion(null)">+ Nuevo</button>
         </div>
       </div>
@@ -137,6 +138,24 @@ async function eliminarAutorizacion(id, nombre) {
   const { error } = await _supabase.from('autorizaciones').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');
+  await cargarAutorizaciones();
+}
+
+async function precargarAutorizaciones() {
+  const DEFAULT = [
+    'Johanys Valencia','Alexis Valencia','Administración',
+    'Wendy Ortega','Isabel Peche','Segundo Valencia',
+    'Mantenimiento BCP','Impuesto BCP','Comisión BCP','Estado de Cuenta',
+  ];
+  const existentes = new Set(autorizaciones_lista.map(a => a.nombre.toLowerCase()));
+  const nuevos = DEFAULT.filter(n => !existentes.has(n.toLowerCase()));
+  if (!nuevos.length) { mostrarToast('Todas las autorizaciones predefinidas ya están cargadas.', 'info'); return; }
+  if (!await confirmar(`¿Precargar ${nuevos.length} autorización(es) que no están registradas?`)) return;
+  const { error } = await _supabase.from('autorizaciones').insert(
+    nuevos.map(n => ({ empresa_operadora_id: empresa_activa.id, nombre: n, activo: true }))
+  );
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ ${nuevos.length} autorización(es) precargadas.`, 'exito');
   await cargarAutorizaciones();
 }
 

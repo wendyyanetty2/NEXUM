@@ -24,6 +24,7 @@ async function renderTabMediosPago(area) {
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarMediosPagoExcel()">⬇ Excel</button>
+          <button class="btn btn-secundario btn-sm" onclick="precargarMediosPago()" title="Insertar medios de pago predefinidos (omite los que ya existen)">📋 Precargar datos</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalMedioPago(null)">+ Nuevo</button>
         </div>
       </div>
@@ -205,6 +206,28 @@ async function eliminarMedioPago(id, nombre) {
   const { error } = await _supabase.from('medios_pago').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');
+  await cargarMediosPago();
+}
+
+async function precargarMediosPago() {
+  const DEFAULT = [
+    { nombre: 'Efectivo',      tipo: 'EFECTIVO' },
+    { nombre: 'BCP',           tipo: 'TRANSFERENCIA' },
+    { nombre: 'BBVA',          tipo: 'TRANSFERENCIA' },
+    { nombre: 'Yape',          tipo: 'YAPE' },
+    { nombre: 'Plin',          tipo: 'PLIN' },
+    { nombre: 'Transferencia', tipo: 'TRANSFERENCIA' },
+    { nombre: 'Cheque',        tipo: 'CHEQUE' },
+  ];
+  const existentes = new Set(mediospago_lista.map(m => m.nombre.toLowerCase()));
+  const nuevos = DEFAULT.filter(m => !existentes.has(m.nombre.toLowerCase()));
+  if (!nuevos.length) { mostrarToast('Todos los medios de pago predefinidos ya están cargados.', 'info'); return; }
+  if (!await confirmar(`¿Precargar ${nuevos.length} medio(s) de pago que no están registrados?`)) return;
+  const { error } = await _supabase.from('medios_pago').insert(
+    nuevos.map(m => ({ empresa_operadora_id: empresa_activa.id, nombre: m.nombre, tipo: m.tipo, moneda: 'PEN', activo: true }))
+  );
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ ${nuevos.length} medio(s) de pago precargados.`, 'exito');
   await cargarMediosPago();
 }
 
