@@ -13,6 +13,7 @@ async function renderTabProyectos(area) {
                oninput="renderTablaProyectos()" style="max-width:280px">
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarProyectosExcel()">⬇ Excel</button>
+          <button class="btn btn-secundario btn-sm" onclick="precargarProyectos()" title="Insertar proyectos predefinidos (omite los que ya existen)">📋 Precargar datos</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalProyecto(null)">+ Nuevo</button>
         </div>
       </div>
@@ -166,6 +167,23 @@ async function eliminarProyecto(id, nombre) {
   const { error } = await _supabase.from('proyectos').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');
+  await cargarProyectos();
+}
+
+async function precargarProyectos() {
+  const DEFAULT = [
+    'Proyecto A','Proyecto B','Proyecto C',
+    'Mantenimiento General','Administración','Operaciones',
+  ];
+  const existentes = new Set(proyectos_lista.map(p => p.nombre.toLowerCase()));
+  const nuevos = DEFAULT.filter(n => !existentes.has(n.toLowerCase()));
+  if (!nuevos.length) { mostrarToast('Todos los proyectos predefinidos ya están cargados.', 'info'); return; }
+  if (!await confirmar(`¿Precargar ${nuevos.length} proyecto(s) que no están registrados?`)) return;
+  const { error } = await _supabase.from('proyectos').insert(
+    nuevos.map(n => ({ empresa_operadora_id: empresa_activa.id, nombre: n, activo: true }))
+  );
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ ${nuevos.length} proyecto(s) precargados.`, 'exito');
   await cargarProyectos();
 }
 
