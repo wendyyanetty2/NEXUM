@@ -57,21 +57,26 @@ async function cargarRHRecibidas() {
   const desde = `${anio}-${mes}-01`;
   const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
-  let q = _supabase.from('contabilidad_rh_recibidas').select('*')
-    .eq('empresa_id', empresa_activa.id)
+  // Fuente única: rh_registros (tabla maestra compartida con Tributaria)
+  let q = _supabase.from('rh_registros')
+    .select('*, prestadores_servicios(nombre, dni)')
+    .eq('empresa_operadora_id', empresa_activa.id)
     .gte('fecha_emision', desde).lte('fecha_emision', hasta)
     .order('fecha_emision', { ascending: false });
-  if (estado) q = q.eq('estado_pago', estado);
+
+  if (estado === 'PENDIENTE')  q = q.eq('conciliado', false).eq('estado', 'EMITIDO');
+  else if (estado === 'PAGADO')    q = q.eq('conciliado', true);
+  else if (estado === 'CANCELADO') q = q.eq('estado', 'ANULADO');
 
   const { data, error } = await q;
   if (error) { wrap.innerHTML = `<p class="error-texto">Error: ${escapar(error.message)}</p>`; return; }
 
   const filas = data || [];
 
-  const totalBruto = filas.reduce((s,r) => s + Number(r.renta_bruta||0), 0);
-  const totalRet   = filas.reduce((s,r) => s + Number(r.retencion||0), 0);
-  const totalNeto  = filas.reduce((s,r) => s + Number(r.renta_neta||0), 0);
-  const pendientes = filas.filter(r => r.estado_pago === 'PENDIENTE').length;
+  const totalBruto = filas.reduce((s,r) => s + Number(r.monto_bruto||0), 0);
+  const totalRet   = filas.reduce((s,r) => s + Number(r.monto_retencion||0), 0);
+  const totalNeto  = filas.reduce((s,r) => s + Number(r.monto_neto||0), 0);
+  const pendientes = filas.filter(r => !r.conciliado && r.estado === 'EMITIDO').length;
   const resumen    = document.getElementById('rhr-resumen');
   if (resumen) resumen.innerHTML = `
     <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
@@ -100,34 +105,37 @@ async function cargarRHRecibidas() {
   wrap.innerHTML = `
     <table class="tabla-nexum">
       <thead><tr>
-        <th>Fecha</th><th>N° RH</th><th>Tipo Doc</th><th>N° Documento</th>
-        <th>Emisor</th><th>Descripción</th><th>Moneda</th>
+        <th>Fecha</th><th>N° RH</th><th>N° Doc</th>
+        <th>Emisor</th><th>Concepto</th><th>Mon.</th>
         <th style="text-align:right">Renta Bruta</th>
         <th style="text-align:right">Retención</th>
         <th style="text-align:right">Renta Neta</th>
-        <th>Estado</th><th>N° MBD</th><th style="text-align:center">Acc.</th>
+        <th>Estado</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filas.map(r => `
+        ${filas.map(r => {
+          const estPago  = r.estado === 'ANULADO' ? 'CANCELADO' : r.conciliado ? 'PAGADO' : 'PENDIENTE';
+          const estColor = estPago==='PAGADO'?'#2F855A':estPago==='CANCELADO'?'#4A5568':'#D69E2E';
+          const mon      = r.moneda === 'USD' ? 'USD' : 'PEN';
+          const nombre   = r.prestadores_servicios?.nombre || r.nombre_emisor || '—';
+          const docNum   = r.prestadores_servicios?.dni    || r.nro_doc_emisor || '—';
+          return `
           <tr>
             <td style="white-space:nowrap">${formatearFecha(r.fecha_emision)}</td>
-            <td style="font-weight:600">${escapar(r.nro_rh)}</td>
-            <td>${escapar(r.tipo_doc_emisor)}</td>
-            <td>${escapar(r.nro_doc_emisor)}</td>
-            <td>${escapar(truncar(r.nombre_emisor,25))}</td>
-            <td>${escapar(truncar(r.descripcion,28))}</td>
-            <td>${escapar(r.moneda)}</td>
-            <td style="text-align:right">${formatearMoneda(r.renta_bruta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
-            <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.retencion, r.moneda==='DOLARES'?'USD':'PEN')}</td>
-            <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.renta_neta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
-            <td><span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${r.estado_pago==='PAGADO'?'#2F855A':r.estado_pago==='CANCELADO'?'#4A5568':'#D69E2E'};color:#fff">${escapar(r.estado_pago)}</span></td>
-            <td>${escapar(r.nro_mbd||'—')}</td>
+            <td style="font-weight:600">${escapar(r.numero_rh||'—')}</td>
+            <td>${escapar(docNum)}</td>
+            <td>${escapar(truncar(nombre,25))}</td>
+            <td>${escapar(truncar(r.concepto||'—',28))}</td>
+            <td>${escapar(r.moneda||'PEN')}</td>
+            <td style="text-align:right">${formatearMoneda(r.monto_bruto, mon)}</td>
+            <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.monto_retencion, mon)}</td>
+            <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.monto_neto, mon)}</td>
+            <td><span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${estColor};color:#fff">${estPago}</span></td>
             <td style="text-align:center;white-space:nowrap">
               <button onclick="abrirModalRHR('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
               <button onclick="eliminarRHR('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
             </td>
-          </tr>
-        `).join('')}
+          </tr>`; }).join('')}
       </tbody>
     </table>
     <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} registro(s)</p>
@@ -398,12 +406,73 @@ async function _confirmarImportRHR() {
   const btn = document.getElementById('btn-conf-rhr');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
-  const { error } = await _supabase.from('contabilidad_rh_recibidas').insert(registros);
+  let ok = 0; let errCount = 0;
+
+  for (const r of validos) {
+    const dni = r.nro_doc_emisor?.toString().trim();
+    if (!dni) { errCount++; continue; }
+
+    // Buscar o crear prestador por DNI/RUC
+    let { data: ps } = await _supabase
+      .from('prestadores_servicios')
+      .select('id')
+      .eq('dni', dni)
+      .maybeSingle();
+
+    if (!ps) {
+      const { data: nuevo, error: errPS } = await _supabase
+        .from('prestadores_servicios')
+        .insert({
+          dni:    dni,
+          nombre: r.nombre_emisor || dni,
+          ruc:    dni.length === 11 ? dni : null,
+          activo: true,
+        })
+        .select('id')
+        .single();
+      if (errPS) { errCount++; continue; }
+      ps = nuevo;
+    }
+
+    const monedaNorm = (r.moneda || 'SOLES').toUpperCase() === 'DOLARES' ? 'USD' : 'PEN';
+    const estadoDoc  = r.estado_pago === 'CANCELADO' ? 'ANULADO' : 'EMITIDO';
+    const bruta = r.renta_bruta || 0;
+    const ret   = r.retencion   || 0;
+
+    const { error } = await _supabase.from('rh_registros').upsert({
+      empresa_operadora_id:  empresa_activa.id,
+      prestador_id:          ps.id,
+      periodo:               r.fecha_emision?.slice(0, 7) || null,
+      fecha_emision:         r.fecha_emision,
+      numero_rh:             r.nro_rh,
+      concepto:              r.descripcion || 'SERVICIO',
+      moneda:                monedaNorm,
+      monto_bruto:           bruta,
+      tiene_retencion:       ret > 0,
+      porcentaje_retencion:  bruta > 0 ? Math.round(ret / bruta * 10000) / 100 : 0,
+      monto_retencion:       ret,
+      monto_neto:            r.renta_neta || 0,
+      estado:                estadoDoc,
+      observaciones:         r.observaciones || null,
+      nro_doc_emisor:        dni,
+      nombre_emisor:         r.nombre_emisor || null,
+      usuario_id:            perfil_usuario?.id || null,
+    }, {
+      onConflict:       'empresa_operadora_id,prestador_id,numero_rh',
+      ignoreDuplicates: true,
+    });
+
+    if (error) errCount++; else ok++;
+  }
 
   _cerrarPrevRHR();
-  if (error) { mostrarToast('Error al importar: ' + error.message, 'error'); return; }
-  mostrarToast(`✓ ${registros.length} RH importado(s).`, 'exito');
+  if (ok === 0 && errCount > 0) {
+    mostrarToast(`Error al importar RH. Revisa que el DNI/RUC del emisor esté completo.`, 'error');
+  } else {
+    const partes = [`✓ ${ok} RH importado(s)`];
+    if (errCount) partes.push(`${errCount} errores`);
+    mostrarToast(partes.join(' · '), errCount ? 'atencion' : 'exito');
+  }
   cargarRHRecibidas();
 }
 
@@ -413,22 +482,28 @@ async function exportarExcelRHRecibidas() {
   const desde = `${anio}-${mes}-01`;
   const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
-  const { data } = await _supabase.from('contabilidad_rh_recibidas').select('*')
-    .eq('empresa_id', empresa_activa.id)
+  const { data } = await _supabase.from('rh_registros')
+    .select('*, prestadores_servicios(nombre, dni)')
+    .eq('empresa_operadora_id', empresa_activa.id)
     .gte('fecha_emision', desde).lte('fecha_emision', hasta)
     .order('fecha_emision');
 
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
-  const cab = ['Fecha Emisión','N° RH','Tipo Doc Emisor','N° Doc Emisor',
-    'Nombre/Razón Social Emisor','Descripción Servicio','Moneda',
-    'Renta Bruta','Retención','Renta Neta','Estado Pago','Fecha Pago','N° MBD','Observaciones'];
-  const filas = data.map(r => [
-    r.fecha_emision, r.nro_rh, r.tipo_doc_emisor, r.nro_doc_emisor,
-    r.nombre_emisor, r.descripcion, r.moneda,
-    r.renta_bruta, r.retencion, r.renta_neta,
-    r.estado_pago, r.fecha_pago, r.nro_mbd, r.observaciones
-  ]);
+  const cab = ['Fecha Emisión','N° RH','N° Doc Emisor','Nombre Emisor',
+    'Concepto','Moneda','Renta Bruta','Retención','Renta Neta',
+    'Estado','Fecha Pago','Observaciones'];
+  const filas = data.map(r => {
+    const estPago = r.estado==='ANULADO'?'CANCELADO':r.conciliado?'PAGADO':'PENDIENTE';
+    return [
+      r.fecha_emision, r.numero_rh,
+      r.prestadores_servicios?.dni    || r.nro_doc_emisor,
+      r.prestadores_servicios?.nombre || r.nombre_emisor,
+      r.concepto, r.moneda,
+      r.monto_bruto, r.monto_retencion, r.monto_neto,
+      estPago, r.fecha_conciliacion, r.observaciones,
+    ];
+  });
 
   const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
   const wb = XLSX.utils.book_new();

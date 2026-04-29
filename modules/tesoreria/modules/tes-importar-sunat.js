@@ -259,6 +259,12 @@ function _sunatMapearFila(r, idx, tipo) {
     ? (r[37] ? String(r[37]).trim() : null)
     : null;
 
+  const numero = nroRaw != null ? String(parseInt(nroRaw) || nroRaw) : null;
+  const periodoRaw = (r[2] || '').toString().trim();
+  const periodo = /^\d{6}$/.test(periodoRaw)
+    ? periodoRaw.slice(0,4) + '-' + periodoRaw.slice(4,6)
+    : (fecha ? fecha.slice(0,7) : null);
+
   return {
     _idx:                  idx + 2,
     _ok,
@@ -266,15 +272,11 @@ function _sunatMapearFila(r, idx, tipo) {
     // Preview
     cdp,
     entidad,
-    // Movimiento
+    // Campos comunes
     fecha,
     naturaleza:            tipo === 'COMPRAS' ? 'CARGO' : 'ABONO',
     importe:               total,
     moneda,
-    descripcion:           entidad
-                             ? `${tipo === 'COMPRAS' ? 'COMPRA' : 'VENTA'} - ${entidad}`
-                             : tipo,
-    numero_documento:      cdp,
     tipo_documento_codigo: tipoDoc,
     base_imponible:        base > 0 ? base : null,
     igv:                   igv  > 0 ? igv  : null,
@@ -282,6 +284,14 @@ function _sunatMapearFila(r, idx, tipo) {
     tiene_detraccion:      !!detraccion,
     codigo_detraccion:     detraccion,
     tipo,
+    // Campos para registro_compras / registro_ventas (tabla maestra)
+    serie,
+    numero,
+    ruc:               (r[esCompras ? 12 : 11] || '').toString().trim() || null,
+    nombre:            entidad,
+    periodo,
+    tipo_cambio:       parseFloat(r[esCompras ? 26 : 27]) || 1,
+    fecha_vencimiento: _parsearFechaExcel(r[5]),
   };
 }
 
@@ -348,7 +358,7 @@ function _sunatCancelarPreview() {
   if (input) input.value         = '';
 }
 
-// ── Confirmar importación ─────────────────────────────────────────
+// ── Confirmar importación → tabla maestra registro_compras / registro_ventas ─
 async function _sunatConfirmarImportacion() {
   const validos = sunat_preview_datos.filter(f => f._ok);
   if (!validos.length) { mostrarToast('No hay registros válidos para importar', 'atencion'); return; }
@@ -361,17 +371,24 @@ async function _sunatConfirmarImportacion() {
   const progBarra = document.getElementById('sunat-progreso-barra');
   if (progWrap) progWrap.style.display = 'block';
 
-  const tipo          = sunat_tipo_actual;
+  const tipo       = sunat_tipo_actual;
+  const esCompras  = tipo === 'COMPRAS';
+  const tabla      = esCompras ? 'registro_compras' : 'registro_ventas';
+  // Clave única de dedup según cada tabla
+  const onConflict = esCompras
+    ? 'empresa_operadora_id,tipo_documento_codigo,serie,numero,ruc_proveedor'
+    : 'empresa_operadora_id,tipo_documento_codigo,serie,numero';
   const nombreArchivo = document.getElementById('sunat-file-input')?.files[0]?.name || 'sunat.xlsx';
 
+  // Lote de auditoría (historial de archivos importados)
   const { data: lote, error: errLote } = await _supabase
     .from('lotes_importacion')
     .insert({
       empresa_operadora_id: empresa_activa.id,
       cuenta_bancaria_id:   null,
       nombre_archivo:       nombreArchivo,
-      tipo_fuente:          tipo === 'COMPRAS' ? 'SUNAT_COMPRAS' : 'SUNAT_VENTAS',
-      total_registros:      sunat_preview_datos.length,
+      tipo_fuente:          esCompras ? 'SUNAT_COMPRAS' : 'SUNAT_VENTAS',
+      total_registros:      validos.length,
       estado:               'PROCESANDO',
       usuario_id:           perfil_usuario?.id || null,
     })
@@ -385,41 +402,67 @@ async function _sunatConfirmarImportacion() {
     return;
   }
 
-  const movs = validos.map(f => ({
+  // Construir filas para la tabla maestra
+  const filas = validos.map(f => esCompras ? {
     empresa_operadora_id:  empresa_activa.id,
-    cuenta_bancaria_id:    null,
-    fecha:                 f.fecha,
-    naturaleza:            f.naturaleza,
-    importe:               f.importe,
-    moneda:                f.moneda,
-    descripcion:           f.descripcion,
-    numero_documento:      f.numero_documento,
+    lote_importacion_id:   lote.id,
+    periodo:               f.periodo,
+    fecha_emision:         f.fecha,
+    fecha_vencimiento:     f.fecha_vencimiento,
     tipo_documento_codigo: f.tipo_documento_codigo,
-    base_imponible:        f.base_imponible,
-    igv:                   f.igv,
-    tiene_igv:             f.tiene_igv,
+    serie:                 f.serie,
+    numero:                f.numero,
+    ruc_proveedor:         f.ruc,
+    nombre_proveedor:      f.nombre,
+    base_imponible:        f.base_imponible || 0,
+    igv:                   f.igv || 0,
+    total:                 f.importe,
+    moneda:                f.moneda,
+    tipo_cambio:           f.tipo_cambio || 1,
     tiene_detraccion:      f.tiene_detraccion,
     codigo_detraccion:     f.codigo_detraccion,
-    estado:                'PENDIENTE',
-    conciliado:            false,
-    lote_importacion:      lote.id,
+    estado:                'EMITIDO',
     usuario_id:            perfil_usuario?.id || null,
-  }));
+  } : {
+    empresa_operadora_id:  empresa_activa.id,
+    lote_importacion_id:   lote.id,
+    periodo:               f.periodo,
+    fecha_emision:         f.fecha,
+    fecha_vencimiento:     f.fecha_vencimiento,
+    tipo_documento_codigo: f.tipo_documento_codigo,
+    serie:                 f.serie,
+    numero:                f.numero,
+    ruc_cliente:           f.ruc,
+    nombre_cliente:        f.nombre,
+    base_imponible:        f.base_imponible || 0,
+    igv:                   f.igv || 0,
+    total:                 f.importe,
+    moneda:                f.moneda,
+    tipo_cambio:           f.tipo_cambio || 1,
+    estado:                'EMITIDO',
+    usuario_id:            perfil_usuario?.id || null,
+  });
 
-  let ok = 0; let errCount = 0; let primerError = null;
+  let ok = 0; let duplicados = 0; let errCount = 0; let primerError = null;
   const CHUNK = 50;
-  for (let i = 0; i < movs.length; i += CHUNK) {
-    const chunk = movs.slice(i, i + CHUNK);
-    const { error } = await _supabase.from('movimientos').insert(chunk);
+  for (let i = 0; i < filas.length; i += CHUNK) {
+    const chunk = filas.slice(i, i + CHUNK);
+    if (progTxt)   progTxt.textContent   = `Importando ${Math.min(i + CHUNK, filas.length)} / ${filas.length}…`;
+    if (progBarra) progBarra.style.width = Math.round(((i + chunk.length) / filas.length) * 100) + '%';
+
+    const { data: insertados, error } = await _supabase
+      .from(tabla)
+      .upsert(chunk, { onConflict, ignoreDuplicates: true })
+      .select('id');
+
     if (error) {
-      errCount += chunk.length;
+      errCount  += chunk.length;
       if (!primerError) primerError = error.message;
     } else {
-      ok += chunk.length;
+      const ins  = insertados?.length ?? chunk.length;
+      ok         += ins;
+      duplicados += chunk.length - ins;
     }
-    const pct = Math.round(((i + chunk.length) / movs.length) * 100);
-    if (progTxt)   progTxt.textContent   = `Importando ${Math.min(i + CHUNK, movs.length)} / ${movs.length}…`;
-    if (progBarra) progBarra.style.width = pct + '%';
   }
 
   await _supabase.from('lotes_importacion').update({
@@ -432,12 +475,12 @@ async function _sunatConfirmarImportacion() {
   if (progWrap) progWrap.style.display = 'none';
 
   if (primerError) {
-    mostrarToast(`Error al insertar movimientos: ${primerError}`, 'error');
+    mostrarToast(`Error al importar: ${primerError}`, 'error');
   } else {
-    mostrarToast(
-      `✓ ${ok} registros importados${errCount ? ` (${errCount} errores)` : ''} — ya visibles en Movimientos`,
-      errCount > 0 ? 'atencion' : 'exito'
-    );
+    const partes = [`✓ ${ok} registros importados`];
+    if (duplicados) partes.push(`${duplicados} duplicados omitidos`);
+    if (errCount)   partes.push(`${errCount} errores`);
+    mostrarToast(partes.join(' · '), (duplicados || errCount) ? 'atencion' : 'exito');
   }
   _sunatCancelarPreview();
   await _sunatCargarHistorial();
@@ -490,7 +533,7 @@ async function _sunatCargarHistorial() {
                 </span>
               </td>
               <td>
-                <button onclick="_sunatEliminarLote('${l.id}', ${l.registros_ok || 0})"
+                <button onclick="_sunatEliminarLote('${l.id}', ${l.registros_ok || 0}, '${l.tipo_fuente}')"
                   style="padding:3px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
                   title="Eliminar importación y sus registros">🗑️</button>
               </td>
@@ -500,21 +543,22 @@ async function _sunatCargarHistorial() {
     </div>`;
 }
 
-async function _sunatEliminarLote(loteId, cantMovimientos) {
-  const msg = cantMovimientos > 0
-    ? `¿Eliminar esta importación y sus ${cantMovimientos} movimiento(s)? Podrás volver a subir el archivo.`
+async function _sunatEliminarLote(loteId, cantRegistros, tipoFuente) {
+  const msg = cantRegistros > 0
+    ? `¿Eliminar esta importación y sus ${cantRegistros} registro(s)? Podrás volver a subir el archivo.`
     : '¿Eliminar esta importación del historial?';
   if (!await confirmar(msg, { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
 
-  if (cantMovimientos > 0) {
-    const { error: errMov } = await _supabase
-      .from('movimientos').delete().eq('lote_importacion', loteId);
-    if (errMov) { mostrarToast('Error al eliminar movimientos: ' + errMov.message, 'error'); return; }
+  if (cantRegistros > 0) {
+    const tabla = tipoFuente === 'SUNAT_COMPRAS' ? 'registro_compras' : 'registro_ventas';
+    const { error: errReg } = await _supabase
+      .from(tabla).delete().eq('lote_importacion_id', loteId);
+    if (errReg) { mostrarToast('Error al eliminar registros: ' + errReg.message, 'error'); return; }
   }
 
   const { error: errLote } = await _supabase
     .from('lotes_importacion').delete().eq('id', loteId);
-  if (errLote) { mostrarToast('Error al eliminar registro: ' + errLote.message, 'error'); return; }
+  if (errLote) { mostrarToast('Error al eliminar lote: ' + errLote.message, 'error'); return; }
 
   mostrarToast('Importación eliminada. Puedes volver a subir el archivo.', 'exito');
   await _sunatCargarHistorial();

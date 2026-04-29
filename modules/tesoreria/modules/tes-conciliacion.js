@@ -139,30 +139,36 @@ async function _concCargarDatos() {
   const prev3    = new Date(anio, m - 4, 1);
   const desdeDoc = `${prev3.getFullYear()}-${String(prev3.getMonth()+1).padStart(2,'0')}-01`;
 
-  // Lotes SUNAT de esta empresa
-  const { data: lotes } = await _supabase
-    .from('lotes_importacion')
-    .select('id, tipo_fuente')
-    .eq('empresa_operadora_id', empresa_activa.id)
-    .in('tipo_fuente', ['SUNAT_COMPRAS', 'SUNAT_VENTAS']);
-
-  const loteMap = {};
-  (lotes || []).forEach(l => { loteMap[l.id] = l.tipo_fuente; });
-  const loteIds = Object.keys(loteMap);
-
-  // Query movimientos SUNAT (doc side)
-  let qSunat = _supabase.from('movimientos')
+  // ── Lado documentos: tablas maestras registro_compras / registro_ventas / rh_registros ──
+  let qCompras = _supabase.from('registro_compras')
     .select('*')
     .eq('empresa_operadora_id', empresa_activa.id)
     .eq('conciliado', false)
-    .gte('fecha', desdeDoc)
-    .lte('fecha', hastaBanco);
-  qSunat = loteIds.length
-    ? qSunat.in('lote_importacion', loteIds)
-    : qSunat.eq('lote_importacion', '__NINGUNO__');
-  if (nat === 'CARGO' || nat === 'ABONO') qSunat = qSunat.eq('naturaleza', nat);
+    .neq('estado', 'ANULADO')
+    .gte('fecha_emision', desdeDoc)
+    .lte('fecha_emision', hastaBanco);
 
-  // Query banco (movimientos con cuenta bancaria, periodo seleccionado)
+  let qVentas = _supabase.from('registro_ventas')
+    .select('*')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('conciliado', false)
+    .neq('estado', 'ANULADO')
+    .gte('fecha_emision', desdeDoc)
+    .lte('fecha_emision', hastaBanco);
+
+  let qRH = _supabase.from('rh_registros')
+    .select('*, prestadores_servicios(nombre, dni)')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('conciliado', false)
+    .eq('estado', 'EMITIDO')
+    .gte('fecha_emision', desdeDoc)
+    .lte('fecha_emision', hastaBanco);
+
+  // Filtro naturaleza: compras/RH son CARGO, ventas son ABONO
+  if (nat === 'ABONO') { qCompras = qCompras.eq('id', '__NINGUNO__'); qRH = qRH.eq('id', '__NINGUNO__'); }
+  if (nat === 'CARGO') { qVentas  = qVentas.eq('id',  '__NINGUNO__'); }
+
+  // ── Lado banco: movimientos con cuenta bancaria ──
   let qBanco = _supabase.from('movimientos')
     .select('*, cuentas_bancarias(nombre_alias)')
     .eq('empresa_operadora_id', empresa_activa.id)
@@ -172,21 +178,12 @@ async function _concCargarDatos() {
     .lte('fecha', hastaBanco);
   if (nat === 'CARGO' || nat === 'ABONO') qBanco = qBanco.eq('naturaleza', nat);
 
-  // Query RH Recibidas pendientes (doc side — siempre CARGO)
-  let qRH = _supabase.from('contabilidad_rh_recibidas')
-    .select('*')
-    .eq('empresa_id', empresa_activa.id)
-    .eq('estado_pago', 'PENDIENTE')
-    .gte('fecha_emision', desdeDoc)
-    .lte('fecha_emision', hastaBanco);
-  // Excluir RH si el filtro es solo ABONO
-  if (nat === 'ABONO') qRH = qRH.eq('id', '__NINGUNO__');
+  const [resComp, resVent, resRH, resBanco] = await Promise.all([qCompras, qVentas, qRH, qBanco]);
 
-  const [resSunat, resBanco, resRH] = await Promise.all([qSunat, qBanco, qRH]);
-
-  const sunatDocs = (resSunat.data || []).map(m => _concNormalizarDoc(m, loteMap));
-  const rhDocs    = (resRH.data   || []).map(r => _concNormalizarRH(r));
-  conc_docs   = [...sunatDocs, ...rhDocs];
+  const comprasDocs = (resComp.data || []).map(rc => _concNormalizarCompra(rc));
+  const ventasDocs  = (resVent.data || []).map(rv => _concNormalizarVenta(rv));
+  const rhDocs      = (resRH.data   || []).map(rh => _concNormalizarRH(rh));
+  conc_docs   = [...comprasDocs, ...ventasDocs, ...rhDocs];
   conc_bancos = (resBanco.data || []).map(b => _concNormalizarBanco(b));
   conc_sel_doc   = null;
   conc_sel_banco = null;
@@ -211,35 +208,50 @@ function _concFiltrarPeriodo() {
 }
 
 // ── Normalización ─────────────────────────────────────────────────
-function _concNormalizarDoc(m, loteMap) {
-  const tipoFuente = loteMap[m.lote_importacion] || 'SUNAT';
+function _concNormalizarCompra(rc) {
   return {
-    id:          m.id,
-    _source:     'SUNAT',
-    _raw:        m,
-    fecha:       m.fecha,
-    naturaleza:  m.naturaleza,
-    importe:     parseFloat(m.importe) || 0,
-    moneda:      m.moneda || 'PEN',
-    descripcion: m.descripcion || '',
-    nombre:      m.descripcion || '',
-    documento:   m.numero_documento || '',
-    tipo:        tipoFuente === 'SUNAT_COMPRAS' ? 'Compra' : 'Venta',
+    id:          rc.id,
+    _source:     'COMPRA',
+    _raw:        rc,
+    fecha:       rc.fecha_emision,
+    naturaleza:  'CARGO',
+    importe:     parseFloat(rc.total) || 0,
+    moneda:      rc.moneda || 'PEN',
+    descripcion: rc.nombre_proveedor || '',
+    nombre:      rc.nombre_proveedor || '',
+    documento:   rc.serie && rc.numero ? `${rc.serie}-${rc.numero}` : '',
+    tipo:        'Compra',
   };
 }
 
-function _concNormalizarRH(r) {
+function _concNormalizarVenta(rv) {
   return {
-    id:          r.id,
+    id:          rv.id,
+    _source:     'VENTA',
+    _raw:        rv,
+    fecha:       rv.fecha_emision,
+    naturaleza:  'ABONO',
+    importe:     parseFloat(rv.total) || 0,
+    moneda:      rv.moneda || 'PEN',
+    descripcion: rv.nombre_cliente || '',
+    nombre:      rv.nombre_cliente || '',
+    documento:   rv.serie && rv.numero ? `${rv.serie}-${rv.numero}` : '',
+    tipo:        'Venta',
+  };
+}
+
+function _concNormalizarRH(rh) {
+  return {
+    id:          rh.id,
     _source:     'RH',
-    _raw:        r,
-    fecha:       r.fecha_emision,
+    _raw:        rh,
+    fecha:       rh.fecha_emision,
     naturaleza:  'CARGO',
-    importe:     parseFloat(r.renta_neta) || 0,
-    moneda:      r.moneda === 'DOLARES' ? 'USD' : 'PEN',
-    descripcion: r.descripcion || '',
-    nombre:      r.nombre_emisor || '',
-    documento:   r.nro_rh || '',
+    importe:     parseFloat(rh.monto_neto) || 0,
+    moneda:      rh.moneda || 'PEN',
+    descripcion: rh.concepto || '',
+    nombre:      rh.prestadores_servicios?.nombre || rh.nombre_emisor || '',
+    documento:   rh.numero_rh || '',
     tipo:        'RH',
   };
 }
@@ -592,44 +604,35 @@ function _concLimpiarSeleccion() {
 // ── Aprobación ────────────────────────────────────────────────────
 async function _concAprobarMatchInterno(doc, banco) {
   const hoy = new Date().toISOString().slice(0, 10);
-  const promises = [
-    _supabase.from('movimientos')
-      .update({ conciliado: true, fecha_conciliacion: hoy })
-      .eq('id', banco.id),
-  ];
 
-  if (doc._source === 'RH') {
-    promises.push(
-      _supabase.from('contabilidad_rh_recibidas')
-        .update({ estado_pago: 'PAGADO', fecha_pago: hoy })
-        .eq('id', doc.id)
-    );
-  } else {
-    promises.push(
-      _supabase.from('movimientos')
-        .update({ conciliado: true, fecha_conciliacion: hoy })
-        .eq('id', doc.id)
-    );
-  }
+  // 1. Marcar movimiento bancario como conciliado
+  const { error: errBanco } = await _supabase.from('movimientos')
+    .update({ conciliado: true, fecha_conciliacion: hoy })
+    .eq('id', banco.id);
+  if (errBanco) return errBanco.message;
 
-  const [r1, r2] = await Promise.all(promises);
-  if (r1.error || r2?.error) {
-    return (r1.error || r2?.error).message;
-  }
+  // 2. Marcar documento en su tabla maestra
+  const tablaDoc = doc._source === 'COMPRA' ? 'registro_compras'
+                 : doc._source === 'VENTA'  ? 'registro_ventas'
+                 : 'rh_registros';
+  const { error: errDoc } = await _supabase.from(tablaDoc)
+    .update({ conciliado: true, movimiento_id: banco.id, fecha_conciliacion: hoy })
+    .eq('id', doc.id);
+  if (errDoc) return errDoc.message;
 
-  // Registrar en tabla conciliaciones si existe (migración 009)
+  // 3. Auditoría en conciliaciones (fire-and-forget, tabla opcional)
   _supabase.from('conciliaciones').insert({
     empresa_operadora_id: empresa_activa.id,
     movimiento_id:        banco.id,
-    doc_tipo:             doc._source === 'RH' ? 'RH' : (doc.tipo === 'Compra' ? 'COMPRA' : 'VENTA'),
+    doc_tipo:             doc._source,
     doc_id:               doc.id,
     score:                0,
-    tipo_match:           'MANUAL',
+    tipo_match:           'SUGERIDO',
     estado:               'APROBADO',
     usuario_id:           perfil_usuario?.id || null,
   }).then(() => {}).catch(() => {});
 
-  return null; // sin error
+  return null;
 }
 
 async function _concAprobarMatch(docId, bancoId) {
@@ -701,115 +704,137 @@ async function _concCargarHistorial(mes) {
 
   const [anio, m] = mes.split('-').map(Number);
   const desde = `${mes}-01`;
-  const hasta = `${mes}-${new Date(anio, m, 0).getDate()}`;
+  const hasta  = `${mes}-${new Date(anio, m, 0).getDate()}`;
 
-  const [resBanco, resRH] = await Promise.all([
-    _supabase.from('movimientos')
-      .select('*, cuentas_bancarias(nombre_alias)')
+  const [resComp, resVent, resRH] = await Promise.all([
+    _supabase.from('registro_compras')
+      .select('*')
       .eq('empresa_operadora_id', empresa_activa.id)
       .eq('conciliado', true)
-      .not('cuenta_bancaria_id', 'is', null)
       .gte('fecha_conciliacion', desde)
       .lte('fecha_conciliacion', hasta)
       .order('fecha_conciliacion', { ascending: false })
       .limit(60),
-    _supabase.from('contabilidad_rh_recibidas')
+    _supabase.from('registro_ventas')
       .select('*')
-      .eq('empresa_id', empresa_activa.id)
-      .eq('estado_pago', 'PAGADO')
-      .gte('fecha_pago', desde)
-      .lte('fecha_pago', hasta)
-      .order('fecha_pago', { ascending: false })
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('conciliado', true)
+      .gte('fecha_conciliacion', desde)
+      .lte('fecha_conciliacion', hasta)
+      .order('fecha_conciliacion', { ascending: false })
+      .limit(60),
+    _supabase.from('rh_registros')
+      .select('*, prestadores_servicios(nombre)')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('conciliado', true)
+      .gte('fecha_conciliacion', desde)
+      .lte('fecha_conciliacion', hasta)
+      .order('fecha_conciliacion', { ascending: false })
       .limit(40),
   ]);
 
-  const banco = resBanco.data || [];
-  const rh    = resRH.data    || [];
+  const compras = resComp.data || [];
+  const ventas  = resVent.data || [];
+  const rh      = resRH.data   || [];
 
-  if (!banco.length && !rh.length) {
+  if (!compras.length && !ventas.length && !rh.length) {
     cont.innerHTML = '<p class="text-center text-muted text-sm" style="padding:12px">Sin conciliaciones en este período</p>';
     return;
   }
 
-  const tablasBanco = banco.length ? `
-    <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">🏦 Movimientos bancarios conciliados</p>
+  const thead = `<thead><tr>
+    <th>Fecha concil.</th><th>Fecha doc.</th><th>Contraparte</th>
+    <th>Documento</th><th class="text-right">Importe</th><th>Acc.</th>
+  </tr></thead>`;
+
+  const filaCompra = c => `
+    <tr>
+      <td style="white-space:nowrap">${c.fecha_conciliacion || '—'}</td>
+      <td style="white-space:nowrap">${c.fecha_emision || '—'}</td>
+      <td class="text-sm">${escapar((c.nombre_proveedor || '—').slice(0,32))}</td>
+      <td class="text-sm">${escapar(c.serie && c.numero ? `${c.serie}-${c.numero}` : '—')}</td>
+      <td class="text-right text-rojo" style="font-weight:500;white-space:nowrap">−${formatearMoneda(c.total, c.moneda)}</td>
+      <td><button onclick="_concDeshacerMatch('${c.id}','COMPRA')"
+        style="padding:2px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
+        title="Deshacer conciliación">↩️</button></td>
+    </tr>`;
+
+  const filaVenta = v => `
+    <tr>
+      <td style="white-space:nowrap">${v.fecha_conciliacion || '—'}</td>
+      <td style="white-space:nowrap">${v.fecha_emision || '—'}</td>
+      <td class="text-sm">${escapar((v.nombre_cliente || '—').slice(0,32))}</td>
+      <td class="text-sm">${escapar(v.serie && v.numero ? `${v.serie}-${v.numero}` : '—')}</td>
+      <td class="text-right text-verde" style="font-weight:500;white-space:nowrap">+${formatearMoneda(v.total, v.moneda)}</td>
+      <td><button onclick="_concDeshacerMatch('${v.id}','VENTA')"
+        style="padding:2px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
+        title="Deshacer conciliación">↩️</button></td>
+    </tr>`;
+
+  const filaRH = r => `
+    <tr>
+      <td style="white-space:nowrap">${r.fecha_conciliacion || '—'}</td>
+      <td style="white-space:nowrap">${r.fecha_emision || '—'}</td>
+      <td class="text-sm">${escapar((r.prestadores_servicios?.nombre || r.nombre_emisor || '—').slice(0,32))}</td>
+      <td class="text-sm">${escapar(r.numero_rh || '—')}</td>
+      <td class="text-right text-rojo" style="font-weight:500;white-space:nowrap">−${formatearMoneda(r.monto_neto, r.moneda)}</td>
+      <td><button onclick="_concDeshacerMatch('${r.id}','RH')"
+        style="padding:2px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
+        title="Marcar como pendiente">↩️</button></td>
+    </tr>`;
+
+  const tablaCompras = compras.length ? `
+    <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">🛒 Compras conciliadas</p>
     <div class="table-wrap" style="margin-bottom:16px">
-      <table class="tabla" style="font-size:12px">
-        <thead><tr>
-          <th>Fecha concil.</th><th>Fecha mov.</th><th>Descripción</th>
-          <th class="text-right">Importe</th><th>Nat.</th><th>Cuenta</th><th>Acc.</th>
-        </tr></thead>
-        <tbody>
-          ${banco.map(b => `
-            <tr>
-              <td style="white-space:nowrap">${b.fecha_conciliacion || '—'}</td>
-              <td style="white-space:nowrap">${b.fecha || '—'}</td>
-              <td class="text-sm">${escapar((b.descripcion || b.numero_operacion || '—').slice(0,36))}</td>
-              <td class="text-right ${b.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
-                ${b.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(b.importe, b.moneda)}
-              </td>
-              <td><span class="badge ${b.naturaleza==='CARGO'?'badge-critico':'badge-activo'}" style="font-size:10px">${b.naturaleza}</span></td>
-              <td class="text-sm">${escapar(b.cuentas_bancarias?.nombre_alias || '—')}</td>
-              <td>
-                <button onclick="_concDeshacerMatch('${b.id}','BANCO')"
-                  style="padding:2px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
-                  title="Deshacer conciliación">↩️</button>
-              </td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
+      <table class="tabla" style="font-size:12px">${thead}<tbody>${compras.map(filaCompra).join('')}</tbody></table>
     </div>` : '';
 
-  const tablasRH = rh.length ? `
-    <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">🧾 RH conciliados (pagados)</p>
+  const tablaVentas = ventas.length ? `
+    <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">💰 Ventas conciliadas</p>
+    <div class="table-wrap" style="margin-bottom:16px">
+      <table class="tabla" style="font-size:12px">${thead}<tbody>${ventas.map(filaVenta).join('')}</tbody></table>
+    </div>` : '';
+
+  const tablaRH = rh.length ? `
+    <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">🧾 RH conciliados</p>
     <div class="table-wrap">
-      <table class="tabla" style="font-size:12px">
-        <thead><tr>
-          <th>Fecha pago</th><th>N° RH</th><th>Emisor</th>
-          <th class="text-right">Renta neta</th><th>Acc.</th>
-        </tr></thead>
-        <tbody>
-          ${rh.map(r => `
-            <tr>
-              <td style="white-space:nowrap">${r.fecha_pago || '—'}</td>
-              <td style="font-weight:600">${escapar(r.nro_rh || '—')}</td>
-              <td class="text-sm">${escapar((r.nombre_emisor || '—').slice(0,30))}</td>
-              <td class="text-right text-verde" style="font-weight:500;white-space:nowrap">
-                ${formatearMoneda(r.renta_neta, r.moneda==='DOLARES'?'USD':'PEN')}
-              </td>
-              <td>
-                <button onclick="_concDeshacerMatch('${r.id}','RH')"
-                  style="padding:2px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
-                  title="Marcar como pendiente">↩️</button>
-              </td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
+      <table class="tabla" style="font-size:12px">${thead}<tbody>${rh.map(filaRH).join('')}</tbody></table>
     </div>` : '';
 
-  cont.innerHTML = tablasBanco + tablasRH;
+  cont.innerHTML = tablaCompras + tablaVentas + tablaRH;
 }
 
-async function _concDeshacerMatch(id, tipo) {
+async function _concDeshacerMatch(docId, tipo) {
   const msg = tipo === 'RH'
-    ? '¿Marcar este RH como Pendiente de pago nuevamente?'
-    : '¿Deshacer esta conciliación y marcar como pendiente?';
+    ? '¿Marcar este RH como pendiente nuevamente?'
+    : '¿Deshacer esta conciliación y devolver a pendientes?';
   if (!await confirmar(msg, { btnOk: 'Deshacer' })) return;
 
-  let error;
-  if (tipo === 'RH') {
-    ({ error } = await _supabase
-      .from('contabilidad_rh_recibidas')
-      .update({ estado_pago: 'PENDIENTE', fecha_pago: null })
-      .eq('id', id));
-  } else {
-    ({ error } = await _supabase
-      .from('movimientos')
+  const tabla = tipo === 'COMPRA' ? 'registro_compras'
+              : tipo === 'VENTA'  ? 'registro_ventas'
+              : 'rh_registros';
+
+  // Recuperar movimiento_id para revertir el banco también
+  const { data: docData } = await _supabase.from(tabla)
+    .select('movimiento_id')
+    .eq('id', docId)
+    .single();
+
+  const movimientoId = docData?.movimiento_id;
+
+  // Revertir documento en tabla maestra
+  const { error: errDoc } = await _supabase.from(tabla)
+    .update({ conciliado: false, movimiento_id: null, fecha_conciliacion: null })
+    .eq('id', docId);
+  if (errDoc) { mostrarToast('Error: ' + errDoc.message, 'error'); return; }
+
+  // Revertir movimiento bancario (sin bloquear si falla)
+  if (movimientoId) {
+    await _supabase.from('movimientos')
       .update({ conciliado: false, fecha_conciliacion: null })
-      .eq('id', id));
+      .eq('id', movimientoId);
   }
 
-  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Conciliación deshecha — registro vuelve a pendientes', 'info');
   await _concCargarDatos();
 }
