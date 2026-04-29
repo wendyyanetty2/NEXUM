@@ -243,13 +243,9 @@ async function eliminarCliente(id, nombre) {
 
 async function precargarClientes() {
   const DEFAULT = [
-    'AFP','Banco BCP','Club Retamas','EPA SAC','EPS',
-    'ESTADO DE CUENTA','FIBRAFORTE S.A.','GEOMECANICA','Hidromedick',
-    'Huaraz','Impuesto BCP','Instituto','Jesús del Norte',
-    'JVÑ GENERAL SERVICES SAC','La victoria','Mall bellavista',
-    'MANTENIMIENTO BCP','Medicentro','MedickCenter',
-    'PEVAL CORPORATION E.I.R.L.','San Gabriel','San Juan Bautista',
-    'San Pablo','Santa Martha','SUPESA','TEMPLO - SAN PABLO','Torre San Pedro',
+    'AFP','Banco BCP','EPS','ESTADO DE CUENTA',
+    'Impuesto BCP','JVÑ GENERAL SERVICES SAC',
+    'MANTENIMIENTO BCP','PEVAL CORPORATION E.I.R.L.',
   ];
   const existentes = new Set(clientes_lista.map(c => c.nombre.toLowerCase()));
   const nuevos = DEFAULT.filter(n => !existentes.has(n.toLowerCase()));
