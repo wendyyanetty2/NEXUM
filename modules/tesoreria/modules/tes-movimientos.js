@@ -292,7 +292,14 @@ async function renderTabMovimientos(area) {
 async function cargarMovimientos() {
   const { data } = await _supabase
     .from('movimientos')
-    .select('*, cuentas_bancarias(nombre_alias)')
+    .select(`*,
+      cuentas_bancarias(nombre_alias),
+      empresas_clientes:empresa_cliente_id(nombre, ruc_dni),
+      conceptos:concepto_id(nombre),
+      autorizaciones:autorizacion_id(nombre),
+      proyectos:proyecto_id(nombre),
+      medios_pago:medio_pago_id(nombre)
+    `)
     .eq('empresa_operadora_id', empresa_activa.id)
     .order('fecha', { ascending: false })
     .limit(500);
@@ -441,7 +448,15 @@ function renderTablaMovimientos() {
     OBSERVADO: 'badge-info', CANCELADO: 'badge-inactivo',
   };
 
-  tbody.innerHTML = pagina.length ? pagina.map(m => `
+  tbody.innerHTML = pagina.length ? pagina.map(m => {
+    const docEstado = m.estado_doc || 'PENDIENTE';
+    const empresa   = m.empresas_clientes?.nombre || '';
+    const concepto  = m.conceptos?.nombre || '';
+    const nroDoc    = m.numero_documento || '';
+    const tipoDoc   = m.tipo_documento_codigo || '';
+    const infoDoc   = [tipoDoc, nroDoc].filter(Boolean).join(' ');
+    const infoExtra = [empresa, concepto].filter(Boolean).map(s => escapar(s.slice(0,22))).join(' · ');
+    return `
     <tr>
       <td><input type="checkbox" class="chk-mov" data-id="${m.id}"
         ${mov_seleccionados.has(m.id) ? 'checked' : ''}
@@ -452,15 +467,20 @@ function renderTablaMovimientos() {
       <td class="text-right ${m.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
         ${m.naturaleza === 'CARGO' ? '−' : '+'}${formatearMoneda(m.importe, m.moneda)}
       </td>
-      <td class="text-sm">${escapar((m.descripcion||'').slice(0,45))}${(m.descripcion||'').length>45?'…':''}</td>
+      <td class="text-sm">${escapar((m.descripcion||'').slice(0,40))}${(m.descripcion||'').length>40?'…':''}</td>
       <td class="text-mono text-sm">${escapar(m.numero_operacion || '—')}</td>
-      <td><span class="badge ${coloresDoc[m.estado_doc || 'PENDIENTE'] || 'badge-warning'}" style="font-size:11px">${m.estado_doc || 'PENDIENTE'}</span></td>
+      <td>
+        <span class="badge ${coloresDoc[docEstado] || 'badge-warning'}" style="font-size:11px">${docEstado}</span>
+        ${infoDoc ? `<div class="text-mono" style="font-size:10px;color:var(--color-texto-suave);margin-top:2px">${escapar(infoDoc)}</div>` : ''}
+        ${infoExtra ? `<div style="font-size:10px;color:var(--color-texto-suave)">${infoExtra}</div>` : ''}
+      </td>
       <td><span class="badge ${colores[m.estado] || 'badge-info'}" style="font-size:11px">${m.estado}</span></td>
       <td>
         <button class="btn-icono" onclick="abrirModalMovimiento('${m.id}')">✏️</button>
         <button class="btn-icono peligro" onclick="eliminarMovimiento('${m.id}')">🗑️</button>
       </td>
-    </tr>`).join('') :
+    </tr>`;
+  }).join('') :
     '<tr><td colspan="9" class="text-center text-muted">Sin movimientos</td></tr>';
 
   const total = movimientos_filtrada.length;
@@ -673,23 +693,32 @@ async function eliminarMovimiento(id) {
 function exportarMovimientosExcel() {
   if (!movimientos_filtrada.length) { mostrarToast('No hay datos para exportar', 'atencion'); return; }
   const rows = movimientos_filtrada.map(m => ({
-    Fecha:      m.fecha,
-    Cuenta:     m.cuentas_bancarias?.nombre_alias || '',
-    Naturaleza: m.naturaleza,
-    Importe:    m.importe,
-    Moneda:     m.moneda,
-    Descripción: m.descripcion || '',
-    'Nro Operación': m.numero_operacion || '',
-    Estado:     m.estado,
-    'FA/DOC/RH': m.estado_doc || 'PENDIENTE',
-    Cotización: m.cotizacion || '',
-    OC:         m.oc || '',
-    'Detalles Servicio': m.detalles_servicio || '',
-    'Observaciones 2':   m.observaciones_2 || '',
-    'Base Imponible': m.base_imponible || '',
-    IGV:        m.igv || '',
-    'Tiene Detracción': m.tiene_detraccion ? 'Sí' : 'No',
-    'Monto Detracción': m.monto_detraccion || '',
+    Fecha:                 m.fecha,
+    Cuenta:                m.cuentas_bancarias?.nombre_alias || '',
+    Naturaleza:            m.naturaleza,
+    Importe:               m.importe,
+    Moneda:                m.moneda,
+    Descripción:           m.descripcion || '',
+    'Nro Operación':       m.numero_operacion || '',
+    'Tipo Documento':      m.tipo_documento_codigo || '',
+    'Nro Documento':       m.numero_documento || '',
+    'Empresa / Proveedor': m.empresas_clientes?.nombre || '',
+    'RUC / DNI':           m.empresas_clientes?.ruc_dni || '',
+    Concepto:              m.conceptos?.nombre || '',
+    Autorización:          m.autorizaciones?.nombre || '',
+    Proyecto:              m.proyectos?.nombre || '',
+    'Medio de Pago':       m.medios_pago?.nombre || '',
+    'FA/DOC/RH':           m.estado_doc || 'PENDIENTE',
+    'Estado Movimiento':   m.estado,
+    Cotización:            m.cotizacion || '',
+    OC:                    m.oc || '',
+    'Detalles Servicio':   m.detalles_servicio || '',
+    Observaciones:         m.observaciones || '',
+    'Observaciones 2':     m.observaciones_2 || '',
+    'Base Imponible':      m.base_imponible || '',
+    IGV:                   m.igv || '',
+    'Tiene Detracción':    m.tiene_detraccion ? 'Sí' : 'No',
+    'Monto Detracción':    m.monto_detraccion || '',
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
