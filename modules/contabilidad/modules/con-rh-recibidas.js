@@ -100,6 +100,7 @@ async function cargarRHRecibidas() {
     wrap.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin RH recibidas en este período.</p>';
     return;
   }
+   
 
   wrap.innerHTML = `
     <table class="tabla-nexum">
@@ -235,7 +236,6 @@ async function guardarRHR(id) {
     alerta.classList.add('visible'); return;
   }
 
-  // MEJORA: Limpieza automática de DNI/RUC
   if (nroDoc.length < 8) nroDoc = nroDoc.padStart(8, '0');
   else if (nroDoc.length > 8 && nroDoc.length < 11) nroDoc = nroDoc.padStart(11, '0');
 
@@ -409,7 +409,7 @@ async function _confirmarImportRHR() {
   const btn = document.getElementById('btn-conf-rhr');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  let ok = 0; let errCount = 0; let sinDni = 0; let primerError = null;
+  let ok = 0; let errCount = 0; let sinDni = 0;
 
   for (const r of validos) {
     let dni = (r.nro_doc_emisor || '').toString().trim();
@@ -443,7 +443,7 @@ async function _confirmarImportRHR() {
       concepto:             r.descripcion || 'SERVICIO',
       moneda:               monedaNorm,
       monto_bruto:          parseFloat(r.renta_bruta) || 0,
-      tiene_retencion:      parseFloat(r.retencion) > 0,
+      tiene_retencion:       parseFloat(r.retencion) > 0,
       porcentaje_retencion: parseFloat(r.renta_bruta) > 0 ? Math.round(parseFloat(r.retencion) / parseFloat(r.renta_bruta) * 10000) / 100 : 0,
       monto_retencion:      parseFloat(r.retencion) || 0,
       monto_neto:           parseFloat(r.renta_neta) || 0,
@@ -453,8 +453,8 @@ async function _confirmarImportRHR() {
       nombre_emisor:        r.nombre_emisor || null,
       usuario_id:           perfil_usuario?.id || null,
     }, { 
-      // ESTA LÍNEA ES CLAVE: Usa la nueva regla SQL que creamos
-      onConflict: 'empresa_operadora_id, numero_rh' 
+      // ESTA LÍNEA AHORA SÍ COINCIDE CON SUPABASE
+      onConflict: 'empresa_operadora_id, prestador_id, numero_rh' 
     });
 
     if (error) errCount++; else ok++;
