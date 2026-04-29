@@ -119,10 +119,12 @@ async function _cargarCuentasImp() {
     .eq('empresa_operadora_id', empresa_activa.id)
     .eq('activo', true)
     .order('nombre_alias');
+  const cuentas = data || [];
   const sel = document.getElementById('imp-cuenta');
   if (!sel) return;
   sel.innerHTML = '<option value="">— Seleccionar cuenta —</option>' +
-    (data || []).map(c => `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`).join('');
+    cuentas.map(c => `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`).join('');
+  if (cuentas.length >= 1) sel.value = cuentas[0].id;
 }
 
 let imp_datos_preview    = [];

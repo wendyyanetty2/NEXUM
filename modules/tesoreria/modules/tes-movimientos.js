@@ -312,6 +312,7 @@ async function cargarCuentasParaMov() {
   if (sel) {
     sel.innerHTML = '<option value="">Todas las cuentas</option>' +
       mov_cuentas.map(c => `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`).join('');
+    if (mov_cuentas.length === 1) sel.value = mov_cuentas[0].id;
   }
 }
 

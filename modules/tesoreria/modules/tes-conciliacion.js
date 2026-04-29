@@ -2,15 +2,16 @@
 // Tesorería — Conciliación v2 (Motor de Match Inteligente)
 // ═══════════════════════════════════════════════════════════════
 
-let conc_docs       = [];          // documentos normalizados (SUNAT + RH)
-let conc_bancos     = [];          // banco normalizados
-let conc_matches    = [];          // [ { doc, banco, score, confianza, dias, alternos[] } ]
-let conc_sin_doc    = [];
-let conc_sin_banco  = [];
-let conc_rechazados = new Set();   // "docId|bancoId" rechazados por usuario
-let conc_sel_doc    = null;
-let conc_sel_banco  = null;
-let conc_periodo    = null;
+let conc_docs          = [];   // documentos normalizados (compras + ventas + RH)
+let conc_bancos        = [];   // banco normalizados
+let conc_matches       = [];   // [ { doc, banco, score, confianza, dias, alternos[] } ]
+let conc_matches_grupo = [];   // [ { banco, docs:[rh1,rh2,...], score, confianza, diasMax } ]
+let conc_sin_doc       = [];
+let conc_sin_banco     = [];
+let conc_rechazados    = new Set(); // "docId|bancoId" y "GRUPO_bancoId" rechazados
+let conc_sel_doc       = null;
+let conc_sel_banco     = null;
+let conc_periodo       = null;
 
 // ── Render principal ──────────────────────────────────────────────
 async function renderTabConciliacion(area) {
@@ -193,6 +194,15 @@ async function _concCargarDatos() {
   conc_sin_doc   = resultado.sinDoc;
   conc_sin_banco = resultado.sinBanco;
 
+  // Buscar grupos: suma de varios RH = un movimiento banco
+  conc_matches_grupo = _concDetectarGruposRH(conc_sin_doc, conc_sin_banco);
+  if (conc_matches_grupo.length) {
+    const docsEnGrupo   = new Set(conc_matches_grupo.flatMap(g => g.docs.map(d => d.id)));
+    const bancosEnGrupo = new Set(conc_matches_grupo.map(g => g.banco.id));
+    conc_sin_doc   = conc_sin_doc.filter(d => !docsEnGrupo.has(d.id));
+    conc_sin_banco = conc_sin_banco.filter(b => !bancosEnGrupo.has(b.id));
+  }
+
   _concRenderResumen();
   _concRenderSugerencias();
   _concRenderSinMatch();
@@ -268,6 +278,71 @@ function _concNormalizarBanco(m) {
     descripcion: m.descripcion || m.numero_operacion || '',
     cuenta:      m.cuentas_bancarias?.nombre_alias || '',
   };
+}
+
+// ── Detección de grupos RH (suma de varios RH = un banco) ────────
+function _concDetectarGruposRH(sinDoc, sinBanco) {
+  const grupos   = [];
+  const rhsSin   = sinDoc.filter(d => d._source === 'RH');
+  const cargosSin = sinBanco.filter(b => b.naturaleza === 'CARGO');
+
+  const usadosRH    = new Set();
+  const usadosBanco = new Set();
+
+  for (const banco of cargosSin) {
+    if (usadosBanco.has(banco.id)) return grupos; // protección
+    if (conc_rechazados.has(`GRUPO_${banco.id}`)) continue;
+
+    // Solo RH disponibles dentro de ±60 días del banco
+    const bancoDate = new Date(banco.fecha);
+    const candidatos = rhsSin.filter(rh => {
+      if (usadosRH.has(rh.id)) return false;
+      const dias = Math.abs(new Date(rh.fecha) - bancoDate) / 86400000;
+      return dias <= 60;
+    });
+
+    if (candidatos.length < 2) continue;
+
+    // Limitar a 25 candidatos para mantener rendimiento (C(25,4) ≈ 12.6k)
+    const pool  = candidatos.slice(0, 25);
+    const combo = _concComboRH(banco.importe, pool, 4);
+    if (!combo) continue;
+
+    const diasMax = Math.round(Math.max(...combo.map(rh =>
+      Math.abs(new Date(rh.fecha) - bancoDate) / 86400000
+    )));
+    const score    = diasMax <= 7 ? 72 : diasMax <= 15 ? 65 : 55;
+    const confianza = score >= 65 ? 'MEDIA' : 'BAJA';
+
+    grupos.push({ banco, docs: combo, score, confianza, diasMax });
+    usadosBanco.add(banco.id);
+    combo.forEach(rh => usadosRH.add(rh.id));
+  }
+
+  return grupos;
+}
+
+function _concComboRH(target, items, maxSize) {
+  for (let size = 2; size <= Math.min(maxSize, items.length); size++) {
+    const combo = _concComboRec(items, size, target, 0, []);
+    if (combo) return combo;
+  }
+  return null;
+}
+
+function _concComboRec(items, size, target, start, current) {
+  if (current.length === size) {
+    const suma = current.reduce((s, it) => s + it.importe, 0);
+    return Math.abs(suma - target) <= 0.01 ? current : null;
+  }
+  const needed = size - current.length;
+  for (let i = start; i <= items.length - needed; i++) {
+    const resto = target - items[i].importe;
+    if (resto < -0.01) continue;
+    const result = _concComboRec(items, size, target, i + 1, [...current, items[i]]);
+    if (result) return result;
+  }
+  return null;
 }
 
 // ── Motor de match ────────────────────────────────────────────────
@@ -372,12 +447,15 @@ function _concRenderResumen() {
       </div>
     </div>`;
 
+  const nGrupo  = conc_matches_grupo.length;
+
   grid.innerHTML =
-    tarjeta('⚡', '#F0FFF4', nAlta,  'Alta confianza', 'var(--color-exito)') +
-    tarjeta('🔶', '#FFFBEB', nMedia, 'Media confianza', '#D69E2E') +
-    tarjeta('🔷', '#EBF4FF', nBaja,  'Baja / RH diferida', '#3182CE') +
-    tarjeta('📄', '#FFF5F5', nSinDoc,'Docs sin match', 'var(--color-rojo)') +
-    tarjeta('🏦', '#F7FAFC', nSinBan,'Banco sin match', 'var(--color-texto-suave)');
+    tarjeta('⚡', '#F0FFF4', nAlta,   'Alta confianza', 'var(--color-exito)') +
+    tarjeta('🔶', '#FFFBEB', nMedia,  'Media confianza', '#D69E2E') +
+    tarjeta('🔷', '#EBF4FF', nBaja,   'Baja / RH diferida', '#3182CE') +
+    (nGrupo ? tarjeta('🧮', '#FAF5FF', nGrupo, 'Grupos RH', '#6B46C1') : '') +
+    tarjeta('📄', '#FFF5F5', nSinDoc, 'Docs sin match', 'var(--color-rojo)') +
+    tarjeta('🏦', '#F7FAFC', nSinBan, 'Banco sin match', 'var(--color-texto-suave)');
 }
 
 // ── Sugerencias ───────────────────────────────────────────────────
@@ -395,10 +473,10 @@ function _concBadgeConfianza(confianza) {
 function _concRenderSugerencias() {
   const cont  = document.getElementById('conc-sugerencias');
   const badge = document.getElementById('conc-badge-matches');
-  if (badge) badge.textContent = conc_matches.length;
+  if (badge) badge.textContent = conc_matches.length + conc_matches_grupo.length;
   if (!cont) return;
 
-  if (!conc_matches.length) {
+  if (!conc_matches.length && !conc_matches_grupo.length) {
     cont.innerHTML = `
       <div class="text-center text-muted text-sm" style="padding:24px">
         No se encontraron matches automáticos para este período.<br>
@@ -472,7 +550,69 @@ function _concRenderSugerencias() {
           }).join('')}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${conc_matches_grupo.length ? `
+    <div style="margin-top:20px">
+      <p style="font-size:13px;font-weight:600;color:#6B46C1;margin-bottom:10px">
+        🧮 Matches por suma de RH
+        <span style="font-size:11px;font-weight:400;color:var(--color-texto-suave);margin-left:8px">
+          Un movimiento bancario coincide con la suma de varios recibos por honorarios
+        </span>
+      </p>
+      <div style="overflow-x:auto">
+        <table class="tabla" style="font-size:12px">
+          <thead>
+            <tr>
+              <th>Banco — Fecha / Monto</th>
+              <th>Descripción banco</th>
+              <th>RH que suman el monto</th>
+              <th class="text-center">Δ días máx</th>
+              <th class="text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${conc_matches_grupo.map(g => {
+              const docIds = g.docs.map(d => d.id).join(',');
+              return `
+                <tr style="background:rgba(237,233,254,.25)">
+                  <td style="white-space:nowrap">
+                    <div style="font-weight:600">${g.banco.fecha}</div>
+                    <div style="color:var(--color-rojo);font-weight:700">−${formatearMoneda(g.banco.importe, g.banco.moneda)}</div>
+                    <div style="font-size:11px;color:var(--color-texto-suave)">${escapar(g.banco.cuenta || '')}</div>
+                  </td>
+                  <td class="text-sm">${escapar((g.banco.descripcion || '—').slice(0,32))}</td>
+                  <td>
+                    ${g.docs.map(rh => `
+                      <div style="padding:2px 0;border-bottom:1px solid var(--color-borde)">
+                        <span style="font-weight:500">${escapar(rh.nombre.slice(0,22))}</span>
+                        <span class="text-muted" style="margin-left:6px;font-size:11px">${rh.documento}</span>
+                        <span style="float:right;color:var(--color-rojo);font-weight:600">−${formatearMoneda(rh.importe, rh.moneda)}</span>
+                        <div style="clear:both"></div>
+                        <span class="text-muted" style="font-size:11px">${rh.fecha}</span>
+                      </div>`).join('')}
+                    <div style="text-align:right;padding-top:3px;font-size:11px;color:#6B46C1;font-weight:600">
+                      Σ = ${formatearMoneda(g.docs.reduce((s,d)=>s+d.importe,0), g.banco.moneda)}
+                    </div>
+                  </td>
+                  <td class="text-center">
+                    <span style="font-size:11px;color:${g.diasMax<=7?'var(--color-exito)':g.diasMax<=15?'#D69E2E':'var(--color-rojo)'}">
+                      ${g.diasMax} día${g.diasMax===1?'':'s'}
+                    </span>
+                  </td>
+                  <td class="text-center" style="white-space:nowrap">
+                    <button onclick="_concAprobarGrupoRH('${g.banco.id}','${docIds}')"
+                      style="padding:3px 9px;background:var(--color-exito);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;margin-right:4px"
+                      title="Aprobar: conciliar estos ${g.docs.length} RH con el movimiento">✓ Aprobar</button>
+                    <button onclick="_concRechazarGrupo('${g.banco.id}')"
+                      style="padding:3px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
+                      title="Rechazar sugerencia">✗</button>
+                  </td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}`;
 }
 
 // ── Sin match ─────────────────────────────────────────────────────
@@ -695,6 +835,38 @@ async function _concAutoMatch() {
   if (errMsg) mostrarToast('Error parcial: ' + errMsg, 'atencion');
   else        mostrarToast(`✓ ${ok} matches de alta confianza aprobados`, 'exito');
   await _concCargarDatos();
+}
+
+// ── Aprobación / rechazo de grupos RH ────────────────────────────
+async function _concAprobarGrupoRH(bancoId, docIdsStr) {
+  const docIds = docIdsStr.split(',').filter(Boolean);
+  const grupo  = conc_matches_grupo.find(g => g.banco.id === bancoId);
+  if (!grupo || !docIds.length) return;
+
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const { error: errBanco } = await _supabase.from('movimientos')
+    .update({ conciliado: true, fecha_conciliacion: hoy })
+    .eq('id', bancoId);
+  if (errBanco) { mostrarToast('Error banco: ' + errBanco.message, 'error'); return; }
+
+  const results = await Promise.all(
+    docIds.map(docId =>
+      _supabase.from('rh_registros')
+        .update({ conciliado: true, movimiento_id: bancoId, fecha_conciliacion: hoy })
+        .eq('id', docId)
+    )
+  );
+  const errRH = results.find(r => r.error);
+  if (errRH) { mostrarToast('Error parcial RH: ' + errRH.error.message, 'atencion'); return; }
+
+  mostrarToast(`✓ Grupo conciliado: ${docIds.length} RH contra 1 movimiento bancario`, 'exito');
+  await _concCargarDatos();
+}
+
+function _concRechazarGrupo(bancoId) {
+  conc_rechazados.add(`GRUPO_${bancoId}`);
+  _concCargarDatos(); // recarga: los RH y el banco vuelven a sin_match; grupo no se resugerirá
 }
 
 // ── Historial ─────────────────────────────────────────────────────
