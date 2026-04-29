@@ -50,7 +50,6 @@ function renderTabImportarMBD(area) {
           <button onclick="cargarMBD()" style="${estiloBtnSecundario()}">🔍 Filtrar</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button onclick="descargarPlantillaMBD()" style="${estiloBtnSecundario()}" title="Descargar plantilla Excel en blanco para importar">📋 Plantilla</button>
           <button onclick="importarExcelMBD()" style="${estiloBtnSecundario()}">📂 Importar Excel</button>
           <button onclick="exportarExcelMBD()" style="${estiloBtnSecundario()}">📥 Exportar Excel</button>
           <button onclick="abrirModalMBD()" style="${estiloBtnPrimario()}">+ Nuevo movimiento</button>
@@ -583,34 +582,6 @@ async function exportarExcelMBD() {
   XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
   XLSX.writeFile(wb, `MBD_${empresa_activa.nombre_corto}_${anio}${mes}.xlsx`);
   mostrarToast('Archivo exportado.', 'exito');
-}
-
-function descargarPlantillaMBD() {
-  const cabecera = [
-    'N° operacion Bancaria','Fecha de Deposito','Descripcion','Moneda','Monto',
-    'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
-    'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
-    'Tipo de DOC','Autorización','Medio de Pago','Observaciones',
-    'Detalles Compra / Servicio','Observaciones 2'
-  ];
-
-  const ejemplo = [
-    '00000001','2025-01-15','Pago de factura proveedor','S/','1500.00',
-    'FIBRAFORTE S.A.','20123456789','COT-001','OC-001','Proyecto A',
-    'Servicio','EPA SAC','EMITIDO','F001-00123',
-    'FA','Wendy Ortega','BCP','Ninguna',
-    'Servicio de instalación',''
-  ];
-
-  const ws = XLSX.utils.aoa_to_sheet([cabecera, ejemplo]);
-
-  // Estilo ancho de columnas
-  ws['!cols'] = cabecera.map((h, i) => ({ wch: Math.max(h.length + 2, [8,12,25,8,10,28,14,10,10,15,18,20,22,16,10,18,14,20,28,16][i] || 14) }));
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
-  XLSX.writeFile(wb, `Plantilla_MBD.xlsx`);
-  mostrarToast('Plantilla descargada. Completa los datos y luego usa "Importar Excel".', 'info');
 }
 
 /* ── Helpers de estilo ─────────────────────────────────────── */
