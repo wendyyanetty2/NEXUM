@@ -422,71 +422,73 @@ async function _confirmarImportRHR() {
   const btn = document.getElementById('btn-conf-rhr');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  let ok = 0; let errCount = 0;
+  let ok = 0; let errCount = 0; let sinDni = 0; let primerError = null;
 
   for (const r of validos) {
-    const dni = r.nro_doc_emisor?.toString().trim();
-    if (!dni) { errCount++; continue; }
+    const dni = (r.nro_doc_emisor || '').toString().trim();
+    if (!dni) { sinDni++; errCount++; continue; }
 
-    // Buscar o crear prestador por DNI/RUC
-    let { data: ps } = await _supabase
-      .from('prestadores_servicios')
-      .select('id')
-      .eq('dni', dni)
-      .maybeSingle();
+    // Buscar o crear prestador
+    let { data: ps, error: errBusq } = await _supabase
+      .from('prestadores_servicios').select('id').eq('dni', dni).maybeSingle();
+    if (errBusq && !primerError) primerError = 'Prestador lookup: ' + errBusq.message;
 
     if (!ps) {
       const { data: nuevo, error: errPS } = await _supabase
         .from('prestadores_servicios')
-        .insert({
-          dni:    dni,
-          nombre: r.nombre_emisor || dni,
-          ruc:    dni.length === 11 ? dni : null,
-          activo: true,
-        })
-        .select('id')
-        .single();
-      if (errPS) { errCount++; continue; }
+        .insert({ dni, nombre: r.nombre_emisor || dni, ruc: dni.length === 11 ? dni : null, activo: true })
+        .select('id').single();
+      if (errPS) {
+        if (!primerError) primerError = 'Crear prestador: ' + errPS.message;
+        errCount++; continue;
+      }
       ps = nuevo;
     }
 
-    const monedaNorm = (r.moneda || 'SOLES').toUpperCase() === 'DOLARES' ? 'USD' : 'PEN';
+    const monedaNorm = (r.moneda || '').toUpperCase() === 'DOLARES' ? 'USD' : 'PEN';
     const estadoDoc  = r.estado_pago === 'CANCELADO' ? 'ANULADO' : 'EMITIDO';
-    const bruta = r.renta_bruta || 0;
-    const ret   = r.retencion   || 0;
+    const bruta = parseFloat(r.renta_bruta) || 0;
+    const ret   = parseFloat(r.retencion)   || 0;
 
     const { error } = await _supabase.from('rh_registros').upsert({
-      empresa_operadora_id:  empresa_activa.id,
-      prestador_id:          ps.id,
-      periodo:               r.fecha_emision?.slice(0, 7) || null,
-      fecha_emision:         r.fecha_emision,
-      numero_rh:             r.nro_rh,
-      concepto:              r.descripcion || 'SERVICIO',
-      moneda:                monedaNorm,
-      monto_bruto:           bruta,
-      tiene_retencion:       ret > 0,
-      porcentaje_retencion:  bruta > 0 ? Math.round(ret / bruta * 10000) / 100 : 0,
-      monto_retencion:       ret,
-      monto_neto:            r.renta_neta || 0,
-      estado:                estadoDoc,
-      observaciones:         r.observaciones || null,
-      nro_doc_emisor:        dni,
-      nombre_emisor:         r.nombre_emisor || null,
-      usuario_id:            perfil_usuario?.id || null,
-    }, {
-      onConflict:       'empresa_operadora_id,prestador_id,numero_rh',
-      ignoreDuplicates: true,
-    });
+      empresa_operadora_id: empresa_activa.id,
+      prestador_id:         ps.id,
+      periodo:              r.fecha_emision?.slice(0, 7) || null,
+      fecha_emision:        r.fecha_emision,
+      numero_rh:            r.nro_rh,
+      concepto:             r.descripcion || 'SERVICIO',
+      moneda:               monedaNorm,
+      monto_bruto:          bruta,
+      tiene_retencion:      ret > 0,
+      porcentaje_retencion: bruta > 0 ? Math.round(ret / bruta * 10000) / 100 : 0,
+      monto_retencion:      ret,
+      monto_neto:           parseFloat(r.renta_neta) || 0,
+      estado:               estadoDoc,
+      observaciones:        r.observaciones || null,
+      nro_doc_emisor:       dni,
+      nombre_emisor:        r.nombre_emisor || null,
+      usuario_id:           perfil_usuario?.id || null,
+    }, { onConflict: 'empresa_operadora_id,prestador_id,numero_rh', ignoreDuplicates: true });
 
-    if (error) errCount++; else ok++;
+    if (error) {
+      if (!primerError) primerError = 'Insertar RH: ' + error.message;
+      errCount++;
+    } else {
+      ok++;
+    }
   }
 
   _cerrarPrevRHR();
-  if (ok === 0 && errCount > 0) {
-    mostrarToast(`Error al importar RH. Revisa que el DNI/RUC del emisor esté completo.`, 'error');
+
+  if (ok === 0 && sinDni === validos.length) {
+    mostrarToast('Sin DNI/RUC en ningún registro. Verifica que tu Excel tenga el número de documento en la columna F.', 'error');
+  } else if (ok === 0 && primerError) {
+    mostrarToast('Error: ' + primerError, 'error');
   } else {
     const partes = [`✓ ${ok} RH importado(s)`];
-    if (errCount) partes.push(`${errCount} errores`);
+    if (sinDni)    partes.push(`${sinDni} sin DNI (omitidos)`);
+    if (errCount - sinDni > 0) partes.push(`${errCount - sinDni} error(es) DB`);
+    if (primerError) partes.push(primerError.slice(0, 80));
     mostrarToast(partes.join(' · '), errCount ? 'atencion' : 'exito');
   }
   cargarRHRecibidas();
