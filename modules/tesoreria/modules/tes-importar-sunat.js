@@ -401,19 +401,22 @@ async function _sunatConfirmarImportacion() {
     tiene_detraccion:      f.tiene_detraccion,
     codigo_detraccion:     f.codigo_detraccion,
     estado:                'PENDIENTE',
-    estado_doc:            'EMITIDO',
     conciliado:            false,
     lote_importacion:      lote.id,
     usuario_id:            perfil_usuario?.id || null,
   }));
 
-  let ok = 0; let errCount = 0;
+  let ok = 0; let errCount = 0; let primerError = null;
   const CHUNK = 50;
   for (let i = 0; i < movs.length; i += CHUNK) {
     const chunk = movs.slice(i, i + CHUNK);
     const { error } = await _supabase.from('movimientos').insert(chunk);
-    if (error) errCount += chunk.length;
-    else ok += chunk.length;
+    if (error) {
+      errCount += chunk.length;
+      if (!primerError) primerError = error.message;
+    } else {
+      ok += chunk.length;
+    }
     const pct = Math.round(((i + chunk.length) / movs.length) * 100);
     if (progTxt)   progTxt.textContent   = `Importando ${Math.min(i + CHUNK, movs.length)} / ${movs.length}…`;
     if (progBarra) progBarra.style.width = pct + '%';
@@ -428,10 +431,14 @@ async function _sunatConfirmarImportacion() {
   if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar importación'; }
   if (progWrap) progWrap.style.display = 'none';
 
-  mostrarToast(
-    `✓ ${ok} registros importados${errCount ? ` (${errCount} errores)` : ''} — ya visibles en Movimientos`,
-    errCount > 0 ? 'atencion' : 'exito'
-  );
+  if (primerError) {
+    mostrarToast(`Error al insertar movimientos: ${primerError}`, 'error');
+  } else {
+    mostrarToast(
+      `✓ ${ok} registros importados${errCount ? ` (${errCount} errores)` : ''} — ya visibles en Movimientos`,
+      errCount > 0 ? 'atencion' : 'exito'
+    );
+  }
   _sunatCancelarPreview();
   await _sunatCargarHistorial();
 }
