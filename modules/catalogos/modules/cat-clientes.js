@@ -28,6 +28,7 @@ async function renderTabClientes(area) {
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarClientesExcel()">⬇ Excel</button>
+          <button class="btn btn-secundario btn-sm" onclick="precargarClientes()" title="Insertar empresas/proveedores predefinidos (omite los que ya existen)">📋 Precargar datos</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalCliente(null)">+ Nuevo</button>
         </div>
       </div>
@@ -237,6 +238,28 @@ async function eliminarCliente(id, nombre) {
   const { error } = await _supabase.from('empresas_clientes').delete().eq('id', id);
   if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado correctamente', 'exito');
+  await cargarClientes();
+}
+
+async function precargarClientes() {
+  const DEFAULT = [
+    'AFP','Banco BCP','Club Retamas','EPA SAC','EPS',
+    'ESTADO DE CUENTA','FIBRAFORTE S.A.','GEOMECANICA','Hidromedick',
+    'Huaraz','Impuesto BCP','Instituto','Jesús del Norte',
+    'JVÑ GENERAL SERVICES SAC','La victoria','Mall bellavista',
+    'MANTENIMIENTO BCP','Medicentro','MedickCenter',
+    'PEVAL CORPORATION E.I.R.L.','San Gabriel','San Juan Bautista',
+    'San Pablo','Santa Martha','SUPESA','TEMPLO - SAN PABLO','Torre San Pedro',
+  ];
+  const existentes = new Set(clientes_lista.map(c => c.nombre.toLowerCase()));
+  const nuevos = DEFAULT.filter(n => !existentes.has(n.toLowerCase()));
+  if (!nuevos.length) { mostrarToast('Todos los proveedores predefinidos ya están cargados.', 'info'); return; }
+  if (!await confirmar(`¿Precargar ${nuevos.length} empresa(s)/proveedor(es) que no están registrados?`)) return;
+  const { error } = await _supabase.from('empresas_clientes').insert(
+    nuevos.map(n => ({ empresa_operadora_id: empresa_activa.id, nombre: n, tipo: 'PROVEEDOR', activo: true }))
+  );
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ ${nuevos.length} proveedor(es) precargados.`, 'exito');
   await cargarClientes();
 }
 
