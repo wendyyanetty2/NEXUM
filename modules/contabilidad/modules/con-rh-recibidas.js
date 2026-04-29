@@ -57,7 +57,6 @@ async function cargarRHRecibidas() {
   const desde = `${anio}-${mes}-01`;
   const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
-  // Fuente única: rh_registros (tabla maestra compartida con Tributaria)
   let q = _supabase.from('rh_registros')
     .select('*, prestadores_servicios(nombre, dni)')
     .eq('empresa_operadora_id', empresa_activa.id)
@@ -72,12 +71,12 @@ async function cargarRHRecibidas() {
   if (error) { wrap.innerHTML = `<p class="error-texto">Error: ${escapar(error.message)}</p>`; return; }
 
   const filas = data || [];
-
   const totalBruto = filas.reduce((s,r) => s + Number(r.monto_bruto||0), 0);
   const totalRet   = filas.reduce((s,r) => s + Number(r.monto_retencion||0), 0);
   const totalNeto  = filas.reduce((s,r) => s + Number(r.monto_neto||0), 0);
   const pendientes = filas.filter(r => !r.conciliado && r.estado === 'EMITIDO').length;
-  const resumen    = document.getElementById('rhr-resumen');
+
+  const resumen = document.getElementById('rhr-resumen');
   if (resumen) resumen.innerHTML = `
     <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
       <div style="font-size:11px;opacity:.8">RENTA BRUTA</div>
@@ -138,7 +137,6 @@ async function cargarRHRecibidas() {
           </tr>`; }).join('')}
       </tbody>
     </table>
-    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} registro(s)</p>
   `;
 }
 
@@ -221,12 +219,12 @@ function cerrarModalRHR() {
 }
 
 async function guardarRHR(id) {
-  const alerta  = document.getElementById('rhr-alerta');
+  const alerta = document.getElementById('rhr-alerta');
   alerta.classList.remove('visible');
 
   const fecha   = document.getElementById('rhr-fecha').value;
   const nroRH   = document.getElementById('rhr-nro').value.trim();
-  const nroDoc  = document.getElementById('rhr-nro-doc').value.trim();
+  let nroDoc    = document.getElementById('rhr-nro-doc').value.trim();
   const nombre  = document.getElementById('rhr-nombre').value.trim();
   const concepto = document.getElementById('rhr-desc').value.trim();
   const bruta   = parseFloat(document.getElementById('rhr-bruta').value);
@@ -237,7 +235,10 @@ async function guardarRHR(id) {
     alerta.classList.add('visible'); return;
   }
 
-  // Buscar o crear prestador por DNI/RUC
+  // MEJORA: Limpieza automática de DNI/RUC
+  if (nroDoc.length < 8) nroDoc = nroDoc.padStart(8, '0');
+  else if (nroDoc.length > 8 && nroDoc.length < 11) nroDoc = nroDoc.padStart(11, '0');
+
   let { data: ps } = await _supabase
     .from('prestadores_servicios').select('id').eq('dni', nroDoc).maybeSingle();
   if (!ps) {
@@ -317,12 +318,6 @@ function procesarImportRHR(input) {
       };
       const toNum = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 
-      // Plantilla RH (0-indexed): A(0)=fecha, B(1)=tipo_doc_emitido("RH" — ignorar),
-      // C(2)=nro_doc_emitido→nro_rh, D(3)=estado_doc_emitido→estado_pago,
-      // E(4)=tipo_doc_emisor, F(5)=nro_doc_emisor, G(6)=nombre_emisor,
-      // H(7)=tipo_renta(ignorar), I(8)=gratuito(ignorar), J(9)=descripcion,
-      // K(10)=observacion, L(11)=moneda_operacion, M(12)=renta_bruta,
-      // N(13)=impuesto_renta→retencion, O(14)=renta_neta
       _rhrDatosPreview = rows.slice(1).map((r, i) => {
         const fecha  = toDate(r[0]);
         const nroRH  = r[2]?.toString().trim() || null;
@@ -345,10 +340,6 @@ function procesarImportRHR(input) {
           retencion:       toNum(r[13]),
           renta_neta:      toNum(r[14]),
           estado_pago:     estadoDoc === 'ANULADO' ? 'CANCELADO' : 'PENDIENTE',
-          fecha_pago:      null,
-          nro_mbd:         null,
-          creado_por:      perfil_usuario.id,
-          fecha_actualizacion: new Date().toISOString(),
         };
       });
 
@@ -386,10 +377,7 @@ function procesarImportRHR(input) {
                         <td style="text-align:right">${formatearMoneda(r.renta_bruta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
                         <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.retencion, r.moneda==='DOLARES'?'USD':'PEN')}</td>
                         <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.renta_neta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
-                        <td>${r._ok
-                          ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">OK</span>'
-                          : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px">${escapar(r._error)}</span>`
-                        }</td>
+                        <td>${r._ok ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">OK</span>' : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px">${escapar(r._error)}</span>`}</td>
                       </tr>`).join('')}
                   </tbody>
                 </table>
@@ -397,8 +385,7 @@ function procesarImportRHR(input) {
             </div>
             <div class="modal-footer">
               <button class="btn btn-secundario" onclick="_cerrarPrevRHR()">Cancelar</button>
-              <button class="btn btn-primario" onclick="_confirmarImportRHR()" id="btn-conf-rhr"
-                ${!validos ? 'disabled' : ''}>✅ Importar ${validos} registro(s)</button>
+              <button class="btn btn-primario" onclick="_confirmarImportRHR()" id="btn-conf-rhr" ${!validos ? 'disabled' : ''}>✅ Importar ${validos} registro(s)</button>
             </div>
           </div>
         </div>`;
@@ -425,30 +412,27 @@ async function _confirmarImportRHR() {
   let ok = 0; let errCount = 0; let sinDni = 0; let primerError = null;
 
   for (const r of validos) {
-    const dni = (r.nro_doc_emisor || '').toString().trim();
+    let dni = (r.nro_doc_emisor || '').toString().trim();
+    if (dni) {
+      if (dni.length < 8) dni = dni.padStart(8, '0');
+      else if (dni.length > 8 && dni.length < 11) dni = dni.padStart(11, '0');
+    }
     if (!dni) { sinDni++; errCount++; continue; }
 
-    // Buscar o crear prestador
-    let { data: ps, error: errBusq } = await _supabase
+    let { data: ps } = await _supabase
       .from('prestadores_servicios').select('id').eq('dni', dni).maybeSingle();
-    if (errBusq && !primerError) primerError = 'Prestador lookup: ' + errBusq.message;
-
+    
     if (!ps) {
       const { data: nuevo, error: errPS } = await _supabase
         .from('prestadores_servicios')
-        .insert({ dni, nombre: r.nombre_emisor || dni, ruc: dni.length === 11 ? dni : null, activo: true })
+        .insert({ dni: dni, nombre: r.nombre_emisor || dni, ruc: dni.length === 11 ? dni : null, activo: true })
         .select('id').single();
-      if (errPS) {
-        if (!primerError) primerError = 'Crear prestador: ' + errPS.message;
-        errCount++; continue;
-      }
+      if (errPS) { errCount++; continue; }
       ps = nuevo;
     }
 
-    const monedaNorm = (r.moneda || '').toUpperCase() === 'DOLARES' ? 'USD' : 'PEN';
+    const monedaNorm = (r.moneda || '').toUpperCase() === 'DOLARES' || (r.moneda || '').toUpperCase() === 'USD' ? 'USD' : 'PEN';
     const estadoDoc  = r.estado_pago === 'CANCELADO' ? 'ANULADO' : 'EMITIDO';
-    const bruta = parseFloat(r.renta_bruta) || 0;
-    const ret   = parseFloat(r.retencion)   || 0;
 
     const { error } = await _supabase.from('rh_registros').upsert({
       empresa_operadora_id: empresa_activa.id,
@@ -458,39 +442,26 @@ async function _confirmarImportRHR() {
       numero_rh:            r.nro_rh,
       concepto:             r.descripcion || 'SERVICIO',
       moneda:               monedaNorm,
-      monto_bruto:          bruta,
-      tiene_retencion:      ret > 0,
-      porcentaje_retencion: bruta > 0 ? Math.round(ret / bruta * 10000) / 100 : 0,
-      monto_retencion:      ret,
+      monto_bruto:          parseFloat(r.renta_bruta) || 0,
+      tiene_retencion:      parseFloat(r.retencion) > 0,
+      porcentaje_retencion: parseFloat(r.renta_bruta) > 0 ? Math.round(parseFloat(r.retencion) / parseFloat(r.renta_bruta) * 10000) / 100 : 0,
+      monto_retencion:      parseFloat(r.retencion) || 0,
       monto_neto:           parseFloat(r.renta_neta) || 0,
       estado:               estadoDoc,
       observaciones:        r.observaciones || null,
       nro_doc_emisor:       dni,
       nombre_emisor:        r.nombre_emisor || null,
       usuario_id:           perfil_usuario?.id || null,
-    }, { onConflict: 'empresa_operadora_id,prestador_id,numero_rh', ignoreDuplicates: true });
+    }, { 
+      // ESTA LÍNEA ES CLAVE: Usa la nueva regla SQL que creamos
+      onConflict: 'empresa_operadora_id, numero_rh' 
+    });
 
-    if (error) {
-      if (!primerError) primerError = 'Insertar RH: ' + error.message;
-      errCount++;
-    } else {
-      ok++;
-    }
+    if (error) errCount++; else ok++;
   }
 
   _cerrarPrevRHR();
-
-  if (ok === 0 && sinDni === validos.length) {
-    mostrarToast('Sin DNI/RUC en ningún registro. Verifica que tu Excel tenga el número de documento en la columna F.', 'error');
-  } else if (ok === 0 && primerError) {
-    mostrarToast('Error: ' + primerError, 'error');
-  } else {
-    const partes = [`✓ ${ok} RH importado(s)`];
-    if (sinDni)    partes.push(`${sinDni} sin DNI (omitidos)`);
-    if (errCount - sinDni > 0) partes.push(`${errCount - sinDni} error(es) DB`);
-    if (primerError) partes.push(primerError.slice(0, 80));
-    mostrarToast(partes.join(' · '), errCount ? 'atencion' : 'exito');
-  }
+  mostrarToast(`✓ ${ok} RH importado(s). ${errCount ? errCount + ' errores.' : ''}`, ok ? 'exito' : 'error');
   cargarRHRecibidas();
 }
 
@@ -508,20 +479,11 @@ async function exportarExcelRHRecibidas() {
 
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
-  const cab = ['Fecha Emisión','N° RH','N° Doc Emisor','Nombre Emisor',
-    'Concepto','Moneda','Renta Bruta','Retención','Renta Neta',
-    'Estado','Fecha Pago','Observaciones'];
-  const filas = data.map(r => {
-    const estPago = r.estado==='ANULADO'?'CANCELADO':r.conciliado?'PAGADO':'PENDIENTE';
-    return [
-      r.fecha_emision, r.numero_rh,
-      r.prestadores_servicios?.dni    || r.nro_doc_emisor,
-      r.prestadores_servicios?.nombre || r.nombre_emisor,
-      r.concepto, r.moneda,
-      r.monto_bruto, r.monto_retencion, r.monto_neto,
-      estPago, r.fecha_conciliacion, r.observaciones,
-    ];
-  });
+  const cab = ['Fecha Emisión','N° RH','N° Doc Emisor','Nombre Emisor','Concepto','Moneda','Renta Bruta','Retención','Renta Neta','Estado','Fecha Pago','Observaciones'];
+  const filas = data.map(r => [
+    r.fecha_emision, r.numero_rh, r.prestadores_servicios?.dni || r.nro_doc_emisor, r.prestadores_servicios?.nombre || r.nombre_emisor,
+    r.concepto, r.moneda, r.monto_bruto, r.monto_retencion, r.monto_neto, r.estado==='ANULADO'?'CANCELADO':r.conciliado?'PAGADO':'PENDIENTE', r.fecha_conciliacion, r.observaciones
+  ]);
 
   const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
   const wb = XLSX.utils.book_new();
