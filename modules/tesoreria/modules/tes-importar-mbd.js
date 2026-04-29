@@ -2,27 +2,6 @@
    NEXUM — Tesorería: Módulo MBD (Movimientos Bancarios Diarios)
    ============================================================ */
 
-const CONCEPTOS_MBD = [
-  '1° Quincena','2° Quincena','AFP','Almuerzo','Alquiler',
-  'Banca BCP','Cena','Certificación','Cochera','Combustible',
-  'Comisión','Comisión BCP','Compras','Cursos','Declaración',
-  'Depositos','Depósitos','Desayuno','Devolución','EECC BCP',
-  'EPS','Estado de Cuenta BCP','Examen Medico','Impuesto BCP',
-  'Liquidación','Mantenimiento BCP','NPS',
-  'Pago de Prestamo','Pago de Proyecto','Pago de Servicio',
-  'Peaje','Planilla De Movilidad','Prestamo','Préstamo',
-  'Reembolso','RH','SCTR','Seguro','Servicio','SSOMA',
-  'Tramites','Trámites','Transporte','Ventas'
-];
-const EMPRESAS_MBD = [
-  'AFP','Banco BCP','Club Retamas','EPA SAC','EPS',
-  'ESTADO DE CUENTA','FIBRAFORTE S.A.','GEOMECANICA','Hidromedick',
-  'Huaraz','Impuesto BCP','Instituto','Jesús del Norte',
-  'JVÑ GENERAL SERVICES SAC','La victoria','Mall bellavista',
-  'MANTENIMIENTO BCP','Medicentro','MedickCenter',
-  'PEVAL CORPORATION E.I.R.L.','San Gabriel','San Juan Bautista',
-  'San Pablo','Santa Martha','SUPESA','TEMPLO - SAN PABLO','Torre San Pedro'
-];
 const TIPOS_DOC_MBD = [
   {val:'FA',lab:'FA — Factura'},{val:'BO',lab:'BO — Boletas'},
   {val:'BP',lab:'BP — Boletas de Pago'},{val:'RH',lab:'RH — Recibo por honorarios'},
@@ -31,14 +10,22 @@ const TIPOS_DOC_MBD = [
   {val:'PJ',lab:'PJ — Ticket de peaje'},{val:'SB',lab:'SB — Recibo de luz/agua/gas'},
   {val:'VB',lab:'VB — Voucher de banco'},{val:'OT',lab:'OT — Comprobante sin serie legible'}
 ];
-const AUTORIZACIONES_MBD = [
-  'Johanys Valencia','Alexis Valencia','Administración',
-  'Wendy Ortega','Isabel Peche','Segundo Valencia',
-  'Mantenimiento BCP','Impuesto BCP','Comisión BCP','Estado de Cuenta'
-];
-const MEDIOS_PAGO_MBD = [
-  'Efectivo','BCP','BBVA','Yape','Plin','Transferencia','Cheque'
-];
+
+let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [] };
+
+async function _mbdCargarCatalogos() {
+  const eid = empresa_activa.id;
+  const [rc, re, ra, rm] = await Promise.all([
+    _supabase.from('conceptos').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+    _supabase.from('empresas_clientes').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+    _supabase.from('autorizaciones').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+    _supabase.from('medios_pago').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+  ]);
+  _mbdCatalogos.conceptos     = (rc.data || []).map(r => r.nombre);
+  _mbdCatalogos.empresas      = (re.data || []).map(r => r.nombre);
+  _mbdCatalogos.autorizaciones= (ra.data || []).map(r => r.nombre);
+  _mbdCatalogos.mediosPago    = (rm.data || []).map(r => r.nombre);
+}
 
 function renderTabImportarMBD(area) {
   const hoy = new Date();
@@ -205,6 +192,7 @@ let _mbdDatos = [];
 
 async function abrirModalMBD(id = null) {
   let item = null;
+  await _mbdCargarCatalogos();
   if (id) {
     const { data } = await _supabase.from('tesoreria_mbd').select('*').eq('id', id).single();
     item = data;
@@ -256,14 +244,14 @@ async function abrirModalMBD(id = null) {
               <label>Concepto</label>
               <select id="mbd-concepto">
                 <option value="">— Seleccionar —</option>
-                ${CONCEPTOS_MBD.map(c=>`<option value="${c}" ${item?.concepto===c?'selected':''}>${c}</option>`).join('')}
+                ${_mbdCatalogos.conceptos.map(c=>`<option value="${c}" ${item?.concepto===c?'selected':''}>${c}</option>`).join('')}
               </select>
             </div>
             <div class="campo">
-              <label>Empresa</label>
+              <label>Empresa / Proveedor</label>
               <select id="mbd-empresa">
                 <option value="">— Seleccionar —</option>
-                ${EMPRESAS_MBD.map(e=>`<option value="${e}" ${item?.empresa===e?'selected':''}>${e}</option>`).join('')}
+                ${_mbdCatalogos.empresas.map(e=>`<option value="${e}" ${item?.empresa===e?'selected':''}>${e}</option>`).join('')}
               </select>
             </div>
             <div class="campo">
@@ -287,14 +275,14 @@ async function abrirModalMBD(id = null) {
               <label>Autorización</label>
               <select id="mbd-autorizacion">
                 <option value="">— Seleccionar —</option>
-                ${AUTORIZACIONES_MBD.map(a=>`<option value="${a}" ${item?.autorizacion===a?'selected':''}>${a}</option>`).join('')}
+                ${_mbdCatalogos.autorizaciones.map(a=>`<option value="${a}" ${item?.autorizacion===a?'selected':''}>${a}</option>`).join('')}
               </select>
             </div>
             <div class="campo">
               <label>Medio de Pago</label>
               <select id="mbd-medio-pago">
                 <option value="">— Seleccionar —</option>
-                ${MEDIOS_PAGO_MBD.map(m=>`<option value="${m}" ${item?.observaciones_3===m?'selected':''}>${m}</option>`).join('')}
+                ${_mbdCatalogos.mediosPago.map(m=>`<option value="${m}" ${item?.observaciones_3===m?'selected':''}>${m}</option>`).join('')}
               </select>
             </div>
             <div class="campo">
