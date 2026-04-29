@@ -6,12 +6,13 @@ const CONCEPTOS_MBD = [
   '1° Quincena','2° Quincena','AFP','Almuerzo','Alquiler',
   'Banca BCP','Cena','Certificación','Cochera','Combustible',
   'Comisión','Comisión BCP','Compras','Cursos','Declaración',
-  'Depositos','Desayuno','EECC BCP','EPS','Examen Medico',
-  'Impuesto BCP','Liquidación','Mantenimiento BCP','NPS',
+  'Depositos','Depósitos','Desayuno','Devolución','EECC BCP',
+  'EPS','Estado de Cuenta BCP','Examen Medico','Impuesto BCP',
+  'Liquidación','Mantenimiento BCP','NPS',
   'Pago de Prestamo','Pago de Proyecto','Pago de Servicio',
-  'Peaje','Planilla De Movilidad','Prestamo','Reembolso',
-  'RH','SCTR','Seguro','Servicio','SSOMA','Tramites',
-  'Transporte','Ventas'
+  'Peaje','Planilla De Movilidad','Prestamo','Préstamo',
+  'Reembolso','RH','SCTR','Seguro','Servicio','SSOMA',
+  'Tramites','Trámites','Transporte','Ventas'
 ];
 const EMPRESAS_MBD = [
   'AFP','Banco BCP','Club Retamas','EPA SAC','EPS',
@@ -19,7 +20,7 @@ const EMPRESAS_MBD = [
   'Huaraz','Impuesto BCP','Instituto','Jesús del Norte',
   'JVÑ GENERAL SERVICES SAC','La victoria','Mall bellavista',
   'MANTENIMIENTO BCP','Medicentro','MedickCenter',
-  'PEVAL CORPORATION EIRL','San Gabriel','San Juan Bautista',
+  'PEVAL CORPORATION E.I.R.L.','San Gabriel','San Juan Bautista',
   'San Pablo','Santa Martha','SUPESA','TEMPLO - SAN PABLO','Torre San Pedro'
 ];
 const TIPOS_DOC_MBD = [
@@ -34,6 +35,9 @@ const AUTORIZACIONES_MBD = [
   'Johanys Valencia','Alexis Valencia','Administración',
   'Wendy Ortega','Isabel Peche','Segundo Valencia',
   'Mantenimiento BCP','Impuesto BCP','Comisión BCP','Estado de Cuenta'
+];
+const MEDIOS_PAGO_MBD = [
+  'Efectivo','BCP','BBVA','Yape','Plin','Transferencia','Cheque'
 ];
 
 function renderTabImportarMBD(area) {
@@ -58,7 +62,8 @@ function renderTabImportarMBD(area) {
           <input id="mbd-buscar" type="text" placeholder="Buscar…" style="${estiloInput()};width:180px">
           <button onclick="cargarMBD()" style="${estiloBtnSecundario()}">🔍 Filtrar</button>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="descargarPlantillaMBD()" style="${estiloBtnSecundario()}" title="Descargar plantilla Excel en blanco para importar">📋 Plantilla</button>
           <button onclick="importarExcelMBD()" style="${estiloBtnSecundario()}">📂 Importar Excel</button>
           <button onclick="exportarExcelMBD()" style="${estiloBtnSecundario()}">📥 Exportar Excel</button>
           <button onclick="abrirModalMBD()" style="${estiloBtnPrimario()}">+ Nuevo movimiento</button>
@@ -78,7 +83,7 @@ function renderTabImportarMBD(area) {
           <table class="tabla-nexum">
             <thead><tr>
               <th>#</th><th>Fecha</th><th>Monto</th><th>Mon.</th>
-              <th>Proveedor / Personal</th><th>Concepto</th><th>Tipo Doc</th><th>Estado</th>
+              <th>Proveedor / Personal</th><th>Concepto</th><th>Tipo Doc</th><th>Medio Pago</th><th>Estado</th>
             </tr></thead>
             <tbody id="mbd-prev-tbody"></tbody>
           </table>
@@ -123,7 +128,8 @@ async function cargarMBD() {
     (r.concepto||'').toLowerCase().includes(buscar) ||
     (r.empresa||'').toLowerCase().includes(buscar) ||
     (r.nro_factura_doc||'').toLowerCase().includes(buscar) ||
-    (r.ruc_dni||'').toLowerCase().includes(buscar)
+    (r.ruc_dni||'').toLowerCase().includes(buscar) ||
+    (r.observaciones_3||'').toLowerCase().includes(buscar)
   );
 
   renderResumenMBD(filas);
@@ -138,7 +144,7 @@ async function cargarMBD() {
       <thead><tr>
         <th>Fecha</th><th>N° Op.</th><th>Monto</th><th>Mon.</th>
         <th>Proveedor / Empresa</th><th>Concepto</th><th>Empresa</th>
-        <th>Doc.</th><th>N° Doc</th><th>Estado</th><th>Autorización</th>
+        <th>Doc.</th><th>N° Doc</th><th>Medio Pago</th><th>Estado</th><th>Autorización</th>
         <th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
@@ -153,6 +159,7 @@ async function cargarMBD() {
             <td>${escapar(truncar(r.empresa||'—',20))}</td>
             <td><span class="badge-doc">${escapar(r.tipo_doc||'—')}</span></td>
             <td>${escapar(r.nro_factura_doc||'—')}</td>
+            <td>${r.observaciones_3 ? `<span class="badge-medio">${escapar(r.observaciones_3)}</span>` : '—'}</td>
             <td><span class="badge-estado-${(r.entrega_doc||'').toLowerCase().replace(/\s/g,'-')}">${escapar(r.entrega_doc||'—')}</span></td>
             <td>${escapar(truncar(r.autorizacion||'—',18))}</td>
             <td style="text-align:center;white-space:nowrap">
@@ -284,6 +291,13 @@ async function abrirModalMBD(id = null) {
               </select>
             </div>
             <div class="campo">
+              <label>Medio de Pago</label>
+              <select id="mbd-medio-pago">
+                <option value="">— Seleccionar —</option>
+                ${MEDIOS_PAGO_MBD.map(m=>`<option value="${m}" ${item?.observaciones_3===m?'selected':''}>${m}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
               <label>Cotización</label>
               <input type="text" id="mbd-cotizacion" value="${escapar(item?.cotizacion||'')}">
             </div>
@@ -306,10 +320,6 @@ async function abrirModalMBD(id = null) {
             <div class="campo" style="grid-column:span 3">
               <label>Obs. 2</label>
               <input type="text" id="mbd-obs2" value="${escapar(item?.observaciones_2||'')}">
-            </div>
-            <div class="campo" style="grid-column:span 3">
-              <label>Obs. 3</label>
-              <input type="text" id="mbd-obs3" value="${escapar(item?.observaciones_3||'')}">
             </div>
             <div class="campo" style="grid-column:span 3">
               <label>Obs. 4</label>
@@ -362,7 +372,7 @@ async function guardarMBD(id) {
     detalles_compra_servicio: document.getElementById('mbd-detalles').value.trim()||null,
     observaciones:            document.getElementById('mbd-obs').value.trim()||null,
     observaciones_2:          document.getElementById('mbd-obs2').value.trim()||null,
-    observaciones_3:          document.getElementById('mbd-obs3').value.trim()||null,
+    observaciones_3:          document.getElementById('mbd-medio-pago').value||null,
     observaciones_4:          document.getElementById('mbd-obs4').value.trim()||null,
     creado_por:               perfil_usuario.id,
     fecha_actualizacion:      new Date().toISOString(),
@@ -413,6 +423,11 @@ function procesarImportMBD(input) {
       const esTieneEncabezado = cabeceras.some(h => ['fecha', 'monto', 'fecha depósito', 'fecha deposito'].includes(h));
       const inicio = esTieneEncabezado ? 1 : 1;
 
+      // Detectar formato nuevo (20 cols con Medio de Pago) vs antiguo (19 cols)
+      const tieneMedioPago = cabeceras.some(h => h.includes('medio'));
+      const maxCols = Math.max(...rows.slice(inicio, inicio+5).map(r => (r||[]).length));
+      const formatoNuevo = tieneMedioPago || maxCols >= 20;
+
       const toDate = v => {
         if (v === null || v === undefined || v === '') return null;
         if (typeof v === 'number') {
@@ -432,6 +447,11 @@ function procesarImportMBD(input) {
         const fecha = toDate(r[1]);
         const monto = toNum(r[4]);
         const ok    = !!fecha && monto !== null;
+        // Columnas 16+ dependen del formato
+        const medioPago    = formatoNuevo ? r[16]?.toString()||null : null;
+        const observaciones= formatoNuevo ? r[17]?.toString()||null : r[16]?.toString()||null;
+        const detalles     = formatoNuevo ? r[18]?.toString()||null : r[17]?.toString()||null;
+        const obs2         = formatoNuevo ? r[19]?.toString()||null : r[18]?.toString()||null;
         return {
           _fila: i + inicio + 2,
           _ok: ok,
@@ -455,11 +475,10 @@ function procesarImportMBD(input) {
           nro_factura_doc:          r[13]?.toString()||null,
           tipo_doc:                 r[14]?.toString()||null,
           autorizacion:             r[15]?.toString()||null,
-          observaciones:            r[16]?.toString()||null,
-          detalles_compra_servicio: r[17]?.toString()||null,
-          observaciones_2:          r[18]?.toString()||null,
-          observaciones_3:          r[19]?.toString()||null,
-          observaciones_4:          r[20]?.toString()||null,
+          observaciones_3:          medioPago,
+          observaciones:            observaciones,
+          detalles_compra_servicio: detalles,
+          observaciones_2:          obs2,
           creado_por:               perfil_usuario.id,
         };
       }).filter(r => r._fila > 0);
@@ -485,6 +504,7 @@ function procesarImportMBD(input) {
           <td style="font-size:12px">${escapar((r.proveedor_empresa_personal||'—').slice(0,22))}</td>
           <td style="font-size:12px">${escapar(r.concepto||'—')}</td>
           <td style="font-size:12px">${escapar(r.tipo_doc||'—')}</td>
+          <td style="font-size:12px">${escapar(r.observaciones_3||'—')}</td>
           <td>${r._ok
             ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">OK</span>'
             : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px" title="${escapar(r._error||'')}">Error</span>`
@@ -492,7 +512,7 @@ function procesarImportMBD(input) {
         </tr>`).join('');
 
       if (_mbdDatosPreview.length > 20) {
-        prevBody.innerHTML += `<tr><td colspan="8" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_mbdDatosPreview.length - 20} filas más</td></tr>`;
+        prevBody.innerHTML += `<tr><td colspan="9" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_mbdDatosPreview.length - 20} filas más</td></tr>`;
       }
 
       if (!validos) { mostrarToast('No hay filas válidas para importar.', 'atencion'); return; }
@@ -552,14 +572,16 @@ async function exportarExcelMBD() {
     'N° operacion Bancaria','Fecha de Deposito','Descripcion','Moneda','Monto',
     'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
     'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
-    'Tipo de DOC','Autorización','Observaciones','Detalles Compra / Servicio','Observaciones 2'
+    'Tipo de DOC','Autorización','Medio de Pago','Observaciones',
+    'Detalles Compra / Servicio','Observaciones 2'
   ];
 
   const filas = data.map(r => [
     r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : null,
     r.fecha_deposito, r.descripcion, r.moneda, r.monto,
-    r.proveedor_empresa_personal, r.ruc_dni, r.cotizacion, r.oc, r.proyecto, r.concepto, r.empresa,
-    r.entrega_doc, r.nro_factura_doc, r.tipo_doc, r.autorizacion, r.observaciones,
+    r.proveedor_empresa_personal, r.ruc_dni, r.cotizacion, r.oc, r.proyecto,
+    r.concepto, r.empresa, r.entrega_doc, r.nro_factura_doc, r.tipo_doc,
+    r.autorizacion, r.observaciones_3, r.observaciones,
     r.detalles_compra_servicio, r.observaciones_2
   ]);
 
@@ -573,6 +595,34 @@ async function exportarExcelMBD() {
   XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
   XLSX.writeFile(wb, `MBD_${empresa_activa.nombre_corto}_${anio}${mes}.xlsx`);
   mostrarToast('Archivo exportado.', 'exito');
+}
+
+function descargarPlantillaMBD() {
+  const cabecera = [
+    'N° operacion Bancaria','Fecha de Deposito','Descripcion','Moneda','Monto',
+    'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
+    'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
+    'Tipo de DOC','Autorización','Medio de Pago','Observaciones',
+    'Detalles Compra / Servicio','Observaciones 2'
+  ];
+
+  const ejemplo = [
+    '00000001','2025-01-15','Pago de factura proveedor','S/','1500.00',
+    'FIBRAFORTE S.A.','20123456789','COT-001','OC-001','Proyecto A',
+    'Servicio','EPA SAC','EMITIDO','F001-00123',
+    'FA','Wendy Ortega','BCP','Ninguna',
+    'Servicio de instalación',''
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([cabecera, ejemplo]);
+
+  // Estilo ancho de columnas
+  ws['!cols'] = cabecera.map((h, i) => ({ wch: Math.max(h.length + 2, [8,12,25,8,10,28,14,10,10,15,18,20,22,16,10,18,14,20,28,16][i] || 14) }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
+  XLSX.writeFile(wb, `Plantilla_MBD.xlsx`);
+  mostrarToast('Plantilla descargada. Completa los datos y luego usa "Importar Excel".', 'info');
 }
 
 /* ── Helpers de estilo ─────────────────────────────────────── */
@@ -599,6 +649,7 @@ function estiloCard(color) {
 function estilosBadge() {
   return `<style>
     .badge-doc{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--color-secundario);color:#fff}
+    .badge-medio{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#553C9A;color:#fff}
     .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
     .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
     .badge-estado-emitido{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#2F855A;color:#fff}
