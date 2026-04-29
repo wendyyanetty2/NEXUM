@@ -97,6 +97,9 @@ async function renderTabImportar(area) {
         </div>
       </div>
 
+      <!-- Validación cruzada EECC vs Movimientos -->
+      <div id="imp-validacion" class="card" style="display:none;margin-top:16px"></div>
+
       <!-- Historial de importaciones -->
       <div class="card" style="margin-top:16px">
         <h3 style="margin-bottom:12px">📜 Historial de importaciones</h3>
@@ -122,7 +125,8 @@ async function _cargarCuentasImp() {
     (data || []).map(c => `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`).join('');
 }
 
-let imp_datos_preview = [];
+let imp_datos_preview    = [];
+let imp_movs_validacion  = [];
 
 function descargarPlantilla() {
   const ws = XLSX.utils.aoa_to_sheet([
@@ -231,6 +235,8 @@ function procesarImportacion() {
           <td>${r._ok ? '<span class="badge badge-activo" style="font-size:10px">OK</span>' : '<span class="badge badge-inactivo" style="font-size:10px">Error</span>'}</td>
         </tr>`).join('');
 
+      _impCargarValidacion();
+
     } catch (err) {
       mostrarToast('Error al leer el archivo: ' + err.message, 'error');
     }
@@ -252,9 +258,12 @@ function _parsearFecha(val) {
 }
 
 function cancelarPreview() {
-  imp_datos_preview = [];
+  imp_datos_preview   = [];
+  imp_movs_validacion = [];
   const preview = document.getElementById('imp-preview');
   if (preview) preview.style.display = 'none';
+  const val = document.getElementById('imp-validacion');
+  if (val) val.style.display = 'none';
 }
 
 async function confirmarImportacion() {
@@ -385,4 +394,149 @@ async function eliminarLoteEECC(loteId, cantMovimientos) {
 
   mostrarToast('Importación eliminada. Puedes volver a subir el archivo.', 'exito');
   await cargarHistorialImportaciones();
+}
+
+// ── Validación cruzada EECC vs Movimientos bancarios ─────────────
+async function _impCargarValidacion() {
+  const cont   = document.getElementById('imp-validacion');
+  if (!cont) return;
+
+  const cuenta = document.getElementById('imp-cuenta')?.value;
+  const validos = imp_datos_preview.filter(r => r._ok);
+  if (!cuenta || !validos.length) { cont.style.display = 'none'; return; }
+
+  // Rango de fechas del EECC
+  const fechas = validos.map(r => r.fecha).filter(Boolean).sort();
+  const desde  = fechas[0];
+  const hasta  = fechas[fechas.length - 1];
+
+  cont.style.display = 'block';
+  cont.innerHTML = `<div class="text-center text-muted text-sm" style="padding:16px">🔍 Validando contra movimientos bancarios registrados…</div>`;
+
+  const { data: movs } = await _supabase
+    .from('movimientos')
+    .select('id, fecha, naturaleza, importe, descripcion, numero_operacion, moneda')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('cuenta_bancaria_id', cuenta)
+    .gte('fecha', desde)
+    .lte('fecha', hasta);
+
+  imp_movs_validacion = movs || [];
+  _impRenderValidacion();
+}
+
+function _impRenderValidacion() {
+  const cont   = document.getElementById('imp-validacion');
+  if (!cont) return;
+
+  const movs   = imp_movs_validacion;
+  const validos = imp_datos_preview.filter(r => r._ok);
+
+  const resultados = validos.map(row => {
+    const nroRaw    = (row.numero_operacion || '').trim();
+    const esComision = !nroRaw || /^0+$/.test(nroRaw);
+    const nroEecc6  = nroRaw.slice(-6);
+
+    if (esComision) {
+      const match = movs.find(m =>
+        m.fecha === row.fecha &&
+        m.naturaleza === row.naturaleza &&
+        Math.abs(parseFloat(m.importe) - row.importe) <= 0.01
+      );
+      return { row, match, estado: match ? 'COMISION' : 'SIN_MATCH' };
+    }
+
+    // Buscar por últimos 6 dígitos del nro_op
+    const porNro = movs.filter(m => {
+      const nroMov6 = (m.numero_operacion || '').trim().slice(-6);
+      return nroMov6 === nroEecc6 && nroMov6 !== '';
+    });
+
+    if (porNro.length) {
+      const exacto = porNro.find(m =>
+        m.naturaleza === row.naturaleza &&
+        Math.abs(parseFloat(m.importe) - row.importe) <= 0.01
+      );
+      return { row, match: exacto || porNro[0], estado: exacto ? 'COINCIDE' : 'OBSERVADO' };
+    }
+
+    // Viceversa: monto + fecha coinciden pero no el nro_op
+    const porMonto = movs.find(m =>
+      m.fecha === row.fecha &&
+      m.naturaleza === row.naturaleza &&
+      Math.abs(parseFloat(m.importe) - row.importe) <= 0.01
+    );
+    return { row, match: porMonto || null, estado: porMonto ? 'OBSERVADO' : 'SIN_MATCH' };
+  });
+
+  const nCoincide  = resultados.filter(r => r.estado === 'COINCIDE').length;
+  const nObservado = resultados.filter(r => r.estado === 'OBSERVADO').length;
+  const nComision  = resultados.filter(r => r.estado === 'COMISION').length;
+  const nSinMatch  = resultados.filter(r => r.estado === 'SIN_MATCH').length;
+
+  const badge = (estado) => {
+    const cfg = {
+      COINCIDE:  { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide' },
+      OBSERVADO: { bg:'#FEFCBF', color:'#744210', label:'⚠️ Observado' },
+      COMISION:  { bg:'#BEE3F8', color:'#2A4365', label:'🏦 Comisión' },
+      SIN_MATCH: { bg:'#FED7D7', color:'#742A2A', label:'❌ Sin match' },
+    };
+    const c = cfg[estado] || cfg.SIN_MATCH;
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${c.bg};color:${c.color}">${c.label}</span>`;
+  };
+
+  const avisoObservados = (nObservado || nSinMatch)
+    ? `<p class="text-sm" style="color:#744210;margin-bottom:10px;padding:8px 12px;background:#FFFFF0;border-left:3px solid #D69E2E;border-radius:4px">
+        ⚠️ Hay ${nObservado + nSinMatch} registro(s) con observaciones. Revísalos antes de confirmar la importación.
+       </p>` : '';
+
+  cont.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <h3 style="font-size:14px">🔍 Validación cruzada con Movimientos Bancarios</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:600">
+        <span style="padding:3px 10px;border-radius:10px;background:#C6F6D5;color:#276749">✅ ${nCoincide} coinciden</span>
+        ${nObservado ? `<span style="padding:3px 10px;border-radius:10px;background:#FEFCBF;color:#744210">⚠️ ${nObservado} observados</span>` : ''}
+        ${nComision  ? `<span style="padding:3px 10px;border-radius:10px;background:#BEE3F8;color:#2A4365">🏦 ${nComision} comisiones</span>` : ''}
+        ${nSinMatch  ? `<span style="padding:3px 10px;border-radius:10px;background:#FED7D7;color:#742A2A">❌ ${nSinMatch} sin match</span>` : ''}
+      </div>
+    </div>
+    ${avisoObservados}
+    <div class="table-wrap" style="max-height:380px;overflow-y:auto">
+      <table class="tabla" style="font-size:12px">
+        <thead>
+          <tr>
+            <th style="min-width:120px">Estado</th>
+            <th>Fecha</th>
+            <th>Nro Op (EECC)</th>
+            <th class="text-right">Importe EECC</th>
+            <th style="text-align:center">⟷</th>
+            <th>Nro Op (Banco)</th>
+            <th class="text-right">Importe Banco</th>
+            <th>Descripción Banco</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${resultados.map(({ row, match, estado }) => {
+            const rowBg = estado === 'OBSERVADO' ? 'rgba(254,252,191,.5)'
+                        : estado === 'SIN_MATCH'  ? 'rgba(254,215,215,.4)'
+                        : '';
+            return `
+              <tr style="background:${rowBg}">
+                <td>${badge(estado)}</td>
+                <td style="white-space:nowrap">${row.fecha || '—'}</td>
+                <td class="text-mono">${escapar(row.numero_operacion || '—')}</td>
+                <td class="text-right ${row.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
+                  ${row.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(row.importe, row.moneda)}
+                </td>
+                <td style="text-align:center;color:var(--color-texto-suave)">⟷</td>
+                <td class="text-mono">${match ? escapar((match.numero_operacion||'—')) : '<span class="text-muted">—</span>'}</td>
+                <td class="text-right ${match?.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
+                  ${match ? `${match.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(match.importe, match.moneda)}` : '<span class="text-muted">—</span>'}
+                </td>
+                <td class="text-sm">${match ? escapar((match.descripcion||'—').slice(0,32)) : '<span class="text-muted">Sin movimiento registrado</span>'}</td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
