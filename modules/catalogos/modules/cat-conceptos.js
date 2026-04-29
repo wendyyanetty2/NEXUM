@@ -20,6 +20,7 @@ async function renderTabConceptos(area) {
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarConceptosExcel()">⬇ Excel</button>
+          <button class="btn btn-secundario btn-sm" onclick="precargarConceptos()" title="Insertar la lista de conceptos predefinidos (omite los que ya existen)">📋 Precargar datos</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalConcepto(null)">+ Nuevo</button>
         </div>
       </div>
@@ -161,4 +162,38 @@ function exportarConceptosExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Conceptos');
   XLSX.writeFile(wb, `conceptos_${empresa_activa.nombre}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+async function precargarConceptos() {
+  const CONCEPTOS_DEFAULT = [
+    '1° Quincena','2° Quincena','AFP','Almuerzo','Alquiler',
+    'Banca BCP','Cena','Certificación','Cochera','Combustible',
+    'Comisión','Comisión BCP','Compras','Cursos','Declaración',
+    'Depósitos','Desayuno','Devolución','EPS','Estado de Cuenta BCP',
+    'Examen Médico','Impuesto BCP','Liquidación','Mantenimiento BCP','NPS',
+    'Peaje','Planilla De Movilidad','Préstamo','Reembolso','RH',
+    'SCTR','Seguro','Servicio','SSOMA','Trámites','Ventas',
+  ];
+
+  const existentes = new Set(conceptos_lista.map(c => c.nombre.toLowerCase()));
+  const nuevos = CONCEPTOS_DEFAULT.filter(n => !existentes.has(n.toLowerCase()));
+
+  if (!nuevos.length) {
+    mostrarToast('Todos los conceptos predefinidos ya están cargados.', 'info');
+    return;
+  }
+
+  if (!await confirmar(`¿Precargar ${nuevos.length} concepto(s) que no están registrados?`)) return;
+
+  const payload = nuevos.map(n => ({
+    empresa_operadora_id: empresa_activa.id,
+    nombre: n,
+    tipo: 'AMBOS',
+    activo: true,
+  }));
+
+  const { error } = await _supabase.from('conceptos').insert(payload);
+  if (error) { mostrarToast('Error al precargar: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ ${nuevos.length} concepto(s) precargados correctamente.`, 'exito');
+  await cargarConceptos();
 }

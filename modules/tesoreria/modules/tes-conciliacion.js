@@ -39,6 +39,7 @@ async function renderTabConciliacion(area) {
               <option value="">Todas</option>
               <option value="CARGO">CARGO (Compras / RH)</option>
               <option value="ABONO">ABONO (Ventas)</option>
+              <option value="RH">RH (Recibos por Honorarios)</option>
             </select>
           </div>
           <button class="btn btn-secundario btn-sm" onclick="_concCargarDatos()">🔄 Actualizar</button>
@@ -165,9 +166,10 @@ async function _concCargarDatos() {
     .gte('fecha_emision', desdeDoc)
     .lte('fecha_emision', hastaBanco);
 
-  // Filtro naturaleza: compras/RH son CARGO, ventas son ABONO
+  // Filtro naturaleza: compras/RH son CARGO, ventas son ABONO, RH solo recibos
   if (nat === 'ABONO') { qCompras = qCompras.eq('id', '__NINGUNO__'); qRH = qRH.eq('id', '__NINGUNO__'); }
   if (nat === 'CARGO') { qVentas  = qVentas.eq('id',  '__NINGUNO__'); }
+  if (nat === 'RH')    { qCompras = qCompras.eq('id', '__NINGUNO__'); qVentas = qVentas.eq('id', '__NINGUNO__'); }
 
   // ── Lado banco: movimientos con cuenta bancaria ──
   let qBanco = _supabase.from('movimientos')
@@ -178,6 +180,7 @@ async function _concCargarDatos() {
     .gte('fecha', desdeBanco)
     .lte('fecha', hastaBanco);
   if (nat === 'CARGO' || nat === 'ABONO') qBanco = qBanco.eq('naturaleza', nat);
+  if (nat === 'RH') qBanco = qBanco.eq('naturaleza', 'CARGO');
 
   const [resComp, resVent, resRH, resBanco] = await Promise.all([qCompras, qVentas, qRH, qBanco]);
 

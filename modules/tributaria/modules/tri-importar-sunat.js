@@ -377,9 +377,12 @@ async function _confirmarImportSUNAT() {
       usuario_id:            perfil_usuario?.id || null,
     }));
     for (let i = 0; i < rows.length; i += 50) {
-      const { error } = await _supabase.from('registro_compras').insert(rows.slice(i, i + 50));
-      if (error) errCount += Math.min(50, rows.length - i);
-      else ok += Math.min(50, rows.length - i);
+      const chunk = rows.slice(i, i + 50);
+      const { data: ins, error } = await _supabase.from('registro_compras')
+        .upsert(chunk, { onConflict: 'empresa_operadora_id,tipo_documento_codigo,serie,numero,ruc_proveedor', ignoreDuplicates: true })
+        .select('id');
+      if (error) errCount += chunk.length;
+      else { ok += ins?.length ?? 0; errCount += chunk.length - (ins?.length ?? 0); }
     }
 
   } else if (_sunat_preview_tipo === 'ventas') {
@@ -402,9 +405,12 @@ async function _confirmarImportSUNAT() {
       usuario_id:            perfil_usuario?.id || null,
     }));
     for (let i = 0; i < rows.length; i += 50) {
-      const { error } = await _supabase.from('registro_ventas').insert(rows.slice(i, i + 50));
-      if (error) errCount += Math.min(50, rows.length - i);
-      else ok += Math.min(50, rows.length - i);
+      const chunk = rows.slice(i, i + 50);
+      const { data: ins, error } = await _supabase.from('registro_ventas')
+        .upsert(chunk, { onConflict: 'empresa_operadora_id,serie,numero', ignoreDuplicates: true })
+        .select('id');
+      if (error) errCount += chunk.length;
+      else { ok += ins?.length ?? 0; errCount += chunk.length - (ins?.length ?? 0); }
     }
 
   } else if (_sunat_preview_tipo === 'rh') {
@@ -455,10 +461,12 @@ async function _confirmarImportSUNAT() {
   }
 
   document.getElementById('modal-sunat-import')?.remove();
-  mostrarToast(
-    `✓ ${ok} registros importados${errCount ? `, ${errCount} errores` : ''}`,
-    errCount > 0 ? 'atencion' : 'exito'
-  );
+  const totalValidos = validos.length;
+  const duplicados = totalValidos - ok - errCount;
+  const msg = `✓ ${ok} importados` +
+    (duplicados > 0 ? ` · ${duplicados} ya existían (omitidos)` : '') +
+    (errCount   > 0 ? ` · ${errCount} errores`                   : '');
+  mostrarToast(msg, errCount > 0 ? 'atencion' : 'exito');
 
   if (_sunat_preview_tipo === 'compras' && typeof cargarCompras === 'function') await cargarCompras();
   if (_sunat_preview_tipo === 'ventas'  && typeof cargarVentas  === 'function') await cargarVentas();

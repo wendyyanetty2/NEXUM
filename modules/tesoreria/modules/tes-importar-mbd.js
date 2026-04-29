@@ -404,7 +404,7 @@ function procesarImportMBD(input) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: false, raw: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
       if (rows.length < 2) { mostrarToast('El archivo no tiene datos.', 'atencion'); return; }
@@ -414,7 +414,12 @@ function procesarImportMBD(input) {
       const inicio = esTieneEncabezado ? 1 : 1;
 
       const toDate = v => {
-        if (!v) return null;
+        if (v === null || v === undefined || v === '') return null;
+        if (typeof v === 'number') {
+          const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+          if (isNaN(d.getTime())) return null;
+          return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+        }
         if (v instanceof Date) return v.toISOString().slice(0,10);
         const s = v.toString().trim();
         if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
@@ -432,7 +437,9 @@ function procesarImportMBD(input) {
           _ok: ok,
           _error: !fecha ? 'Sin fecha' : monto === null ? 'Sin monto' : null,
           empresa_id:               empresa_activa.id,
-          nro_operacion_bancaria:   r[0]?.toString()||null,
+          nro_operacion_bancaria:   r[0] !== null && r[0] !== undefined && r[0] !== ''
+            ? String(typeof r[0] === 'number' ? Math.round(r[0]) : r[0]).padStart(8,'0')
+            : null,
           fecha_deposito:           fecha,
           descripcion:              r[2]?.toString()||null,
           moneda:                   r[3]?.toString()||'S/',
@@ -541,21 +548,29 @@ async function exportarExcelMBD() {
 
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
-  const cabecera = ['N° Op. Bancaria','Fecha Depósito','Descripción','Moneda','Monto',
-    'Proveedor/Empresa/Personal','RUC/DNI','Cotización','OC','Proyecto','Concepto','Empresa',
-    'Entrega FA/DOC/RRHH','N° Factura o DOC','Tipo DOC','Autorización','Observaciones',
-    'Detalles Compra/Servicio','Observaciones 2','Observaciones 3','Observaciones 4'];
+  const cabecera = [
+    'N° operacion Bancaria','Fecha de Deposito','Descripcion','Moneda','Monto',
+    'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
+    'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
+    'Tipo de DOC','Autorización','Observaciones','Detalles Compra / Servicio','Observaciones 2'
+  ];
 
   const filas = data.map(r => [
-    r.nro_operacion_bancaria, r.fecha_deposito, r.descripcion, r.moneda, r.monto,
+    r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : null,
+    r.fecha_deposito, r.descripcion, r.moneda, r.monto,
     r.proveedor_empresa_personal, r.ruc_dni, r.cotizacion, r.oc, r.proyecto, r.concepto, r.empresa,
     r.entrega_doc, r.nro_factura_doc, r.tipo_doc, r.autorizacion, r.observaciones,
-    r.detalles_compra_servicio, r.observaciones_2, r.observaciones_3, r.observaciones_4
+    r.detalles_compra_servicio, r.observaciones_2
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet([cabecera, ...filas]);
+  // Forzar N° Op como texto para preservar ceros a la izquierda
+  filas.forEach((_, rowIdx) => {
+    const cellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: 0 });
+    if (ws[cellRef]) ws[cellRef].t = 's';
+  });
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Movimientos');
+  XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
   XLSX.writeFile(wb, `MBD_${empresa_activa.nombre_corto}_${anio}${mes}.xlsx`);
   mostrarToast('Archivo exportado.', 'exito');
 }

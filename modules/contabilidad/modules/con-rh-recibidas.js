@@ -303,13 +303,18 @@ function procesarImportRHR(input) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const wb   = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const wb   = XLSX.read(e.target.result, { type: 'array', cellDates: false, raw: true });
       const ws   = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
       if (rows.length < 2) { mostrarToast('El archivo está vacío.', 'atencion'); return; }
 
       const toDate = v => {
-        if (!v) return null;
+        if (v === null || v === undefined || v === '') return null;
+        if (typeof v === 'number') {
+          const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+          if (isNaN(d.getTime())) return null;
+          return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+        }
         if (v instanceof Date) return v.toISOString().slice(0,10);
         const s = v.toString().trim();
         if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;

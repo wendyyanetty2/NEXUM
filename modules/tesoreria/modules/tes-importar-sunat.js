@@ -237,9 +237,9 @@ function _sunatMapearFila(r, idx, tipo) {
   const moneda  = _sunatMoneda(esCompras ? r[25] : r[26]);
   const tipoDoc = _sunatTipoDocCodigo(r[6]);
   
-  // RUC en Col K (10) y Nombre en Col L (11) según tu JSON para Ventas
-  const rucEntidad = esCompras ? r[12] : r[10]; 
-  const nombreEntidad = (r[esCompras ? 13 : 11] || '').toString().trim();
+  // Compras: RUC=Col M(12), Nombre=Col N(13) | Ventas: RUC=Col L(11), Nombre=Col M(12)
+  const rucEntidad = esCompras ? r[12] : r[11];
+  const nombreEntidad = (r[esCompras ? 13 : 12] || '').toString().trim();
 
   const base = parseFloat(r[14]) || 0;
   const igv  = parseFloat(r[esCompras ? 15 : 16]) || 0;
