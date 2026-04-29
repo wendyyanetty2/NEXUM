@@ -79,6 +79,11 @@ async function renderTabMovimientos(area) {
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()">🔄 Limpiar</button>
             <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()">⬇ Excel</button>
+            <button id="btn-editar-sel" class="btn btn-sm"
+              style="display:none;background:var(--color-secundario);color:#fff;border:none;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-size:13px"
+              onclick="abrirModalEdicionMasiva()">
+              ✏️ Editar seleccionados (<span id="mov-sel-count-edit">0</span>)
+            </button>
             <button id="btn-eliminar-sel" class="btn btn-sm"
               style="display:none;background:#C53030;color:#fff;border:none;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-size:13px"
               onclick="eliminarSeleccionadosMov()">
@@ -415,10 +420,15 @@ function seleccionarTodosMov(checked) {
 }
 
 function _actualizarBtnEliminarSel() {
-  const btn = document.getElementById('btn-eliminar-sel');
-  const cnt = document.getElementById('mov-sel-count');
-  if (btn) btn.style.display = mov_seleccionados.size > 0 ? 'inline-flex' : 'none';
-  if (cnt) cnt.textContent = mov_seleccionados.size;
+  const visible = mov_seleccionados.size > 0 ? 'inline-flex' : 'none';
+  const btnEl   = document.getElementById('btn-eliminar-sel');
+  const btnEd   = document.getElementById('btn-editar-sel');
+  const cnt     = document.getElementById('mov-sel-count');
+  const cntEd   = document.getElementById('mov-sel-count-edit');
+  if (btnEl)  btnEl.style.display  = visible;
+  if (btnEd)  btnEd.style.display  = visible;
+  if (cnt)    cnt.textContent       = mov_seleccionados.size;
+  if (cntEd)  cntEd.textContent     = mov_seleccionados.size;
 }
 
 async function eliminarSeleccionadosMov() {
@@ -687,6 +697,202 @@ async function eliminarMovimiento(id) {
   const { error } = await _supabase.from('movimientos').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');
+  await cargarMovimientos();
+}
+
+// ── Edición masiva ────────────────────────────────────────────────
+function abrirModalEdicionMasiva() {
+  const ids = [...mov_seleccionados];
+  if (!ids.length) return;
+
+  const opcionesConcepto     = mov_conceptos.map(c => `<option value="${c.id}">${escapar(c.nombre)}</option>`).join('');
+  const opcionesCliente      = mov_clientes.map(c => `<option value="${c.id}">${escapar(c.nombre)}</option>`).join('');
+  const opcionesAutorizacion = mov_autorizaciones.map(a => `<option value="${a.id}">${escapar(a.nombre)}</option>`).join('');
+  const opcionesProyecto     = mov_proyectos.map(p => `<option value="${p.id}">${escapar(p.nombre)}</option>`).join('');
+  const opcionesMedioPago    = mov_medios_pago.map(m => `<option value="${m.id}">${escapar(m.nombre)}</option>`).join('');
+  const opcionesTipoDoc      = mov_tipos_doc.map(t => `<option value="${t.codigo}">${escapar(t.codigo)} — ${escapar(t.nombre)}</option>`).join('');
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cerrarEdicionMasiva()">
+      <div class="modal" style="max-width:620px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>✏️ Editar ${ids.length} movimiento(s) seleccionado(s)</h3>
+          <button class="modal-cerrar" onclick="_cerrarEdicionMasiva()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="alerta-info" style="display:block;margin-bottom:14px;font-size:13px">
+            Solo se actualizan los campos que elijas. Deja en <strong>— Sin cambio —</strong> los que quieres conservar.
+          </div>
+          <div id="em-alerta" class="alerta-error"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+
+            <div class="campo">
+              <label>Concepto</label>
+              <select id="em-concepto">
+                <option value="">— Sin cambio —</option>
+                ${opcionesConcepto}
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>Empresa / Proveedor</label>
+              <select id="em-cliente">
+                <option value="">— Sin cambio —</option>
+                ${opcionesCliente}
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>Tipo de documento</label>
+              <select id="em-tipo-doc">
+                <option value="">— Sin cambio —</option>
+                ${opcionesTipoDoc}
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>N° de documento</label>
+              <input type="text" id="em-nro-doc" placeholder="Dejar vacío = sin cambio">
+            </div>
+
+            <div class="campo">
+              <label>Autorización</label>
+              <select id="em-autorizacion">
+                <option value="">— Sin cambio —</option>
+                ${opcionesAutorizacion}
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>Proyecto</label>
+              <select id="em-proyecto">
+                <option value="">— Sin cambio —</option>
+                ${opcionesProyecto}
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>Medio de pago</label>
+              <select id="em-mediopago">
+                <option value="">— Sin cambio —</option>
+                ${opcionesMedioPago}
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>Entrega FA/DOC/RH</label>
+              <select id="em-estado-doc">
+                <option value="">— Sin cambio —</option>
+                <option value="PENDIENTE">Pendiente</option>
+                <option value="EMITIDO">Emitido</option>
+                <option value="OBSERVADO">Observado</option>
+                <option value="CANCELADO">Cancelado</option>
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>Estado del movimiento</label>
+              <select id="em-estado">
+                <option value="">— Sin cambio —</option>
+                <option value="PENDIENTE">Pendiente</option>
+                <option value="EMITIDO">Emitido</option>
+                <option value="APROBADO">Aprobado</option>
+                <option value="OBSERVADO">Observado</option>
+                <option value="ANULADO">Anulado</option>
+              </select>
+            </div>
+
+            <div class="campo">
+              <label>Cotización</label>
+              <input type="text" id="em-cotizacion" placeholder="Dejar vacío = sin cambio">
+            </div>
+
+            <div class="campo">
+              <label>OC (Orden de Compra)</label>
+              <input type="text" id="em-oc" placeholder="Dejar vacío = sin cambio">
+            </div>
+
+            <div class="campo" style="grid-column:span 2">
+              <label>Observaciones</label>
+              <input type="text" id="em-obs" placeholder="Dejar vacío = sin cambio">
+            </div>
+
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="_cerrarEdicionMasiva()">Cancelar</button>
+          <button class="btn btn-primario" id="btn-aplicar-masivo" onclick="_aplicarEdicionMasiva()">
+            ✅ Aplicar a ${ids.length} registro(s)
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _cerrarEdicionMasiva() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function _aplicarEdicionMasiva() {
+  const ids = [...mov_seleccionados];
+  if (!ids.length) return;
+
+  // Construir solo los campos que el usuario completó
+  const patch = {};
+  const concepto     = document.getElementById('em-concepto')?.value;
+  const cliente      = document.getElementById('em-cliente')?.value;
+  const tipoDoc      = document.getElementById('em-tipo-doc')?.value;
+  const nroDoc       = document.getElementById('em-nro-doc')?.value.trim();
+  const autorizacion = document.getElementById('em-autorizacion')?.value;
+  const proyecto     = document.getElementById('em-proyecto')?.value;
+  const medioPago    = document.getElementById('em-mediopago')?.value;
+  const estadoDoc    = document.getElementById('em-estado-doc')?.value;
+  const estado       = document.getElementById('em-estado')?.value;
+  const cotizacion   = document.getElementById('em-cotizacion')?.value.trim();
+  const oc           = document.getElementById('em-oc')?.value.trim();
+  const obs          = document.getElementById('em-obs')?.value.trim();
+
+  if (concepto)     patch.concepto_id             = concepto;
+  if (cliente)      patch.empresa_cliente_id       = cliente;
+  if (tipoDoc)      patch.tipo_documento_codigo    = tipoDoc;
+  if (nroDoc)       patch.numero_documento          = nroDoc;
+  if (autorizacion) patch.autorizacion_id           = autorizacion;
+  if (proyecto)     patch.proyecto_id               = proyecto;
+  if (medioPago)    patch.medio_pago_id             = medioPago;
+  if (estadoDoc)    patch.estado_doc                = estadoDoc;
+  if (estado)       patch.estado                    = estado;
+  if (cotizacion)   patch.cotizacion                = cotizacion;
+  if (oc)           patch.oc                        = oc;
+  if (obs)          patch.observaciones              = obs;
+
+  if (!Object.keys(patch).length) {
+    const al = document.getElementById('em-alerta');
+    if (al) { al.textContent = 'Selecciona al menos un campo para actualizar.'; al.classList.add('visible'); }
+    return;
+  }
+
+  const btn = document.getElementById('btn-aplicar-masivo');
+  if (btn) { btn.disabled = true; btn.textContent = 'Aplicando…'; }
+
+  const { error } = await _supabase
+    .from('movimientos')
+    .update(patch)
+    .in('id', ids);
+
+  if (btn) { btn.disabled = false; btn.textContent = `✅ Aplicar a ${ids.length} registro(s)`; }
+
+  if (error) {
+    const al = document.getElementById('em-alerta');
+    if (al) { al.textContent = 'Error: ' + error.message; al.classList.add('visible'); }
+    return;
+  }
+
+  _cerrarEdicionMasiva();
+  mov_seleccionados.clear();
+  _actualizarBtnEliminarSel();
+  mostrarToast(`✓ ${ids.length} movimiento(s) actualizados.`, 'exito');
   await cargarMovimientos();
 }
 
