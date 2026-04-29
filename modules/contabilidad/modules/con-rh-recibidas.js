@@ -293,29 +293,36 @@ function procesarImportRHR(input) {
       };
       const toNum = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 
+      // Plantilla RH (0-indexed): A(0)=fecha, B(1)=tipo_doc_emitido("RH" — ignorar),
+      // C(2)=nro_doc_emitido→nro_rh, D(3)=estado_doc_emitido→estado_pago,
+      // E(4)=tipo_doc_emisor, F(5)=nro_doc_emisor, G(6)=nombre_emisor,
+      // H(7)=tipo_renta(ignorar), I(8)=gratuito(ignorar), J(9)=descripcion,
+      // K(10)=observacion, L(11)=moneda_operacion, M(12)=renta_bruta,
+      // N(13)=impuesto_renta→retencion, O(14)=renta_neta
       _rhrDatosPreview = rows.slice(1).map((r, i) => {
         const fecha  = toDate(r[0]);
-        const nroRH  = r[1]?.toString().trim() || null;
-        const bruta  = toNum(r[7]);
+        const nroRH  = r[2]?.toString().trim() || null;
+        const bruta  = toNum(r[12]);
         const ok     = !!fecha && !!nroRH && bruta > 0;
+        const estadoDoc = (r[3] || '').toString().trim().toUpperCase();
         return {
           _fila: i + 2, _ok: ok,
           _error: !fecha ? 'Sin fecha' : !nroRH ? 'Sin N° RH' : bruta <= 0 ? 'Sin monto' : null,
           empresa_id:      empresa_activa.id,
           fecha_emision:   fecha,
           nro_rh:          nroRH,
-          tipo_doc_emisor: r[2]?.toString() || 'DNI',
-          nro_doc_emisor:  r[3]?.toString() || '',
-          nombre_emisor:   r[4]?.toString() || '',
-          descripcion:     r[5]?.toString() || '',
-          moneda:          r[6]?.toString() || 'SOLES',
+          tipo_doc_emisor: r[4]?.toString().trim() || 'DNI',
+          nro_doc_emisor:  r[5]?.toString().trim() || '',
+          nombre_emisor:   r[6]?.toString().trim() || '',
+          descripcion:     r[9]?.toString().trim() || '',
+          observaciones:   r[10]?.toString().trim() || null,
+          moneda:          r[11]?.toString().trim() || 'SOLES',
           renta_bruta:     bruta,
-          retencion:       toNum(r[8]),
-          renta_neta:      toNum(r[9]),
-          estado_pago:     r[10]?.toString() || 'PENDIENTE',
-          fecha_pago:      toDate(r[11]) || null,
-          nro_mbd:         r[12]?.toString() || null,
-          observaciones:   r[13]?.toString() || null,
+          retencion:       toNum(r[13]),
+          renta_neta:      toNum(r[14]),
+          estado_pago:     estadoDoc === 'ANULADO' ? 'CANCELADO' : 'PENDIENTE',
+          fecha_pago:      null,
+          nro_mbd:         null,
           creado_por:      perfil_usuario.id,
           fecha_actualizacion: new Date().toISOString(),
         };

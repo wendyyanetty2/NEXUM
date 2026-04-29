@@ -98,22 +98,30 @@ function _procesarComprasSUNAT(buffer, nombre) {
   try {
     const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
     const ws   = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-    // Fila 0 = encabezados, datos desde fila 1
-    const data = rows.slice(1).filter(r => r[4] !== '' || r[24] !== '');
+    let inicio = 0;
+    for (let i = 0; i < Math.min(rows.length, 5); i++) {
+      if (_sunatFecha(rows[i][4])) { inicio = i; break; }
+    }
+    const data = rows.slice(inicio).filter(r => r[4] != null || r[24] != null);
 
     const parsed = data.map((r, i) => {
       const fecha   = _sunatFecha(r[4]);
       const total   = _sunatNum(r[24]);
       const serie   = _sunatStr(r[7]);
-      const numero  = _sunatNro(r[9]);
+      const nroRaw  = r[9] != null ? parseInt(r[9]) || _sunatStr(r[9]) : null;
+      const numero  = nroRaw != null ? String(nroRaw) : null;
       const cdp     = serie && numero ? `${serie}-${numero}` : (serie || numero || null);
+      const periodoRaw = _sunatStr(r[2]);
+      const periodo = periodoRaw && /^\d{6}$/.test(periodoRaw)
+        ? periodoRaw.slice(0,4) + '-' + periodoRaw.slice(4,6)
+        : (fecha ? fecha.slice(0, 7) : null);
       return {
-        _fila:                 i + 2,
+        _fila:                 inicio + i + 1,
         fecha,
         fecha_vencimiento:     _sunatFecha(r[5]),
-        periodo:               fecha ? fecha.slice(0, 7) : null,
+        periodo,
         tipo_documento_codigo: _sunatTDoc(r[6]),
         serie,
         numero,
@@ -126,7 +134,7 @@ function _procesarComprasSUNAT(buffer, nombre) {
         moneda:                _sunatMonedaTri(r[25]),
         tipo_cambio:           _sunatNum(r[26]) || 1,
         codigo_detraccion:     _sunatStr(r[37]),
-        _ok:                   !!fecha && total !== 0,
+        _ok:                   !!fecha && total !== 0 && !!serie,
       };
     });
 
@@ -135,31 +143,45 @@ function _procesarComprasSUNAT(buffer, nombre) {
 }
 
 // ── Parser Registro de Ventas SUNAT ──────────────────────────────
-// Formato descarga SUNAT (col 0-indexed, fila 0 = encabezados):
-//  [0]RUC  [1]RazSoc  [2]Periodo  [3]CAR  [4]Fecha emision
-//  [5]FechaVcto  [6]TipoCP  [7]Serie  [8]NroCP  [9]NroFin
-//  [10]TipoIdCli [11]NroDocCli  [12]NombreCli
-//  [13]ValFacExp [14]BIGravada  [15]DsctoBi  [16]IGV
-//  ...           [25]TotalCP   [26]Moneda    [27]TipoCambio
+// Plantilla / descarga SUNAT (plantilla_ventas.json, col 0-indexed):
+//  A(0)=RUC  B(1)=RazSoc  C(2)=Periodo  D(3)=CAR  E(4)=Fecha emision
+//  F(5)=FechaVcto  G(6)=TipoCP  H(7)=Serie  I(8)=NroCP  J(9)=NroFin
+//  K(10)=TipoIdCli  L(11)=NroDocCli  M(12)=NombreCli
+//  N(13)=ValFacExp  O(14)=BIGravada  P(15)=DsctoBi  Q(16)=IGV
+//  R(17)=DsctoIGV  S(18)=Exonerado  T(19)=Inafecto  U(20)=ISC
+//  V(21)=BIGravIVAP  W(22)=IVAP  X(23)=ICBPER  Y(24)=OtrosTrib
+//  Z(25)=TotalCP  AA(26)=Moneda  AB(27)=TipoCambio
 function _procesarVentasSUNAT(buffer, nombre) {
   try {
     const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
     const ws   = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-    const data = rows.slice(1).filter(r => r[4] !== '' || r[25] !== '');
+    // Auto-detectar fila de inicio: primera fila donde E(4) tiene un valor con fecha válida
+    let inicio = 0;
+    for (let i = 0; i < Math.min(rows.length, 5); i++) {
+      if (_sunatFecha(rows[i][4])) { inicio = i; break; }
+    }
+
+    const data = rows.slice(inicio).filter(r => r[4] != null || r[25] != null);
 
     const parsed = data.map((r, i) => {
-      const fecha   = _sunatFecha(r[4]);
-      const total   = _sunatNum(r[25]);
-      const serie   = _sunatStr(r[7]);
-      const numero  = _sunatNro(r[8]);
-      const cdp     = serie && numero ? `${serie}-${numero}` : (serie || numero || null);
+      const fecha  = _sunatFecha(r[4]);
+      const total  = _sunatNum(r[25]);
+      const serie  = _sunatStr(r[7]);
+      const nroRaw = r[8] != null ? parseInt(r[8]) || _sunatStr(r[8]) : null;
+      const numero = nroRaw != null ? String(nroRaw) : null;
+      const cdp    = serie && numero ? `${serie}-${numero}` : (serie || numero || null);
+      // Periodo: leer columna C si tiene formato YYYYMM, sino derivar de fecha
+      const periodoRaw = _sunatStr(r[2]);
+      const periodo = periodoRaw && /^\d{6}$/.test(periodoRaw)
+        ? periodoRaw.slice(0,4) + '-' + periodoRaw.slice(4,6)
+        : (fecha ? fecha.slice(0, 7) : null);
       return {
-        _fila:                 i + 2,
+        _fila:                 inicio + i + 1,
         fecha,
         fecha_vencimiento:     _sunatFecha(r[5]),
-        periodo:               fecha ? fecha.slice(0, 7) : null,
+        periodo,
         tipo_documento_codigo: _sunatTDoc(r[6]),
         serie,
         numero,
@@ -171,7 +193,7 @@ function _procesarVentasSUNAT(buffer, nombre) {
         total,
         moneda:                _sunatMonedaTri(r[26]),
         tipo_cambio:           _sunatNum(r[27]) || 1,
-        _ok:                   !!fecha && total !== 0,
+        _ok:                   !!fecha && total !== 0 && !!serie,
       };
     });
 

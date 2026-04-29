@@ -34,6 +34,7 @@ async function renderTabConciliacion(area) {
               <option value="">Todas</option>
               <option value="CARGO">CARGO (Compras)</option>
               <option value="ABONO">ABONO (Ventas)</option>
+              <option value="RH">RH (Honorarios)</option>
             </select>
           </div>
           <button class="btn btn-secundario btn-sm" onclick="_concCargarDatos()">🔄 Actualizar</button>
@@ -134,6 +135,7 @@ async function _concCargarDatos() {
 
   const desde = `${mes}-01`;
   const hasta = `${mes}-31`;
+  const esRH  = nat === 'RH';
 
   // IDs de lotes SUNAT de esta empresa
   const { data: lotesSunat } = await _supabase
@@ -149,14 +151,17 @@ async function _concCargarDatos() {
          .eq('conciliado', false)
          .gte('fecha', desde)
          .lte('fecha', hasta);
-    if (nat) q = q.eq('naturaleza', nat);
+    if (esRH)     q = q.eq('tipo_documento_codigo', 'RH');
+    else if (nat) q = q.eq('naturaleza', nat);
     return q;
   };
 
   let qSunat = _supabase.from('movimientos').select('*').order('fecha', { ascending: false });
   qSunat = filtros(qSunat);
-  if (loteIds.length) qSunat = qSunat.in('lote_importacion', loteIds);
-  else                qSunat = qSunat.eq('lote_importacion', 'NO_EXISTE'); // ningún resultado
+  if (!esRH) {
+    if (loteIds.length) qSunat = qSunat.in('lote_importacion', loteIds);
+    else                qSunat = qSunat.eq('lote_importacion', 'NO_EXISTE');
+  }
 
   let qBanco = _supabase.from('movimientos')
     .select('*, cuentas_bancarias(nombre_alias)')

@@ -188,6 +188,25 @@ function _sunatHandleFile(file) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
+function _parsearFechaExcel(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') {
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    if (isNaN(d.getTime())) return null;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+  }
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    return `${val.getUTCFullYear()}-${String(val.getUTCMonth()+1).padStart(2,'0')}-${String(val.getUTCDate()).padStart(2,'0')}`;
+  }
+  const s = val.toString().trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d2 = new Date(s);
+  return isNaN(d2.getTime()) ? null : d2.toISOString().slice(0, 10);
+}
+
 function _sunatMoneda(val) {
   if (!val) return 'PEN';
   const s = val.toString().trim().toUpperCase();
