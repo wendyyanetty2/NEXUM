@@ -47,9 +47,17 @@ function renderTabImportarMBD(area) {
             ${[anioActual-1, anioActual, anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('')}
           </select>
           <input id="mbd-buscar" type="text" placeholder="Buscar…" style="${estiloInput()};width:180px">
+          <select id="mbd-filtro-estado" style="${estiloSelect()}">
+            <option value="">Todos los estados</option>
+            <option value="PENDIENTE">🔴 PENDIENTE</option>
+            <option value="OBSERVADO">🟡 OBSERVADO</option>
+            <option value="EMITIDO">🟢 EMITIDO</option>
+            <option value="CANCELADO">⚫ CANCELADO</option>
+          </select>
           <button onclick="cargarMBD()" style="${estiloBtnSecundario()}">🔍 Filtrar</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="renderPanelPendientesMBD()" style="padding:8px 14px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">🔴 Panel PENDIENTES</button>
           <button onclick="importarExcelMBD()" style="${estiloBtnSecundario()}">📂 Importar Excel</button>
           <button onclick="exportarExcelMBD()" style="${estiloBtnSecundario()}">📥 Exportar Excel</button>
           <button onclick="abrirModalMBD()" style="${estiloBtnPrimario()}">+ Nuevo movimiento</button>
@@ -104,6 +112,9 @@ async function cargarMBD() {
     .lte('fecha_deposito', hasta)
     .order('fecha_deposito', { ascending: false });
 
+  const estadoFiltro = document.getElementById('mbd-filtro-estado')?.value;
+  if (estadoFiltro) q = q.eq('entrega_doc', estadoFiltro);
+
   const { data, error } = await q;
   if (error) { wrap.innerHTML = `<p class="error-texto">Error al cargar: ${escapar(error.message)}</p>`; return; }
 
@@ -115,7 +126,13 @@ async function cargarMBD() {
     (r.empresa||'').toLowerCase().includes(buscar) ||
     (r.nro_factura_doc||'').toLowerCase().includes(buscar) ||
     (r.ruc_dni||'').toLowerCase().includes(buscar) ||
-    (r.observaciones_3||'').toLowerCase().includes(buscar)
+    (r.nro_operacion_bancaria||'').toLowerCase().includes(buscar) ||
+    (r.autorizacion||'').toLowerCase().includes(buscar) ||
+    (r.proyecto||'').toLowerCase().includes(buscar) ||
+    (r.observaciones||'').toLowerCase().includes(buscar) ||
+    (r.observaciones_2||'').toLowerCase().includes(buscar) ||
+    (r.cotizacion||'').toLowerCase().includes(buscar) ||
+    (r.oc||'').toLowerCase().includes(buscar)
   );
 
   renderResumenMBD(filas);
@@ -125,39 +142,87 @@ async function cargarMBD() {
     return;
   }
 
+  const totS = filas.filter(r => r.moneda !== 'USD').reduce((s, r) => s + Number(r.monto), 0);
+  const totD = filas.filter(r => r.moneda === 'USD').reduce((s, r) => s + Number(r.monto), 0);
+  const cPend = filas.filter(r => r.entrega_doc === 'PENDIENTE').length;
+  const cObs  = filas.filter(r => r.entrega_doc === 'OBSERVADO').length;
+
+  const _TH = 'padding:8px 10px;text-align:left;font-weight:600;font-size:11px;color:var(--color-texto);border-bottom:2px solid var(--color-borde);white-space:nowrap;background:var(--color-fondo);';
+  const _TD = 'padding:6px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;';
+
   wrap.innerHTML = `
-    <table class="tabla-nexum">
-      <thead><tr>
-        <th>Fecha</th><th>N° Op.</th><th>Monto</th><th>Mon.</th>
-        <th>Proveedor / Empresa</th><th>Concepto</th><th>Empresa</th>
-        <th>Doc.</th><th>N° Doc</th><th>Medio Pago</th><th>Estado</th><th>Autorización</th>
-        <th style="text-align:center">Acc.</th>
-      </tr></thead>
+    <div style="display:flex;gap:12px;margin-bottom:8px;flex-wrap:wrap;font-size:12px;color:var(--color-texto-suave);align-items:center">
+      <span><strong>${filas.length}</strong> registros</span>
+      ${cPend ? `<span style="color:#C53030;font-weight:600">🔴 ${cPend} PENDIENTES</span>` : ''}
+      ${cObs  ? `<span style="color:#D69E2E;font-weight:600">🟡 ${cObs} OBSERVADOS</span>` : ''}
+      <span>S/ ${formatearMoneda(totS,'PEN')}</span>
+      ${totD ? `<span>USD ${formatearMoneda(totD,'USD')}</span>` : ''}
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+    <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr>
+          <th style="${_TH}">N° Op.</th>
+          <th style="${_TH}">Fecha</th>
+          <th style="${_TH}min-width:160px">Descripción</th>
+          <th style="${_TH}">Mon.</th>
+          <th style="${_TH}text-align:right">Monto</th>
+          <th style="${_TH}min-width:180px">Proveedor / Empresa / Personal</th>
+          <th style="${_TH}">RUC / DNI</th>
+          <th style="${_TH}">COTIZACIÓN</th>
+          <th style="${_TH}">OC</th>
+          <th style="${_TH}min-width:120px">Proyecto</th>
+          <th style="${_TH}">Concepto</th>
+          <th style="${_TH}min-width:140px">Empresa</th>
+          <th style="${_TH}min-width:95px">Estado DOC</th>
+          <th style="${_TH}">Nª Factura/DOC</th>
+          <th style="${_TH}">Tipo DOC</th>
+          <th style="${_TH}">Autorización</th>
+          <th style="${_TH}min-width:140px">Observaciones</th>
+          <th style="${_TH}min-width:140px">Detalles Compra/Serv.</th>
+          <th style="${_TH}min-width:120px">Obs. 2</th>
+          <th style="${_TH}text-align:center">Acc.</th>
+        </tr>
+      </thead>
       <tbody>
-        ${filas.map(r => `
-          <tr>
-            <td style="white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
-            <td>${escapar(r.nro_operacion_bancaria||'—')}</td>
-            <td style="text-align:right;font-weight:600;color:${r.monto>=0?'var(--color-exito)':'var(--color-critico)'}">${formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN')}</td>
-            <td>${escapar(r.moneda||'S/')}</td>
-            <td>${escapar(truncar(r.proveedor_empresa_personal||'—',25))}</td>
-            <td>${escapar(r.concepto||'—')}</td>
-            <td>${escapar(truncar(r.empresa||'—',20))}</td>
-            <td><span class="badge-doc">${escapar(r.tipo_doc||'—')}</span></td>
-            <td>${escapar(r.nro_factura_doc||'—')}</td>
-            <td>${r.observaciones_3 ? `<span class="badge-medio">${escapar(r.observaciones_3)}</span>` : '—'}</td>
-            <td><span class="badge-estado-${(r.entrega_doc||'').toLowerCase().replace(/\s/g,'-')}">${escapar(r.entrega_doc||'—')}</span></td>
-            <td>${escapar(truncar(r.autorizacion||'—',18))}</td>
-            <td style="text-align:center;white-space:nowrap">
+        ${filas.map(r => {
+          const est = r.entrega_doc || 'PENDIENTE';
+          const rowStyle = {
+            PENDIENTE: 'background:rgba(197,48,48,.06);border-left:3px solid #C53030',
+            OBSERVADO:  'background:rgba(214,158,46,.07);border-left:3px solid #D69E2E',
+            EMITIDO:    'background:rgba(47,133,90,.04);border-left:3px solid #2F855A',
+            CANCELADO:  'background:rgba(74,85,104,.05);border-left:3px solid #718096;opacity:.75',
+          }[est] || '';
+          const badgeBg = { PENDIENTE:'#C53030', OBSERVADO:'#D69E2E', EMITIDO:'#2F855A', CANCELADO:'#718096' }[est] || '#718096';
+          return `<tr style="${rowStyle}" onmouseover="this.style.filter='brightness(.96)'" onmouseout="this.style.filter=''">
+            <td style="${_TD}font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria||'—')}</td>
+            <td style="${_TD}white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
+            <td style="${_TD}font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.descripcion||'')}">${escapar(r.descripcion||'—')}</td>
+            <td style="${_TD}text-align:center">${escapar(r.moneda||'S/')}</td>
+            <td style="${_TD}text-align:right;font-weight:700;color:${r.monto>=0?'var(--color-exito)':'var(--color-critico)'};white-space:nowrap">${formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td style="${_TD}max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}">${escapar(r.proveedor_empresa_personal||'—')}</td>
+            <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.ruc_dni||'—')}</td>
+            <td style="${_TD}font-size:11px">${escapar(r.cotizacion||'—')}</td>
+            <td style="${_TD}font-size:11px">${escapar(r.oc||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proyecto||'')}">${escapar(r.proyecto||'—')}</td>
+            <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(r.concepto||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.empresa||'')}">${escapar(r.empresa||'—')}</td>
+            <td style="${_TD}"><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBg};color:#fff;white-space:nowrap">${est}</span></td>
+            <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.nro_factura_doc||'—')}</td>
+            <td style="${_TD}text-align:center"><span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(r.tipo_doc||'—')}</span></td>
+            <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(r.autorizacion||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.observaciones||'')}">${escapar(r.observaciones||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.detalles_compra_servicio||'')}">${escapar(r.detalles_compra_servicio||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.observaciones_2||'')}">${escapar(r.observaciones_2||'—')}</td>
+            <td style="${_TD}text-align:center;white-space:nowrap">
               <button onclick="abrirModalMBD('${r.id}')" style="${estiloBtnIcono()}" title="Editar">✏️</button>
               <button onclick="eliminarMBD('${r.id}')" style="${estiloBtnIcono('danger')}" title="Eliminar">🗑️</button>
             </td>
-          </tr>
-        `).join('')}
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>
-    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} registro(s)</p>
-    ${estilosBadge()}
+    </div>
   `;
 }
 
@@ -555,33 +620,211 @@ async function exportarExcelMBD() {
 
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
+  // Columnas exactas del Excel REGISTRO (21 columnas, compatible con macro .xlsm)
   const cabecera = [
-    'N° operacion Bancaria','Fecha de Deposito','Descripcion','Moneda','Monto',
+    'N° de operación','Fecha de Deposito','Descripcion','Moneda','Monto',
     'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
     'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
-    'Tipo de DOC','Autorización','Medio de Pago','Observaciones',
-    'Detalles Compra / Servicio','Observaciones 2'
+    'Tipo de DOC','Autorización','Observaciones','Detalles Compra / Servicio',
+    'Observaciones 2','Fecha de registro','Usuario',
   ];
+
+  const _fmtFecha = iso => {
+    if (!iso) return '';
+    const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso);
+    return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  };
 
   const filas = data.map(r => [
     r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : null,
-    r.fecha_deposito, r.descripcion, r.moneda, r.monto,
-    r.proveedor_empresa_personal, r.ruc_dni, r.cotizacion, r.oc, r.proyecto,
-    r.concepto, r.empresa, r.entrega_doc, r.nro_factura_doc, r.tipo_doc,
-    r.autorizacion, r.observaciones_3, r.observaciones,
-    r.detalles_compra_servicio, r.observaciones_2
+    _fmtFecha(r.fecha_deposito),
+    r.descripcion || null,
+    r.moneda || 'S/',
+    r.monto,
+    r.proveedor_empresa_personal || null,
+    r.ruc_dni || null,
+    r.cotizacion || null,
+    r.oc || null,
+    r.proyecto || null,
+    r.concepto || null,
+    r.empresa || null,
+    r.entrega_doc || 'PENDIENTE',
+    r.nro_factura_doc || null,
+    r.tipo_doc || null,
+    r.autorizacion || null,
+    r.observaciones || null,
+    r.detalles_compra_servicio || null,
+    r.observaciones_2 || null,
+    _fmtFecha(r.fecha_creacion || r.fecha_actualizacion),
+    perfil_usuario?.nombre || '',
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet([cabecera, ...filas]);
-  // Forzar N° Op como texto para preservar ceros a la izquierda
+  // Forzar N° Op y Fecha como texto para preservar formato exacto
   filas.forEach((_, rowIdx) => {
-    const cellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: 0 });
-    if (ws[cellRef]) ws[cellRef].t = 's';
+    const r = rowIdx + 1;
+    [0, 1, 19].forEach(c => {
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      if (ws[cellRef]) ws[cellRef].t = 's';
+    });
   });
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
-  XLSX.writeFile(wb, `MBD_${empresa_activa.nombre_corto}_${anio}${mes}.xlsx`);
-  mostrarToast('Archivo exportado.', 'exito');
+  XLSX.utils.book_append_sheet(wb, ws, 'REGISTRO');
+  const nombreArchivo = `MBD_${empresa_activa.nombre_corto || empresa_activa.nombre}_${anio}${mes}.xlsx`;
+  XLSX.writeFile(wb, nombreArchivo);
+  mostrarToast(`✓ Exportado: ${nombreArchivo}`, 'exito');
+}
+
+/* ── Panel PENDIENTES inteligente ─────────────────────────── */
+async function renderPanelPendientesMBD() {
+  const mes   = document.getElementById('mbd-filtro-mes')?.value;
+  const anio  = document.getElementById('mbd-filtro-anio')?.value;
+  const desde = `${anio}-${mes}-01`;
+  const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
+
+  const wrap = document.getElementById('mbd-tabla-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Analizando PENDIENTES…</span></div>';
+
+  const { data, error } = await _supabase
+    .from('tesoreria_mbd')
+    .select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .eq('entrega_doc', 'PENDIENTE')
+    .gte('fecha_deposito', desde)
+    .lte('fecha_deposito', hasta)
+    .order('proveedor_empresa_personal')
+    .order('fecha_deposito');
+
+  if (error) { wrap.innerHTML = `<p style="color:#C53030;padding:20px">Error: ${escapar(error.message)}</p>`; return; }
+  const filas = data || [];
+
+  if (!filas.length) {
+    wrap.innerHTML = `
+      <div style="text-align:center;padding:48px;color:var(--color-texto-suave)">
+        <div style="font-size:48px;margin-bottom:12px">✅</div>
+        <p style="font-weight:500;font-size:16px">¡Sin movimientos PENDIENTES en este período!</p>
+        <button onclick="cargarMBD()" style="${estiloBtnSecundario()};margin-top:12px">← Volver al registro</button>
+      </div>`;
+    return;
+  }
+
+  // Agrupar por proveedor + RUC
+  const grupos = {};
+  filas.forEach(r => {
+    const key = (r.proveedor_empresa_personal || 'SIN NOMBRE').trim() + '||' + (r.ruc_dni || '').trim();
+    if (!grupos[key]) grupos[key] = {
+      proveedor: r.proveedor_empresa_personal || 'SIN NOMBRE',
+      ruc: r.ruc_dni || '',
+      items: [],
+    };
+    grupos[key].items.push(r);
+  });
+
+  const totalGeneral = filas.reduce((s, r) => s + Number(r.monto), 0);
+  const listaGrupos  = Object.values(grupos).sort((a, b) => a.items.length < b.items.length ? 1 : -1);
+
+  wrap.innerHTML = `
+    <div style="margin-bottom:16px;padding:14px 16px;background:rgba(197,48,48,.08);border-radius:8px;border-left:4px solid #C53030;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <strong style="color:#C53030;font-size:14px">🔴 ${filas.length} movimientos PENDIENTES</strong>
+        <span style="margin-left:8px;font-size:12px;color:var(--color-texto-suave)">en ${listaGrupos.length} proveedor(es)</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <strong style="font-size:14px">Total: ${formatearMoneda(totalGeneral, 'PEN')}</strong>
+        <button onclick="cargarMBD()" style="${estiloBtnSecundario()};font-size:12px;padding:6px 12px">← Volver al REGISTRO</button>
+      </div>
+    </div>
+
+    ${listaGrupos.map((g, gi) => {
+      const total     = g.items.reduce((s, r) => s + Number(r.monto), 0);
+      const esMultiple = g.items.length > 1;
+      const idGrupo   = `grp-${gi}`;
+      return `
+      <div style="border:1px solid ${esMultiple ? '#C53030' : 'var(--color-borde)'};border-radius:8px;margin-bottom:12px;overflow:hidden">
+        <div style="background:${esMultiple ? 'rgba(197,48,48,.06)' : 'var(--color-fondo)'};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:13px">${escapar(g.proveedor)}</strong>
+            ${g.ruc ? `<code style="font-size:11px;background:var(--color-fondo-alt,#F7FAFC);padding:2px 6px;border-radius:4px">${escapar(g.ruc)}</code>` : ''}
+            ${esMultiple ? `<span style="font-size:11px;background:#C53030;color:#fff;padding:2px 8px;border-radius:8px;font-weight:600">⚠️ ${g.items.length} transferencias</span>` : ''}
+          </div>
+          <strong style="font-size:13px;color:${total < 0 ? 'var(--color-critico)' : 'var(--color-exito)'}">${formatearMoneda(total, 'PEN')}</strong>
+        </div>
+
+        ${esMultiple ? `
+        <div style="padding:10px 16px;background:rgba(214,158,46,.06);border-top:1px solid var(--color-borde);font-size:12px;color:var(--color-texto)">
+          💡 <strong>${g.items.length} transferencias</strong> a este proveedor suman <strong>${formatearMoneda(total, 'PEN')}</strong> → ¿Corresponden todas a 1 comprobante?
+        </div>` : ''}
+
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead>
+              <tr style="background:var(--color-fondo)">
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">N° Op.</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Fecha</th>
+                <th style="padding:6px 10px;text-align:right;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Monto</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Descripción</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Concepto</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Obs. 2</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${g.items.map(r => `
+                <tr style="border-top:1px solid var(--color-borde)">
+                  <td style="padding:6px 10px;font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria || '—')}</td>
+                  <td style="padding:6px 10px;white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
+                  <td style="padding:6px 10px;text-align:right;font-weight:600;color:${r.monto < 0 ? 'var(--color-critico)' : 'var(--color-exito)'};white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
+                  <td style="padding:6px 10px;font-size:11px">${escapar(r.descripcion || '—')}</td>
+                  <td style="padding:6px 10px;white-space:nowrap">${escapar(r.concepto || '—')}</td>
+                  <td style="padding:6px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.observaciones_2 || '—')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div style="padding:12px 16px;border-top:1px solid var(--color-borde);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${esMultiple ? `
+          <span style="font-size:12px;font-weight:500">Vincular ${g.items.length} transferencias a 1 comprobante:</span>
+          <select id="tipo-doc-${idGrupo}" style="${estiloSelect()};padding:4px 8px;font-size:12px">
+            <option value="">Tipo DOC</option>
+            ${TIPOS_DOC_MBD.map(t => `<option value="${t.val}">${t.lab}</option>`).join('')}
+          </select>
+          <input type="text" id="nro-doc-${idGrupo}" placeholder="N° Factura / RH (ej: E001-17)" style="${estiloInput()};padding:4px 8px;font-size:12px;width:180px">
+          <select id="estado-doc-${idGrupo}" style="${estiloSelect()};padding:4px 8px;font-size:12px">
+            <option value="EMITIDO">EMITIDO</option>
+            <option value="OBSERVADO">OBSERVADO</option>
+          </select>
+          <button onclick="_vincularGrupoMBD('${idGrupo}',[${g.items.map(r => `'${r.id}'`).join(',')}])"
+            style="${estiloBtnPrimario()};padding:5px 14px;font-size:12px">
+            ✓ Vincular ${g.items.length} transferencias
+          </button>` : `
+          <button onclick="abrirModalMBD('${g.items[0].id}')" style="${estiloBtnSecundario()};padding:5px 12px;font-size:12px">✏️ Editar y gestionar</button>`}
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+async function _vincularGrupoMBD(idGrupo, ids) {
+  const tipoDoc = document.getElementById(`tipo-doc-${idGrupo}`)?.value;
+  const nroDoc  = (document.getElementById(`nro-doc-${idGrupo}`)?.value || '').trim();
+  const estado  = document.getElementById(`estado-doc-${idGrupo}`)?.value || 'EMITIDO';
+
+  if (!nroDoc)  { mostrarToast('Ingresa el N° de factura o comprobante.', 'atencion'); return; }
+  if (!tipoDoc) { mostrarToast('Selecciona el tipo de documento.', 'atencion'); return; }
+
+  const patch = {
+    nro_factura_doc:     nroDoc,
+    tipo_doc:            tipoDoc,
+    entrega_doc:         estado,
+    fecha_actualizacion: new Date().toISOString(),
+  };
+
+  const { error } = await _supabase.from('tesoreria_mbd').update(patch).in('id', ids);
+  if (error) { mostrarToast('Error al vincular: ' + error.message, 'error'); return; }
+
+  mostrarToast(`✓ ${ids.length} transferencia(s) vinculadas a ${nroDoc}`, 'exito');
+  renderPanelPendientesMBD();
 }
 
 /* ── Helpers de estilo ─────────────────────────────────────── */
@@ -609,9 +852,9 @@ function estilosBadge() {
   return `<style>
     .badge-doc{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--color-secundario);color:#fff}
     .badge-medio{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#553C9A;color:#fff}
-    .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
-    .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
+    .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
+    .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
     .badge-estado-emitido{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#2F855A;color:#fff}
-    .badge-estado-cancelado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#4A5568;color:#fff}
+    .badge-estado-cancelado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#718096;color:#fff}
   </style>`;
 }
