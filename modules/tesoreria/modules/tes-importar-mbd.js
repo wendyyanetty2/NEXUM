@@ -12,6 +12,7 @@ const TIPOS_DOC_MBD = [
 ];
 
 let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [] };
+let _pendientesGrupos = {};
 
 async function _mbdCargarCatalogos() {
   const eid = empresa_activa.id;
@@ -47,9 +48,17 @@ function renderTabImportarMBD(area) {
             ${[anioActual-1, anioActual, anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('')}
           </select>
           <input id="mbd-buscar" type="text" placeholder="Buscar…" style="${estiloInput()};width:180px">
+          <select id="mbd-filtro-estado" style="${estiloSelect()}">
+            <option value="">Todos los estados</option>
+            <option value="PENDIENTE">🔴 PENDIENTE</option>
+            <option value="OBSERVADO">🟡 OBSERVADO</option>
+            <option value="EMITIDO">🟢 EMITIDO</option>
+            <option value="CANCELADO">⚫ CANCELADO</option>
+          </select>
           <button onclick="cargarMBD()" style="${estiloBtnSecundario()}">🔍 Filtrar</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="renderPanelPendientesMBD()" style="padding:8px 14px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">🔴 Panel PENDIENTES</button>
           <button onclick="importarExcelMBD()" style="${estiloBtnSecundario()}">📂 Importar Excel</button>
           <button onclick="exportarExcelMBD()" style="${estiloBtnSecundario()}">📥 Exportar Excel</button>
           <button onclick="abrirModalMBD()" style="${estiloBtnPrimario()}">+ Nuevo movimiento</button>
@@ -75,7 +84,7 @@ function renderTabImportarMBD(area) {
           </table>
         </div>
         <div style="display:flex;gap:8px;margin-top:12px">
-          <button onclick="cancelarPreviewMBD()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">Cancelar</button>
+          <button onclick="cancelarPreviewMBD()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">Cancelar</button>
           <button onclick="confirmarImportMBD()" id="btn-confirmar-mbd" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">✅ Confirmar e importar</button>
         </div>
       </div>
@@ -102,7 +111,11 @@ async function cargarMBD() {
     .eq('empresa_id', empresa_activa.id)
     .gte('fecha_deposito', desde)
     .lte('fecha_deposito', hasta)
-    .order('fecha_deposito', { ascending: false });
+    .order('fecha_deposito', { ascending: true })
+    .order('nro_operacion_bancaria', { ascending: true });
+
+  const estadoFiltro = document.getElementById('mbd-filtro-estado')?.value;
+  if (estadoFiltro) q = q.eq('entrega_doc', estadoFiltro);
 
   const { data, error } = await q;
   if (error) { wrap.innerHTML = `<p class="error-texto">Error al cargar: ${escapar(error.message)}</p>`; return; }
@@ -115,7 +128,13 @@ async function cargarMBD() {
     (r.empresa||'').toLowerCase().includes(buscar) ||
     (r.nro_factura_doc||'').toLowerCase().includes(buscar) ||
     (r.ruc_dni||'').toLowerCase().includes(buscar) ||
-    (r.observaciones_3||'').toLowerCase().includes(buscar)
+    (r.nro_operacion_bancaria||'').toLowerCase().includes(buscar) ||
+    (r.autorizacion||'').toLowerCase().includes(buscar) ||
+    (r.proyecto||'').toLowerCase().includes(buscar) ||
+    (r.observaciones||'').toLowerCase().includes(buscar) ||
+    (r.observaciones_2||'').toLowerCase().includes(buscar) ||
+    (r.cotizacion||'').toLowerCase().includes(buscar) ||
+    (r.oc||'').toLowerCase().includes(buscar)
   );
 
   renderResumenMBD(filas);
@@ -125,39 +144,87 @@ async function cargarMBD() {
     return;
   }
 
+  const totS = filas.filter(r => r.moneda !== 'USD').reduce((s, r) => s + Number(r.monto), 0);
+  const totD = filas.filter(r => r.moneda === 'USD').reduce((s, r) => s + Number(r.monto), 0);
+  const cPend = filas.filter(r => r.entrega_doc === 'PENDIENTE').length;
+  const cObs  = filas.filter(r => r.entrega_doc === 'OBSERVADO').length;
+
+  const _TH = 'padding:8px 10px;text-align:left;font-weight:600;font-size:11px;color:var(--color-texto);border-bottom:2px solid var(--color-borde);white-space:nowrap;background:var(--color-bg-card);';
+  const _TD = 'padding:6px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;';
+
   wrap.innerHTML = `
-    <table class="tabla-nexum">
-      <thead><tr>
-        <th>Fecha</th><th>N° Op.</th><th>Monto</th><th>Mon.</th>
-        <th>Proveedor / Empresa</th><th>Concepto</th><th>Empresa</th>
-        <th>Doc.</th><th>N° Doc</th><th>Medio Pago</th><th>Estado</th><th>Autorización</th>
-        <th style="text-align:center">Acc.</th>
-      </tr></thead>
+    <div style="display:flex;gap:12px;margin-bottom:8px;flex-wrap:wrap;font-size:12px;color:var(--color-texto-suave);align-items:center">
+      <span><strong>${filas.length}</strong> registros</span>
+      ${cPend ? `<span style="color:#C53030;font-weight:600">🔴 ${cPend} PENDIENTES</span>` : ''}
+      ${cObs  ? `<span style="color:#D69E2E;font-weight:600">🟡 ${cObs} OBSERVADOS</span>` : ''}
+      <span>S/ ${formatearMoneda(totS,'PEN')}</span>
+      ${totD ? `<span>USD ${formatearMoneda(totD,'USD')}</span>` : ''}
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+    <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr>
+          <th style="${_TH}">N° Op.</th>
+          <th style="${_TH}">Fecha</th>
+          <th style="${_TH}min-width:160px">Descripción</th>
+          <th style="${_TH}">Mon.</th>
+          <th style="${_TH}text-align:right">Monto</th>
+          <th style="${_TH}min-width:180px">Proveedor / Empresa / Personal</th>
+          <th style="${_TH}">RUC / DNI</th>
+          <th style="${_TH}">COTIZACIÓN</th>
+          <th style="${_TH}">OC</th>
+          <th style="${_TH}min-width:120px">Proyecto</th>
+          <th style="${_TH}">Concepto</th>
+          <th style="${_TH}min-width:140px">Empresa</th>
+          <th style="${_TH}min-width:95px">Estado DOC</th>
+          <th style="${_TH}">Nª Factura/DOC</th>
+          <th style="${_TH}">Tipo DOC</th>
+          <th style="${_TH}">Autorización</th>
+          <th style="${_TH}min-width:140px">Observaciones</th>
+          <th style="${_TH}min-width:140px">Detalles Compra/Serv.</th>
+          <th style="${_TH}min-width:120px">Obs. 2</th>
+          <th style="${_TH}text-align:center">Acc.</th>
+        </tr>
+      </thead>
       <tbody>
-        ${filas.map(r => `
-          <tr>
-            <td style="white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
-            <td>${escapar(r.nro_operacion_bancaria||'—')}</td>
-            <td style="text-align:right;font-weight:600;color:${r.monto>=0?'var(--color-exito)':'var(--color-critico)'}">${formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN')}</td>
-            <td>${escapar(r.moneda||'S/')}</td>
-            <td>${escapar(truncar(r.proveedor_empresa_personal||'—',25))}</td>
-            <td>${escapar(r.concepto||'—')}</td>
-            <td>${escapar(truncar(r.empresa||'—',20))}</td>
-            <td><span class="badge-doc">${escapar(r.tipo_doc||'—')}</span></td>
-            <td>${escapar(r.nro_factura_doc||'—')}</td>
-            <td>${r.observaciones_3 ? `<span class="badge-medio">${escapar(r.observaciones_3)}</span>` : '—'}</td>
-            <td><span class="badge-estado-${(r.entrega_doc||'').toLowerCase().replace(/\s/g,'-')}">${escapar(r.entrega_doc||'—')}</span></td>
-            <td>${escapar(truncar(r.autorizacion||'—',18))}</td>
-            <td style="text-align:center;white-space:nowrap">
+        ${filas.map(r => {
+          const est = r.entrega_doc || 'PENDIENTE';
+          const rowStyle = {
+            PENDIENTE: 'background:rgba(197,48,48,.06);border-left:3px solid #C53030',
+            OBSERVADO:  'background:rgba(214,158,46,.07);border-left:3px solid #D69E2E',
+            EMITIDO:    'background:rgba(47,133,90,.04);border-left:3px solid #2F855A',
+            CANCELADO:  'background:rgba(74,85,104,.05);border-left:3px solid #718096;opacity:.75',
+          }[est] || '';
+          const badgeBg = { PENDIENTE:'#C53030', OBSERVADO:'#D69E2E', EMITIDO:'#2F855A', CANCELADO:'#718096' }[est] || '#718096';
+          return `<tr style="${rowStyle}" onmouseover="this.style.filter='brightness(.96)'" onmouseout="this.style.filter=''">
+            <td style="${_TD}font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria||'—')}</td>
+            <td style="${_TD}white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
+            <td style="${_TD}font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.descripcion||'')}">${escapar(r.descripcion||'—')}</td>
+            <td style="${_TD}text-align:center">${escapar(r.moneda||'S/')}</td>
+            <td style="${_TD}text-align:right;font-weight:700;color:${r.monto>=0?'var(--color-exito)':'var(--color-critico)'};white-space:nowrap">${formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td style="${_TD}max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}">${escapar(r.proveedor_empresa_personal||'—')}</td>
+            <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.ruc_dni||'—')}</td>
+            <td style="${_TD}font-size:11px">${escapar(r.cotizacion||'—')}</td>
+            <td style="${_TD}font-size:11px">${escapar(r.oc||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proyecto||'')}">${escapar(r.proyecto||'—')}</td>
+            <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(r.concepto||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.empresa||'')}">${escapar(r.empresa||'—')}</td>
+            <td style="${_TD}"><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBg};color:#fff;white-space:nowrap">${est}</span></td>
+            <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.nro_factura_doc||'—')}</td>
+            <td style="${_TD}text-align:center"><span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(r.tipo_doc||'—')}</span></td>
+            <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(r.autorizacion||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.observaciones||'')}">${escapar(r.observaciones||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.detalles_compra_servicio||'')}">${escapar(r.detalles_compra_servicio||'—')}</td>
+            <td style="${_TD}font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.observaciones_2||'')}">${escapar(r.observaciones_2||'—')}</td>
+            <td style="${_TD}text-align:center;white-space:nowrap">
               <button onclick="abrirModalMBD('${r.id}')" style="${estiloBtnIcono()}" title="Editar">✏️</button>
               <button onclick="eliminarMBD('${r.id}')" style="${estiloBtnIcono('danger')}" title="Eliminar">🗑️</button>
             </td>
-          </tr>
-        `).join('')}
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>
-    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} registro(s)</p>
-    ${estilosBadge()}
+    </div>
   `;
 }
 
@@ -555,47 +622,328 @@ async function exportarExcelMBD() {
 
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
+  // Columnas exactas del Excel REGISTRO (21 columnas, compatible con macro .xlsm)
   const cabecera = [
-    'N° operacion Bancaria','Fecha de Deposito','Descripcion','Moneda','Monto',
+    'N° de operación','Fecha de Deposito','Descripcion','Moneda','Monto',
     'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
     'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
-    'Tipo de DOC','Autorización','Medio de Pago','Observaciones',
-    'Detalles Compra / Servicio','Observaciones 2'
+    'Tipo de DOC','Autorización','Observaciones','Detalles Compra / Servicio',
+    'Observaciones 2','Fecha de registro','Usuario',
   ];
+
+  const _fmtFecha = iso => {
+    if (!iso) return '';
+    const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso);
+    return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  };
 
   const filas = data.map(r => [
     r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : null,
-    r.fecha_deposito, r.descripcion, r.moneda, r.monto,
-    r.proveedor_empresa_personal, r.ruc_dni, r.cotizacion, r.oc, r.proyecto,
-    r.concepto, r.empresa, r.entrega_doc, r.nro_factura_doc, r.tipo_doc,
-    r.autorizacion, r.observaciones_3, r.observaciones,
-    r.detalles_compra_servicio, r.observaciones_2
+    _fmtFecha(r.fecha_deposito),
+    r.descripcion || null,
+    r.moneda || 'S/',
+    r.monto,
+    r.proveedor_empresa_personal || null,
+    r.ruc_dni || null,
+    r.cotizacion || null,
+    r.oc || null,
+    r.proyecto || null,
+    r.concepto || null,
+    r.empresa || null,
+    r.entrega_doc || 'PENDIENTE',
+    r.nro_factura_doc || null,
+    r.tipo_doc || null,
+    r.autorizacion || null,
+    r.observaciones || null,
+    r.detalles_compra_servicio || null,
+    r.observaciones_2 || null,
+    _fmtFecha(r.fecha_creacion || r.fecha_actualizacion),
+    perfil_usuario?.nombre || '',
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet([cabecera, ...filas]);
-  // Forzar N° Op como texto para preservar ceros a la izquierda
+  // Forzar N° Op y Fecha como texto para preservar formato exacto
   filas.forEach((_, rowIdx) => {
-    const cellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: 0 });
-    if (ws[cellRef]) ws[cellRef].t = 's';
+    const r = rowIdx + 1;
+    [0, 1, 19].forEach(c => {
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      if (ws[cellRef]) ws[cellRef].t = 's';
+    });
   });
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
-  XLSX.writeFile(wb, `MBD_${empresa_activa.nombre_corto}_${anio}${mes}.xlsx`);
-  mostrarToast('Archivo exportado.', 'exito');
+  XLSX.utils.book_append_sheet(wb, ws, 'REGISTRO');
+  const nombreArchivo = `MBD_${empresa_activa.nombre_corto || empresa_activa.nombre}_${anio}${mes}.xlsx`;
+  XLSX.writeFile(wb, nombreArchivo);
+  mostrarToast(`✓ Exportado: ${nombreArchivo}`, 'exito');
+}
+
+/* ── Panel PENDIENTES inteligente ─────────────────────────── */
+async function renderPanelPendientesMBD() {
+  const mes   = document.getElementById('mbd-filtro-mes')?.value;
+  const anio  = document.getElementById('mbd-filtro-anio')?.value;
+  const desde = `${anio}-${mes}-01`;
+  const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
+
+  const wrap = document.getElementById('mbd-tabla-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Analizando PENDIENTES…</span></div>';
+
+  const { data, error } = await _supabase
+    .from('tesoreria_mbd')
+    .select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .eq('entrega_doc', 'PENDIENTE')
+    .gte('fecha_deposito', desde)
+    .lte('fecha_deposito', hasta)
+    .order('proveedor_empresa_personal')
+    .order('fecha_deposito');
+
+  if (error) { wrap.innerHTML = `<p style="color:#C53030;padding:20px">Error: ${escapar(error.message)}</p>`; return; }
+  const filas = data || [];
+
+  if (!filas.length) {
+    wrap.innerHTML = `
+      <div style="text-align:center;padding:48px;color:var(--color-texto-suave)">
+        <div style="font-size:48px;margin-bottom:12px">✅</div>
+        <p style="font-weight:500;font-size:16px">¡Sin movimientos PENDIENTES en este período!</p>
+        <button onclick="cargarMBD()" style="${estiloBtnSecundario()};margin-top:12px">← Volver al registro</button>
+      </div>`;
+    return;
+  }
+
+  // Agrupar por proveedor + RUC
+  const grupos = {};
+  filas.forEach(r => {
+    const key = (r.proveedor_empresa_personal || 'SIN NOMBRE').trim() + '||' + (r.ruc_dni || '').trim();
+    if (!grupos[key]) grupos[key] = {
+      proveedor: r.proveedor_empresa_personal || 'SIN NOMBRE',
+      ruc: r.ruc_dni || '',
+      items: [],
+    };
+    grupos[key].items.push(r);
+  });
+
+  const totalGeneral = filas.reduce((s, r) => s + Number(r.monto), 0);
+  const listaGrupos  = Object.values(grupos).sort((a, b) => a.items.length < b.items.length ? 1 : -1);
+
+  _pendientesGrupos = {};
+  listaGrupos.forEach((g, gi) => { _pendientesGrupos[`grp-${gi}`] = g; });
+
+  wrap.innerHTML = `
+    <div style="margin-bottom:16px;padding:14px 16px;background:rgba(197,48,48,.08);border-radius:8px;border-left:4px solid #C53030;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <strong style="color:#C53030;font-size:14px">🔴 ${filas.length} movimientos PENDIENTES</strong>
+        <span style="margin-left:8px;font-size:12px;color:var(--color-texto-suave)">en ${listaGrupos.length} proveedor(es)</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <strong style="font-size:14px">Total: ${formatearMoneda(totalGeneral, 'PEN')}</strong>
+        <button onclick="cargarMBD()" style="${estiloBtnSecundario()};font-size:12px;padding:6px 12px">← Volver al REGISTRO</button>
+      </div>
+    </div>
+
+    ${listaGrupos.map((g, gi) => {
+      const total     = g.items.reduce((s, r) => s + Number(r.monto), 0);
+      const esMultiple = g.items.length > 1;
+      const idGrupo   = `grp-${gi}`;
+      return `
+      <div style="border:1px solid ${esMultiple ? '#C53030' : 'var(--color-borde)'};border-radius:8px;margin-bottom:12px;overflow:hidden">
+        <div style="background:${esMultiple ? 'rgba(197,48,48,.06)' : 'var(--color-bg-card)'};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:13px">${escapar(g.proveedor)}</strong>
+            ${g.ruc ? `<code style="font-size:11px;background:var(--color-fondo-alt,#F7FAFC);padding:2px 6px;border-radius:4px">${escapar(g.ruc)}</code>` : ''}
+            ${esMultiple ? `<span style="font-size:11px;background:#C53030;color:#fff;padding:2px 8px;border-radius:8px;font-weight:600">⚠️ ${g.items.length} transferencias</span>` : ''}
+          </div>
+          <strong style="font-size:13px;color:${total < 0 ? 'var(--color-critico)' : 'var(--color-exito)'}">${formatearMoneda(total, 'PEN')}</strong>
+        </div>
+
+        ${esMultiple ? `
+        <div style="padding:10px 16px;background:rgba(214,158,46,.06);border-top:1px solid var(--color-borde);font-size:12px;color:var(--color-texto)">
+          💡 <strong>${g.items.length} transferencias</strong> a este proveedor suman <strong>${formatearMoneda(total, 'PEN')}</strong> → ¿Corresponden todas a 1 comprobante?
+        </div>` : ''}
+
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead>
+              <tr style="background:var(--color-bg-card)">
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">N° Op.</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Fecha</th>
+                <th style="padding:6px 10px;text-align:right;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Monto</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Descripción</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Concepto</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Obs. 2</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${g.items.map(r => `
+                <tr style="border-top:1px solid var(--color-borde)">
+                  <td style="padding:6px 10px;font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria || '—')}</td>
+                  <td style="padding:6px 10px;white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
+                  <td style="padding:6px 10px;text-align:right;font-weight:600;color:${r.monto < 0 ? 'var(--color-critico)' : 'var(--color-exito)'};white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
+                  <td style="padding:6px 10px;font-size:11px">${escapar(r.descripcion || '—')}</td>
+                  <td style="padding:6px 10px;white-space:nowrap">${escapar(r.concepto || '—')}</td>
+                  <td style="padding:6px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.observaciones_2 || '—')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div style="padding:12px 16px;border-top:1px solid var(--color-borde);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${esMultiple ? `
+          <span style="font-size:12px;color:var(--color-texto-suave)">Vincular ${g.items.length} transferencias a 1 comprobante:</span>
+          <button onclick="_abrirModalConciliacionMBD('${idGrupo}',[${g.items.map(r => `'${r.id}'`).join(',')}])"
+            style="${estiloBtnPrimario()};padding:5px 14px;font-size:12px">
+            🔗 Vincular ${g.items.length} transferencias
+          </button>` : `
+          <button onclick="_abrirModalConciliacionMBD('${idGrupo}',[${g.items.map(r => `'${r.id}'`).join(',')}])" style="${estiloBtnPrimario()};padding:5px 14px;font-size:12px">🔗 Conciliar</button>
+          <button onclick="abrirModalMBD('${g.items[0].id}')" style="${estiloBtnSecundario()};padding:5px 12px;font-size:12px">✏️ Editar</button>`}
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+function _abrirModalConciliacionMBD(idGrupo, ids) {
+  const g = _pendientesGrupos[idGrupo];
+  if (!g) return;
+  const total = g.items.reduce((s, r) => s + Number(r.monto), 0);
+  const idsJson = JSON.stringify(ids);
+
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cerrarModalConciliacion()">
+      <div class="modal" style="max-width:640px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>🔗 Confirmar vinculación de comprobante</h3>
+          <button class="modal-cerrar" onclick="_cerrarModalConciliacion()">✕</button>
+        </div>
+        <div class="modal-body">
+
+          <div style="margin-bottom:14px;padding:10px 14px;background:rgba(197,48,48,.07);border-radius:8px;border-left:4px solid #C53030;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <span style="font-size:13px"><strong>${g.items.length} transferencia(s)</strong> serán vinculadas al comprobante</span>
+            <strong style="font-size:14px;color:var(--color-exito)">${formatearMoneda(total, 'PEN')}</strong>
+          </div>
+
+          <div style="overflow-x:auto;max-height:160px;overflow-y:auto;margin-bottom:18px;border:1px solid var(--color-borde);border-radius:6px">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead><tr style="background:var(--color-bg-card)">
+                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">N° Op.</th>
+                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Fecha</th>
+                <th style="padding:6px 10px;text-align:right;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Monto</th>
+                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Descripción</th>
+              </tr></thead>
+              <tbody>
+                ${g.items.map(r => `
+                  <tr style="border-top:1px solid var(--color-borde)">
+                    <td style="padding:5px 10px;font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria || '—')}</td>
+                    <td style="padding:5px 10px;white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
+                    <td style="padding:5px 10px;text-align:right;font-weight:600;color:var(--color-exito);white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
+                    <td style="padding:5px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.descripcion || '—')}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="campo">
+              <label>Proveedor / Personal</label>
+              <input type="text" id="conc-proveedor" value="${escapar(g.proveedor || '')}" placeholder="Nombre del proveedor">
+            </div>
+            <div class="campo">
+              <label>RUC / DNI</label>
+              <input type="text" id="conc-ruc" value="${escapar(g.ruc || '')}" placeholder="RUC o DNI">
+            </div>
+            <div class="campo">
+              <label>Tipo de DOC <span style="color:#C53030">*</span></label>
+              <select id="conc-tipo-doc">
+                <option value="">— Seleccionar —</option>
+                ${TIPOS_DOC_MBD.map(t => `<option value="${t.val}">${t.lab}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>N° Factura / Comprobante <span style="color:#C53030">*</span></label>
+              <input type="text" id="conc-nro-doc" placeholder="Ej: F001-00123, E001-17">
+            </div>
+            <div class="campo" style="grid-column:span 2">
+              <label>Estado FA/DOC/RH</label>
+              <select id="conc-estado-doc">
+                <option value="EMITIDO" selected>✅ EMITIDO — documento recibido y registrado</option>
+                <option value="OBSERVADO">⚠️ OBSERVADO — pendiente de revisión</option>
+              </select>
+            </div>
+          </div>
+          <div id="conc-alerta" class="alerta-error" style="margin-top:10px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="_cerrarModalConciliacion()">Cancelar</button>
+          <button class="btn btn-primario" id="btn-conc-confirmar"
+            onclick="_vincularGrupoMBD(${idsJson})">
+            ✅ Confirmar vinculación (${ids.length} registro${ids.length !== 1 ? 's' : ''})
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _cerrarModalConciliacion() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function _vincularGrupoMBD(ids) {
+  const tipoDoc   = document.getElementById('conc-tipo-doc')?.value;
+  const nroDoc    = (document.getElementById('conc-nro-doc')?.value || '').trim();
+  const estado    = document.getElementById('conc-estado-doc')?.value || 'EMITIDO';
+  const proveedor = (document.getElementById('conc-proveedor')?.value || '').trim();
+  const rucDni    = (document.getElementById('conc-ruc')?.value || '').trim();
+  const alerta    = document.getElementById('conc-alerta');
+
+  if (!nroDoc) {
+    if (alerta) { alerta.textContent = 'Ingresa el N° de factura o comprobante.'; alerta.classList.add('visible'); }
+    return;
+  }
+  if (!tipoDoc) {
+    if (alerta) { alerta.textContent = 'Selecciona el tipo de documento.'; alerta.classList.add('visible'); }
+    return;
+  }
+
+  const btn = document.getElementById('btn-conc-confirmar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+
+  const patch = {
+    nro_factura_doc:            nroDoc,
+    tipo_doc:                   tipoDoc,
+    entrega_doc:                estado,
+    fecha_actualizacion:        new Date().toISOString(),
+  };
+  if (proveedor) patch.proveedor_empresa_personal = proveedor;
+  if (rucDni)    patch.ruc_dni                    = rucDni;
+
+  const { error } = await _supabase.from('tesoreria_mbd').update(patch).in('id', ids);
+  if (btn) { btn.disabled = false; btn.textContent = `✅ Confirmar vinculación (${ids.length} registro${ids.length !== 1 ? 's' : ''})`; }
+
+  if (error) {
+    if (alerta) { alerta.textContent = 'Error al vincular: ' + error.message; alerta.classList.add('visible'); }
+    return;
+  }
+
+  mostrarToast(`✓ ${ids.length} transferencia(s) vinculadas a ${tipoDoc} ${nroDoc}`, 'exito');
+  _cerrarModalConciliacion();
+  renderPanelPendientesMBD();
 }
 
 /* ── Helpers de estilo ─────────────────────────────────────── */
 function estiloSelect() {
-  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
 }
 function estiloInput() {
-  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
 }
 function estiloBtnPrimario() {
   return 'padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500';
 }
 function estiloBtnSecundario() {
-  return 'padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px';
+  return 'padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px';
 }
 function estiloBtnIcono(tipo) {
   const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)';
@@ -609,9 +957,9 @@ function estilosBadge() {
   return `<style>
     .badge-doc{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--color-secundario);color:#fff}
     .badge-medio{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#553C9A;color:#fff}
-    .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
-    .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
+    .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
+    .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
     .badge-estado-emitido{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#2F855A;color:#fff}
-    .badge-estado-cancelado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#4A5568;color:#fff}
+    .badge-estado-cancelado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#718096;color:#fff}
   </style>`;
 }
