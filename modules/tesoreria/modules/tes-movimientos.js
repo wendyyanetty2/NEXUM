@@ -94,13 +94,34 @@ async function renderTabMovimientos(area) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="tabla">
-          <thead><tr>
-            <th style="width:32px"><input type="checkbox" id="chk-todos-mov" title="Seleccionar todos"
-              onchange="seleccionarTodosMov(this.checked)"></th>
-            <th>Fecha</th><th>Cuenta</th><th>Naturaleza</th><th>Importe</th>
-            <th>Descripción</th><th>Nro Operación</th><th>FA/DOC/RH</th><th>Estado</th><th>Acciones</th>
+      <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+        <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="background:var(--color-bg-card)">
+            <th style="width:32px;padding:8px;border-bottom:2px solid var(--color-borde);position:sticky;left:0;background:var(--color-bg-card);z-index:2">
+              <input type="checkbox" id="chk-todos-mov" title="Seleccionar todos" onchange="seleccionarTodosMov(this.checked)">
+            </th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:110px">N° de operación</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:100px">Fecha</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:150px">Descripción</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:60px">Mon.</th>
+            <th style="padding:8px 10px;text-align:right;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:100px">Monto</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:200px">Proveedores / Empresa / Personal</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:120px">RUC / DNI</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:120px">COTIZACIÓN</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:100px">OC</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:180px">Proyecto</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:130px">Concepto</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:160px">Empresa</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:100px">Entrega FA/DOC</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:130px">Nª Factura o DOC.</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:90px">Tipo DOC</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:120px">Autorización</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:180px">Observaciones</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:200px">Detalles Compra / Servicio</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:180px">Observaciones 2</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:120px">Fecha Registro</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:100px">Usuario</th>
+            <th style="padding:8px 10px;text-align:center;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:80px">Acc.</th>
           </tr></thead>
           <tbody id="tbody-movimientos"></tbody>
         </table>
@@ -303,10 +324,12 @@ async function cargarMovimientos() {
       conceptos:concepto_id(nombre),
       autorizaciones:autorizacion_id(nombre),
       proyectos:proyecto_id(nombre),
-      medios_pago:medio_pago_id(nombre)
+      medios_pago:medio_pago_id(nombre),
+      usuarios:usuario_id(nombre)
     `)
     .eq('empresa_operadora_id', empresa_activa.id)
-    .order('fecha', { ascending: false })
+    .order('fecha', { ascending: true })
+    .order('numero_operacion', { ascending: true })
     .limit(500);
   movimientos_lista = data || [];
   filtrarMovimientos();
@@ -448,50 +471,65 @@ function renderTablaMovimientos() {
   const tbody  = document.getElementById('tbody-movimientos');
   if (!tbody) return;
 
-  const colores = {
-    PENDIENTE: 'badge-warning', EMITIDO: 'badge-info', APROBADO: 'badge-activo',
-    OBSERVADO: 'badge-warning', ANULADO: 'badge-inactivo', EN_SIMULACION: 'badge-info',
-    REQUIERE_RH: 'badge-warning',
-  };
-  const coloresDoc = {
-    EMITIDO: 'badge-activo', PENDIENTE: 'badge-warning',
-    OBSERVADO: 'badge-info', CANCELADO: 'badge-inactivo',
+  const _TD = 'padding:6px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;';
+  const badgeBgDoc = { PENDIENTE:'#C53030', OBSERVADO:'#D69E2E', EMITIDO:'#2F855A', CANCELADO:'#718096' };
+  const rowBgDoc   = {
+    PENDIENTE: 'background:rgba(197,48,48,.06);border-left:3px solid #C53030',
+    OBSERVADO:  'background:rgba(214,158,46,.07);border-left:3px solid #D69E2E',
+    EMITIDO:    'background:rgba(47,133,90,.04);border-left:3px solid #2F855A',
+    CANCELADO:  'background:rgba(74,85,104,.05);border-left:3px solid #718096;opacity:.8',
   };
 
   tbody.innerHTML = pagina.length ? pagina.map(m => {
     const docEstado = m.estado_doc || 'PENDIENTE';
-    const empresa   = m.empresas_clientes?.nombre || '';
+    const monto     = m.naturaleza === 'CARGO' ? -Math.abs(m.importe) : Math.abs(m.importe);
+    const proveedor = m.empresas_clientes?.nombre || '';
+    const rucDni    = m.empresas_clientes?.ruc_dni || '';
     const concepto  = m.conceptos?.nombre || '';
-    const nroDoc    = m.numero_documento || '';
-    const tipoDoc   = m.tipo_documento_codigo || '';
-    const infoDoc   = [tipoDoc, nroDoc].filter(Boolean).join(' ');
-    const infoExtra = [empresa, concepto].filter(Boolean).map(s => escapar(s.slice(0,22))).join(' · ');
+    const autorizacion = m.autorizaciones?.nombre || '';
+    const proyecto  = m.proyectos?.nombre || '';
+    const usuarioNombre = m.usuarios?.nombre || '';
+    const fmtFecha  = iso => {
+      if (!iso) return '—';
+      const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso);
+      return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+    };
+    const rowStyle = rowBgDoc[docEstado] || '';
     return `
-    <tr>
-      <td><input type="checkbox" class="chk-mov" data-id="${m.id}"
-        ${mov_seleccionados.has(m.id) ? 'checked' : ''}
-        onchange="toggleSeleccionMov('${m.id}', this.checked)"></td>
-      <td>${formatearFecha(m.fecha)}</td>
-      <td class="text-sm">${escapar(m.cuentas_bancarias?.nombre_alias || '—')}</td>
-      <td><span class="badge ${m.naturaleza === 'CARGO' ? 'badge-critico' : 'badge-activo'}" style="font-size:11px">${m.naturaleza}</span></td>
-      <td class="text-right ${m.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
-        ${m.naturaleza === 'CARGO' ? '−' : '+'}${formatearMoneda(m.importe, m.moneda)}
+    <tr style="${rowStyle}" onmouseover="this.style.filter='brightness(.97)'" onmouseout="this.style.filter=''">
+      <td style="${_TD}padding:6px 8px;position:sticky;left:0;background:inherit">
+        <input type="checkbox" class="chk-mov" data-id="${m.id}"
+          ${mov_seleccionados.has(m.id) ? 'checked' : ''}
+          onchange="toggleSeleccionMov('${m.id}', this.checked)">
       </td>
-      <td class="text-sm">${escapar((m.descripcion||'').slice(0,40))}${(m.descripcion||'').length>40?'…':''}</td>
-      <td class="text-mono text-sm">${escapar(m.numero_operacion || '—')}</td>
-      <td>
-        <span class="badge ${coloresDoc[docEstado] || 'badge-warning'}" style="font-size:11px">${docEstado}</span>
-        ${infoDoc ? `<div class="text-mono" style="font-size:10px;color:var(--color-texto-suave);margin-top:2px">${escapar(infoDoc)}</div>` : ''}
-        ${infoExtra ? `<div style="font-size:10px;color:var(--color-texto-suave)">${infoExtra}</div>` : ''}
-      </td>
-      <td><span class="badge ${colores[m.estado] || 'badge-info'}" style="font-size:11px">${m.estado}</span></td>
-      <td>
+      <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(m.numero_operacion || '—')}</td>
+      <td style="${_TD}white-space:nowrap">${fmtFecha(m.fecha)}</td>
+      <td style="${_TD}font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.descripcion||'')}">${escapar(m.descripcion || '—')}</td>
+      <td style="${_TD}text-align:center;font-size:11px">${escapar(m.moneda || 'PEN')}</td>
+      <td style="${_TD}text-align:right;font-weight:700;white-space:nowrap;color:${monto < 0 ? 'var(--color-critico)' : 'var(--color-exito)'}">${formatearMoneda(Math.abs(monto), m.moneda)}</td>
+      <td style="${_TD}max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(proveedor)}">${escapar(proveedor || '—')}</td>
+      <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(rucDni || '—')}</td>
+      <td style="${_TD}font-size:11px">${escapar(m.cotizacion || '—')}</td>
+      <td style="${_TD}font-size:11px">${escapar(m.oc || '—')}</td>
+      <td style="${_TD}font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(proyecto)}">${escapar(proyecto || '—')}</td>
+      <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(concepto || '—')}</td>
+      <td style="${_TD}font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(empresa_activa?.nombre || '—')}</td>
+      <td style="${_TD}"><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBgDoc[docEstado]||'#718096'};color:#fff;white-space:nowrap">${docEstado}</span></td>
+      <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(m.numero_documento || '—')}</td>
+      <td style="${_TD}text-align:center"><span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(m.tipo_documento_codigo || '—')}</span></td>
+      <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(autorizacion || '—')}</td>
+      <td style="${_TD}font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.observaciones||'')}">${escapar(m.observaciones || '—')}</td>
+      <td style="${_TD}font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.detalles_servicio||'')}">${escapar(m.detalles_servicio || '—')}</td>
+      <td style="${_TD}font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.observaciones_2||'')}">${escapar(m.observaciones_2 || '—')}</td>
+      <td style="${_TD}font-size:11px;white-space:nowrap;color:var(--color-texto-suave)">${fmtFecha(m.fecha_creacion)}</td>
+      <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(usuarioNombre || '—')}</td>
+      <td style="${_TD}text-align:center;white-space:nowrap">
         <button class="btn-icono" onclick="abrirModalMovimiento('${m.id}')">✏️</button>
         <button class="btn-icono peligro" onclick="eliminarMovimiento('${m.id}')">🗑️</button>
       </td>
     </tr>`;
   }).join('') :
-    '<tr><td colspan="9" class="text-center text-muted">Sin movimientos</td></tr>';
+    '<tr><td colspan="23" class="text-center text-muted" style="padding:32px">Sin movimientos</td></tr>';
 
   const total = movimientos_filtrada.length;
   const pags  = Math.ceil(total / MOV_POR_PAG);
@@ -640,6 +678,20 @@ async function guardarMovimiento() {
   if (!fecha)       { alerta.textContent = 'La fecha es obligatoria.';    alerta.classList.add('visible'); return; }
   if (!importe || importe <= 0) { alerta.textContent = 'Ingresa un importe válido.'; alerta.classList.add('visible'); return; }
   if (!cuenta)      { alerta.textContent = 'Selecciona una cuenta.';      alerta.classList.add('visible'); return; }
+
+  // Auto-sugerir cambio de estado_doc a EMITIDO si se llenó el N° de documento
+  const _nroDocVal    = document.getElementById('mov-nro-doc')?.value.trim();
+  const _estadoDocVal = document.getElementById('mov-estado-doc-modal')?.value;
+  if (_nroDocVal && _estadoDocVal === 'PENDIENTE') {
+    const cambiar = await confirmar(
+      `Se ha ingresado el comprobante "${_nroDocVal}".\n¿Cambiar el estado FA/DOC/RH a EMITIDO automáticamente?`,
+      { btnOk: 'Sí, cambiar a EMITIDO', btnColor: '#2F855A' }
+    );
+    if (cambiar) {
+      const sel = document.getElementById('mov-estado-doc-modal');
+      if (sel) sel.value = 'EMITIDO';
+    }
+  }
 
   btn.disabled = true; btn.textContent = 'Guardando…';
   const id       = document.getElementById('mov-id').value;

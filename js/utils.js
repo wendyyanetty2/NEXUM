@@ -77,17 +77,17 @@ function confirmar(mensaje, { btnOk = 'Confirmar', btnColor = '#C53030' } = {}) 
       display:flex; align-items:center; justify-content:center; z-index:9998;
     `;
     overlay.innerHTML = `
-      <div style="background:#fff; border-radius:12px; padding:28px 32px; max-width:380px;
-                  box-shadow:0 8px 32px rgba(0,0,0,0.2); text-align:center;">
+      <div style="background:var(--color-bg-card); border-radius:12px; padding:28px 32px; max-width:380px;
+                  box-shadow:var(--sombra-lg); text-align:center; border:1px solid var(--color-borde);">
         <div style="font-size:40px; margin-bottom:12px;">⚠️</div>
-        <p style="color:#2D3748; font-size:15px; margin-bottom:24px; line-height:1.5;">${mensaje}</p>
+        <p style="color:var(--color-texto); font-size:15px; margin-bottom:24px; line-height:1.5; white-space:pre-line;">${mensaje}</p>
         <div style="display:flex; gap:12px; justify-content:center;">
-          <button id="btn-cancelar" style="padding:10px 24px; border:1px solid #CBD5E0;
-            border-radius:8px; background:#fff; color:#4A5568; cursor:pointer; font-size:14px;">
+          <button id="btn-cancelar" style="padding:10px 24px; border:1px solid var(--color-borde);
+            border-radius:8px; background:var(--color-bg-card); color:var(--color-texto); cursor:pointer; font-size:14px; font-family:var(--font);">
             Cancelar
           </button>
           <button id="btn-confirmar" style="padding:10px 24px; border:none;
-            border-radius:8px; background:${btnColor}; color:#fff; cursor:pointer; font-size:14px;">
+            border-radius:8px; background:${btnColor}; color:#fff; cursor:pointer; font-size:14px; font-family:var(--font); font-weight:500;">
             ${btnOk}
           </button>
         </div>

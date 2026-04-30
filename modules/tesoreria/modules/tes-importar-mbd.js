@@ -12,6 +12,7 @@ const TIPOS_DOC_MBD = [
 ];
 
 let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [] };
+let _pendientesGrupos = {};
 
 async function _mbdCargarCatalogos() {
   const eid = empresa_activa.id;
@@ -83,7 +84,7 @@ function renderTabImportarMBD(area) {
           </table>
         </div>
         <div style="display:flex;gap:8px;margin-top:12px">
-          <button onclick="cancelarPreviewMBD()" style="padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">Cancelar</button>
+          <button onclick="cancelarPreviewMBD()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">Cancelar</button>
           <button onclick="confirmarImportMBD()" id="btn-confirmar-mbd" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">✅ Confirmar e importar</button>
         </div>
       </div>
@@ -110,7 +111,8 @@ async function cargarMBD() {
     .eq('empresa_id', empresa_activa.id)
     .gte('fecha_deposito', desde)
     .lte('fecha_deposito', hasta)
-    .order('fecha_deposito', { ascending: false });
+    .order('fecha_deposito', { ascending: true })
+    .order('nro_operacion_bancaria', { ascending: true });
 
   const estadoFiltro = document.getElementById('mbd-filtro-estado')?.value;
   if (estadoFiltro) q = q.eq('entrega_doc', estadoFiltro);
@@ -147,7 +149,7 @@ async function cargarMBD() {
   const cPend = filas.filter(r => r.entrega_doc === 'PENDIENTE').length;
   const cObs  = filas.filter(r => r.entrega_doc === 'OBSERVADO').length;
 
-  const _TH = 'padding:8px 10px;text-align:left;font-weight:600;font-size:11px;color:var(--color-texto);border-bottom:2px solid var(--color-borde);white-space:nowrap;background:var(--color-fondo);';
+  const _TH = 'padding:8px 10px;text-align:left;font-weight:600;font-size:11px;color:var(--color-texto);border-bottom:2px solid var(--color-borde);white-space:nowrap;background:var(--color-bg-card);';
   const _TD = 'padding:6px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;';
 
   wrap.innerHTML = `
@@ -724,6 +726,9 @@ async function renderPanelPendientesMBD() {
   const totalGeneral = filas.reduce((s, r) => s + Number(r.monto), 0);
   const listaGrupos  = Object.values(grupos).sort((a, b) => a.items.length < b.items.length ? 1 : -1);
 
+  _pendientesGrupos = {};
+  listaGrupos.forEach((g, gi) => { _pendientesGrupos[`grp-${gi}`] = g; });
+
   wrap.innerHTML = `
     <div style="margin-bottom:16px;padding:14px 16px;background:rgba(197,48,48,.08);border-radius:8px;border-left:4px solid #C53030;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
@@ -742,7 +747,7 @@ async function renderPanelPendientesMBD() {
       const idGrupo   = `grp-${gi}`;
       return `
       <div style="border:1px solid ${esMultiple ? '#C53030' : 'var(--color-borde)'};border-radius:8px;margin-bottom:12px;overflow:hidden">
-        <div style="background:${esMultiple ? 'rgba(197,48,48,.06)' : 'var(--color-fondo)'};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="background:${esMultiple ? 'rgba(197,48,48,.06)' : 'var(--color-bg-card)'};padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <strong style="font-size:13px">${escapar(g.proveedor)}</strong>
             ${g.ruc ? `<code style="font-size:11px;background:var(--color-fondo-alt,#F7FAFC);padding:2px 6px;border-radius:4px">${escapar(g.ruc)}</code>` : ''}
@@ -759,7 +764,7 @@ async function renderPanelPendientesMBD() {
         <div style="overflow-x:auto">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
             <thead>
-              <tr style="background:var(--color-fondo)">
+              <tr style="background:var(--color-bg-card)">
                 <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">N° Op.</th>
                 <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Fecha</th>
                 <th style="padding:6px 10px;text-align:right;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Monto</th>
@@ -784,61 +789,161 @@ async function renderPanelPendientesMBD() {
 
         <div style="padding:12px 16px;border-top:1px solid var(--color-borde);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           ${esMultiple ? `
-          <span style="font-size:12px;font-weight:500">Vincular ${g.items.length} transferencias a 1 comprobante:</span>
-          <select id="tipo-doc-${idGrupo}" style="${estiloSelect()};padding:4px 8px;font-size:12px">
-            <option value="">Tipo DOC</option>
-            ${TIPOS_DOC_MBD.map(t => `<option value="${t.val}">${t.lab}</option>`).join('')}
-          </select>
-          <input type="text" id="nro-doc-${idGrupo}" placeholder="N° Factura / RH (ej: E001-17)" style="${estiloInput()};padding:4px 8px;font-size:12px;width:180px">
-          <select id="estado-doc-${idGrupo}" style="${estiloSelect()};padding:4px 8px;font-size:12px">
-            <option value="EMITIDO">EMITIDO</option>
-            <option value="OBSERVADO">OBSERVADO</option>
-          </select>
-          <button onclick="_vincularGrupoMBD('${idGrupo}',[${g.items.map(r => `'${r.id}'`).join(',')}])"
+          <span style="font-size:12px;color:var(--color-texto-suave)">Vincular ${g.items.length} transferencias a 1 comprobante:</span>
+          <button onclick="_abrirModalConciliacionMBD('${idGrupo}',[${g.items.map(r => `'${r.id}'`).join(',')}])"
             style="${estiloBtnPrimario()};padding:5px 14px;font-size:12px">
-            ✓ Vincular ${g.items.length} transferencias
+            🔗 Vincular ${g.items.length} transferencias
           </button>` : `
-          <button onclick="abrirModalMBD('${g.items[0].id}')" style="${estiloBtnSecundario()};padding:5px 12px;font-size:12px">✏️ Editar y gestionar</button>`}
+          <button onclick="_abrirModalConciliacionMBD('${idGrupo}',[${g.items.map(r => `'${r.id}'`).join(',')}])" style="${estiloBtnPrimario()};padding:5px 14px;font-size:12px">🔗 Conciliar</button>
+          <button onclick="abrirModalMBD('${g.items[0].id}')" style="${estiloBtnSecundario()};padding:5px 12px;font-size:12px">✏️ Editar</button>`}
         </div>
       </div>`;
     }).join('')}
   `;
 }
 
-async function _vincularGrupoMBD(idGrupo, ids) {
-  const tipoDoc = document.getElementById(`tipo-doc-${idGrupo}`)?.value;
-  const nroDoc  = (document.getElementById(`nro-doc-${idGrupo}`)?.value || '').trim();
-  const estado  = document.getElementById(`estado-doc-${idGrupo}`)?.value || 'EMITIDO';
+function _abrirModalConciliacionMBD(idGrupo, ids) {
+  const g = _pendientesGrupos[idGrupo];
+  if (!g) return;
+  const total = g.items.reduce((s, r) => s + Number(r.monto), 0);
+  const idsJson = JSON.stringify(ids);
 
-  if (!nroDoc)  { mostrarToast('Ingresa el N° de factura o comprobante.', 'atencion'); return; }
-  if (!tipoDoc) { mostrarToast('Selecciona el tipo de documento.', 'atencion'); return; }
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cerrarModalConciliacion()">
+      <div class="modal" style="max-width:640px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>🔗 Confirmar vinculación de comprobante</h3>
+          <button class="modal-cerrar" onclick="_cerrarModalConciliacion()">✕</button>
+        </div>
+        <div class="modal-body">
+
+          <div style="margin-bottom:14px;padding:10px 14px;background:rgba(197,48,48,.07);border-radius:8px;border-left:4px solid #C53030;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <span style="font-size:13px"><strong>${g.items.length} transferencia(s)</strong> serán vinculadas al comprobante</span>
+            <strong style="font-size:14px;color:var(--color-exito)">${formatearMoneda(total, 'PEN')}</strong>
+          </div>
+
+          <div style="overflow-x:auto;max-height:160px;overflow-y:auto;margin-bottom:18px;border:1px solid var(--color-borde);border-radius:6px">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead><tr style="background:var(--color-bg-card)">
+                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">N° Op.</th>
+                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Fecha</th>
+                <th style="padding:6px 10px;text-align:right;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Monto</th>
+                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Descripción</th>
+              </tr></thead>
+              <tbody>
+                ${g.items.map(r => `
+                  <tr style="border-top:1px solid var(--color-borde)">
+                    <td style="padding:5px 10px;font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria || '—')}</td>
+                    <td style="padding:5px 10px;white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
+                    <td style="padding:5px 10px;text-align:right;font-weight:600;color:var(--color-exito);white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
+                    <td style="padding:5px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.descripcion || '—')}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="campo">
+              <label>Proveedor / Personal</label>
+              <input type="text" id="conc-proveedor" value="${escapar(g.proveedor || '')}" placeholder="Nombre del proveedor">
+            </div>
+            <div class="campo">
+              <label>RUC / DNI</label>
+              <input type="text" id="conc-ruc" value="${escapar(g.ruc || '')}" placeholder="RUC o DNI">
+            </div>
+            <div class="campo">
+              <label>Tipo de DOC <span style="color:#C53030">*</span></label>
+              <select id="conc-tipo-doc">
+                <option value="">— Seleccionar —</option>
+                ${TIPOS_DOC_MBD.map(t => `<option value="${t.val}">${t.lab}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>N° Factura / Comprobante <span style="color:#C53030">*</span></label>
+              <input type="text" id="conc-nro-doc" placeholder="Ej: F001-00123, E001-17">
+            </div>
+            <div class="campo" style="grid-column:span 2">
+              <label>Estado FA/DOC/RH</label>
+              <select id="conc-estado-doc">
+                <option value="EMITIDO" selected>✅ EMITIDO — documento recibido y registrado</option>
+                <option value="OBSERVADO">⚠️ OBSERVADO — pendiente de revisión</option>
+              </select>
+            </div>
+          </div>
+          <div id="conc-alerta" class="alerta-error" style="margin-top:10px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="_cerrarModalConciliacion()">Cancelar</button>
+          <button class="btn btn-primario" id="btn-conc-confirmar"
+            onclick="_vincularGrupoMBD(${idsJson})">
+            ✅ Confirmar vinculación (${ids.length} registro${ids.length !== 1 ? 's' : ''})
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _cerrarModalConciliacion() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function _vincularGrupoMBD(ids) {
+  const tipoDoc   = document.getElementById('conc-tipo-doc')?.value;
+  const nroDoc    = (document.getElementById('conc-nro-doc')?.value || '').trim();
+  const estado    = document.getElementById('conc-estado-doc')?.value || 'EMITIDO';
+  const proveedor = (document.getElementById('conc-proveedor')?.value || '').trim();
+  const rucDni    = (document.getElementById('conc-ruc')?.value || '').trim();
+  const alerta    = document.getElementById('conc-alerta');
+
+  if (!nroDoc) {
+    if (alerta) { alerta.textContent = 'Ingresa el N° de factura o comprobante.'; alerta.classList.add('visible'); }
+    return;
+  }
+  if (!tipoDoc) {
+    if (alerta) { alerta.textContent = 'Selecciona el tipo de documento.'; alerta.classList.add('visible'); }
+    return;
+  }
+
+  const btn = document.getElementById('btn-conc-confirmar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
 
   const patch = {
-    nro_factura_doc:     nroDoc,
-    tipo_doc:            tipoDoc,
-    entrega_doc:         estado,
-    fecha_actualizacion: new Date().toISOString(),
+    nro_factura_doc:            nroDoc,
+    tipo_doc:                   tipoDoc,
+    entrega_doc:                estado,
+    fecha_actualizacion:        new Date().toISOString(),
   };
+  if (proveedor) patch.proveedor_empresa_personal = proveedor;
+  if (rucDni)    patch.ruc_dni                    = rucDni;
 
   const { error } = await _supabase.from('tesoreria_mbd').update(patch).in('id', ids);
-  if (error) { mostrarToast('Error al vincular: ' + error.message, 'error'); return; }
+  if (btn) { btn.disabled = false; btn.textContent = `✅ Confirmar vinculación (${ids.length} registro${ids.length !== 1 ? 's' : ''})`; }
 
-  mostrarToast(`✓ ${ids.length} transferencia(s) vinculadas a ${nroDoc}`, 'exito');
+  if (error) {
+    if (alerta) { alerta.textContent = 'Error al vincular: ' + error.message; alerta.classList.add('visible'); }
+    return;
+  }
+
+  mostrarToast(`✓ ${ids.length} transferencia(s) vinculadas a ${tipoDoc} ${nroDoc}`, 'exito');
+  _cerrarModalConciliacion();
   renderPanelPendientesMBD();
 }
 
 /* ── Helpers de estilo ─────────────────────────────────────── */
 function estiloSelect() {
-  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
 }
 function estiloInput() {
-  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-fondo);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
 }
 function estiloBtnPrimario() {
   return 'padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500';
 }
 function estiloBtnSecundario() {
-  return 'padding:8px 14px;background:var(--color-fondo);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px';
+  return 'padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px';
 }
 function estiloBtnIcono(tipo) {
   const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)';
