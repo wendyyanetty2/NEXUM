@@ -22,10 +22,10 @@ async function _mbdCargarCatalogos() {
     _supabase.from('autorizaciones').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
     _supabase.from('medios_pago').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
   ]);
-  _mbdCatalogos.conceptos     = (rc.data || []).map(r => r.nombre);
-  _mbdCatalogos.empresas      = (re.data || []).map(r => r.nombre);
-  _mbdCatalogos.autorizaciones= (ra.data || []).map(r => r.nombre);
-  _mbdCatalogos.mediosPago    = (rm.data || []).map(r => r.nombre);
+  _mbdCatalogos.conceptos      = (rc.data || []).map(r => r.nombre);
+  _mbdCatalogos.empresas       = (re.data || []).map(r => r.nombre);
+  _mbdCatalogos.autorizaciones = (ra.data || []).map(r => r.nombre);
+  _mbdCatalogos.mediosPago     = (rm.data || []).map(r => r.nombre);
 }
 
 function renderTabImportarMBD(area) {
@@ -56,6 +56,10 @@ function renderTabImportarMBD(area) {
             <option value="CANCELADO">⚫ CANCELADO</option>
           </select>
           <button onclick="cargarMBD()" style="${estiloBtnSecundario()}">🔍 Filtrar</button>
+          
+          <!-- BOTÓN AGREGADO PARA BORRADO MASIVO -->
+          <button onclick="eliminarMesMBD()" style="padding:8px 14px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">🗑️ Borrar Mes</button>
+          
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="renderPanelPendientesMBD()" style="padding:8px 14px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">🔴 Panel PENDIENTES</button>
@@ -94,6 +98,33 @@ function renderTabImportarMBD(area) {
 
   document.getElementById('mbd-buscar').addEventListener('keydown', e => { if (e.key === 'Enter') cargarMBD(); });
   cargarMBD();
+}
+
+/* ── LÓGICA DEL BOTÓN DE BORRADO MASIVO ── */
+async function eliminarMesMBD() {
+  const mes = document.getElementById('mbd-filtro-mes')?.value;
+  const anio = document.getElementById('mbd-filtro-anio')?.value;
+  if (!mes || !anio) return;
+
+  const nomMes = new Date(anio, mes - 1, 1).toLocaleString('es-PE', { month: 'long' });
+  const ok = await confirmar(`¿ESTÁS SEGURO? Se eliminarán permanentemente TODOS los movimientos de ${nomMes.toUpperCase()} ${anio}.`, { 
+    btnOk: 'Sí, borrar todo', 
+    btnColor: '#C53030' 
+  });
+
+  if (!ok) return;
+
+  const { error } = await _supabase.rpc('eliminar_movimientos_mensuales', { 
+    p_mes: parseInt(mes), 
+    p_anio: parseInt(anio) 
+  });
+
+  if (error) {
+    mostrarToast('Error al eliminar: ' + error.message, 'error');
+  } else {
+    mostrarToast(`✓ El mes de ${nomMes} ha sido limpiado correctamente.`, 'exito');
+    cargarMBD();
+  }
 }
 
 async function cargarMBD() {
@@ -523,9 +554,9 @@ function _actualizarSumaDividir() {
 }
 
 function _renderModalDividir() {
-  const r       = _dividirOriginal;
+  const r        = _dividirOriginal;
   const moneda  = r.moneda === 'USD' ? 'USD' : 'PEN';
-  const n       = _dividirFilas.length;
+  const n        = _dividirFilas.length;
 
   const mc = document.getElementById('modal-container');
   if (!mc) return;
@@ -981,7 +1012,7 @@ async function renderPanelPendientesMBD() {
     </div>
 
     ${listaGrupos.map((g, gi) => {
-      const total     = g.items.reduce((s, r) => s + Number(r.monto), 0);
+      const total      = g.items.reduce((s, r) => s + Number(r.monto), 0);
       const esMultiple = g.items.length > 1;
       const idGrupo   = `grp-${gi}`;
       return `
