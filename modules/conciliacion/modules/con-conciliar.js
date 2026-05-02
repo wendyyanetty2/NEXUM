@@ -11,19 +11,19 @@ async function renderTabConciliar(area) {
   area.innerHTML = `
     <div class="fadeIn">
 
-      <!-- Paso 1: Seleccionar periodo y cuenta -->
+      <!-- Paso 1: Seleccionar periodo -->
       <div class="card" style="margin-bottom:16px">
-        <h3 style="margin-bottom:16px">Paso 1: Seleccionar periodo</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+          <h3 style="margin:0">Paso 1: Seleccionar periodo</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="_conBorrarMes()" style="padding:6px 12px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">🗑️ Borrar mes</button>
+            <button onclick="_conBorrarAnio()" style="padding:6px 12px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">🗑️ Borrar año</button>
+          </div>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-items:end">
           <div class="campo" style="margin-bottom:0">
-            <label class="label-filtro">Mes</label>
+            <label class="label-filtro">Mes / Periodo</label>
             <input type="month" id="con-periodo" class="input-buscar w-full">
-          </div>
-          <div class="campo" style="margin-bottom:0">
-            <label class="label-filtro">Cuenta bancaria (opcional)</label>
-            <select id="con-cuenta" class="input-buscar w-full">
-              <option value="">Todas las cuentas</option>
-            </select>
           </div>
           <div>
             <button class="btn btn-primario w-full" onclick="_conIniciar()">
@@ -87,25 +87,49 @@ async function renderTabConciliar(area) {
 }
 
 async function _conCargarCuentas() {
-  const { data } = await _supabase
-    .from('cuentas_bancarias')
-    .select('id, nombre_alias, moneda')
+  // El filtro de cuenta se eliminó — contexto de empresa ya definido al iniciar sesión
+}
+
+async function _conBorrarMes() {
+  const periodo = document.getElementById('con-periodo')?.value;
+  if (!periodo) { mostrarToast('Selecciona un periodo primero', 'atencion'); return; }
+  const ok1 = await confirmar(`¿Eliminar TODA la conciliación de ${periodo}? Esta acción no se puede deshacer.`, { btnOk: 'Sí, borrar', btnColor: '#C53030' });
+  if (!ok1) return;
+  const ok2 = await confirmar(`CONFIRMACIÓN FINAL: ¿Borrar conciliación ${periodo}?`, { btnOk: 'Confirmar', btnColor: '#C53030' });
+  if (!ok2) return;
+  const [yyyy, mm] = periodo.split('-');
+  const inicio = `${yyyy}-${mm}-01`;
+  const fin    = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
+  const { error } = await _supabase.from('conciliaciones')
+    .delete()
     .eq('empresa_operadora_id', empresa_activa.id)
-    .eq('activo', true)
-    .order('nombre_alias');
-  const sel = document.getElementById('con-cuenta');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Todas las cuentas</option>' +
-    (data || []).map(c =>
-      `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`
-    ).join('');
+    .gte('created_at', inicio)
+    .lte('created_at', fin);
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ Conciliación ${periodo} eliminada.`, 'exito');
+}
+
+async function _conBorrarAnio() {
+  const periodo = document.getElementById('con-periodo')?.value;
+  if (!periodo) { mostrarToast('Selecciona un periodo para obtener el año', 'atencion'); return; }
+  const yyyy = periodo.split('-')[0];
+  const ok1 = await confirmar(`¿Eliminar TODA la conciliación del año ${yyyy}? Esta acción borra 12 meses completos.`, { btnOk: 'Sí, borrar año', btnColor: '#C53030' });
+  if (!ok1) return;
+  const ok2 = await confirmar(`CONFIRMACIÓN FINAL: ¿Borrar conciliación año ${yyyy} completo?`, { btnOk: 'Confirmar', btnColor: '#C53030' });
+  if (!ok2) return;
+  const { error } = await _supabase.from('conciliaciones')
+    .delete()
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .gte('created_at', `${yyyy}-01-01`)
+    .lte('created_at', `${yyyy}-12-31`);
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ Conciliación año ${yyyy} eliminada.`, 'exito');
 }
 
 async function _conIniciar() {
   const periodoEl = document.getElementById('con-periodo');
-  const cuentaEl  = document.getElementById('con-cuenta');
   const periodo   = periodoEl?.value;
-  const cuentaId  = cuentaEl?.value || null;
+  const cuentaId  = null;
 
   if (!periodo) { mostrarToast('Selecciona un periodo', 'atencion'); return; }
 

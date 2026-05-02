@@ -40,10 +40,14 @@ async function renderTabVentas(area) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span id="v-contador" class="text-muted text-sm"></span>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secundario btn-sm" onclick="exportarVentasExcel()">⬇ Excel</button>
             <button class="btn btn-secundario btn-sm" onclick="importarRegistroVentasSUNAT()">📊 Importar SUNAT</button>
-            <button class="btn btn-primario btn-sm"   onclick="abrirModalVenta(null)">+ Nueva venta</button>
+            <button class="btn btn-sm" onclick="eliminarMesVentas()"
+              style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
+              🗑️ Eliminar mes
+            </button>
+            <button class="btn btn-primario btn-sm" onclick="abrirModalVenta(null)">+ Nueva venta</button>
           </div>
         </div>
       </div>
@@ -430,4 +434,27 @@ function exportarVentasExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'RegistroVentas');
   XLSX.writeFile(wb, `registro_ventas_${empresa_activa.nombre}_${new Date().toISOString().slice(0,7)}.xlsx`);
+}
+
+async function eliminarMesVentas() {
+  const periodo = document.getElementById('v-periodo')?.value;
+  if (!periodo) { mostrarToast('Selecciona un periodo primero', 'atencion'); return; }
+  const ok1 = await confirmar(
+    `¿Eliminar TODOS los registros de ventas de ${periodo}?\nEsta acción no se puede deshacer.`,
+    { btnOk: 'Sí, eliminar mes', btnColor: '#C53030' }
+  );
+  if (!ok1) return;
+  const ok2 = await confirmar(
+    `CONFIRMACIÓN FINAL: ¿Borrar ventas ${periodo} permanentemente?`,
+    { btnOk: 'Confirmar', btnColor: '#C53030' }
+  );
+  if (!ok2) return;
+  const { error } = await _supabase
+    .from('registro_ventas')
+    .delete()
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('periodo', periodo);
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ Registro de ventas ${periodo} eliminado. Puedes volver a subir el archivo.`, 'exito');
+  await cargarVentas();
 }

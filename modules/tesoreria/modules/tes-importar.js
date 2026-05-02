@@ -5,21 +5,18 @@
 async function renderTabImportar(area) {
   area.innerHTML = `
     <div class="fadeIn">
-      <div class="grid-2" style="gap:16px;align-items:start">
-
-        <!-- Panel de importación -->
-        <div class="card">
-          <h3 style="margin-bottom:4px">⬆️ Importar estado de cuenta</h3>
-          <p class="text-muted text-sm" style="margin-bottom:20px">
-            Sube un archivo Excel con los movimientos del banco.
-            Descarga la plantilla para ver el formato requerido.
-          </p>
-
-          <div class="campo">
+      <!-- Panel de importación -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:4px">⬆️ Importar estado de cuenta bancario</h3>
+        <p class="text-muted text-sm" style="margin-bottom:20px">
+          Sube el Excel del estado de cuenta del banco. El sistema detecta automáticamente el formato BCP y lo compara contra los movimientos MBD importados.
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-items:end">
+          <div class="campo" style="margin:0">
             <label>Cuenta bancaria destino <span class="req">*</span></label>
             <select id="imp-cuenta" class="w-full"></select>
           </div>
-          <div class="campo">
+          <div class="campo" style="margin:0">
             <label>Banco / Fuente</label>
             <select id="imp-fuente" class="w-full">
               <option value="BCP">BCP</option>
@@ -29,51 +26,18 @@ async function renderTabImportar(area) {
               <option value="MANUAL">Manual / Otro</option>
             </select>
           </div>
-          <div class="campo">
+          <div class="campo" style="margin:0">
             <label>Archivo Excel <span class="req">*</span></label>
             <input type="file" id="imp-archivo" accept=".xlsx,.xls,.csv"
                    style="padding:8px;border:2px dashed var(--color-borde);border-radius:var(--radio);width:100%;box-sizing:border-box;cursor:pointer">
           </div>
-
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="btn btn-secundario btn-sm" onclick="descargarPlantilla()">📥 Plantilla Excel</button>
-            <button class="btn btn-primario" onclick="procesarImportacion()" id="btn-importar">
-              ⬆️ Importar
-            </button>
+          <div style="display:flex;gap:8px;align-items:flex-end">
+            <button class="btn btn-secundario btn-sm" onclick="descargarPlantilla()">📥 Plantilla</button>
+            <button class="btn btn-primario" onclick="procesarImportacion()" id="btn-importar">⬆️ Importar</button>
           </div>
         </div>
-
-        <!-- Panel de instrucciones -->
-        <div class="card">
-          <h3 style="margin-bottom:12px">📋 Formato requerido</h3>
-          <p class="text-muted text-sm" style="margin-bottom:12px">
-            Soporta 2 formatos automáticamente:
-          </p>
-          <div class="table-wrap">
-            <table class="tabla" style="font-size:11px">
-              <thead><tr><th colspan="3" style="background:#EBF8FF;color:#2B6CB0">Formato BCP (EECC convertido de PDF)</th></tr>
-              <tr><th>Columna</th><th>Ejemplo</th><th>Notas</th></tr></thead>
-              <tbody>
-                <tr><td><code>Fecha</code></td><td>02/01/2026</td><td>DD/MM/YYYY</td></tr>
-                <tr><td><code>Descripcion</code></td><td>TRAN.CTAS.TERC.BM</td><td></td></tr>
-                <tr><td><code>Moneda</code></td><td>S/ o $</td><td>S/ = PEN, $ = USD</td></tr>
-                <tr><td><code>Monto</code></td><td>-1500 / 5000</td><td>Negativo=CARGO, Positivo=ABONO</td></tr>
-                <tr><td><code>Numero de Operacion</code></td><td>790418</td><td></td></tr>
-              </tbody>
-              <thead><tr><th colspan="3" style="background:#F0FFF4;color:#276749">Formato NEXUM (plantilla propia)</th></tr>
-              <tr><th>Columna</th><th>Ejemplo</th><th>¿Requerida?</th></tr></thead>
-              <tbody>
-                <tr><td><code>fecha</code></td><td>2026-04-15</td><td>✅</td></tr>
-                <tr><td><code>naturaleza</code></td><td>CARGO o ABONO</td><td>✅</td></tr>
-                <tr><td><code>importe</code></td><td>1500.00</td><td>✅</td></tr>
-                <tr><td><code>descripcion</code></td><td>PAGO PROVEEDOR</td><td></td></tr>
-                <tr><td><code>numero_operacion</code></td><td>0012345</td><td></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <p class="text-muted text-sm" style="margin-top:10px">
-            💡 Para EECC del BCP: usa la hoja <code>ESTADO_CUENTA</code>. El sistema detecta el formato automáticamente.
-          </p>
+        <div style="margin-top:12px;padding:10px 14px;background:rgba(44,82,130,.06);border-radius:6px;border-left:3px solid var(--color-secundario);font-size:12px;color:var(--color-texto-suave)">
+          💡 El sistema detecta automáticamente el formato BCP. Los N° de operación del banco (6–8 dígitos) se comparan con los registros MBD buscando coincidencia en los últimos dígitos. Si un movimiento del EECC no tiene N° de operación en MBD, se marca como ⚠️ OBSERVADO.
         </div>
       </div>
 

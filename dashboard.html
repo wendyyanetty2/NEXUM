@@ -67,10 +67,6 @@
         <span class="icono">📋</span> Tributaria
       </a>
 
-      <a class="nav-item" id="nav-ocr" onclick="navegarA('ocr')">
-        <span class="icono">🔍</span> OCR
-      </a>
-
       <a class="nav-item" id="nav-reportes" onclick="navegarA('reportes')">
         <span class="icono">📊</span> Reportes
       </a>
@@ -211,7 +207,6 @@ function navegarA(modulo) {
     tesoreria:    'Tesorería',
     planilla:     'Planilla',
     tributaria:   'Tributaria',
-    ocr:          'OCR',
     reportes:     'Reportes',
     contabilidad: 'Contabilidad',
     conciliacion: 'Conciliación',
@@ -226,15 +221,14 @@ function navegarA(modulo) {
   // Renderizar contenido
   const area = document.getElementById('area-contenido');
   const rutas = {
-    admin:       '/modules/admin/index.html',
-    catalogos:   '/modules/catalogos/index.html',
-    tesoreria:   '/modules/tesoreria/index.html',
-    planilla:    '/modules/planilla/index.html',
-    tributaria:  '/modules/tributaria/index.html',
-    ocr:         '/modules/ocr/index.html',
-    reportes:      '/modules/reportes/index.html',
-    contabilidad:  '/modules/contabilidad/index.html',
-    conciliacion:  '/modules/conciliacion/index.html',
+    admin:        '/modules/admin/index.html',
+    catalogos:    '/modules/catalogos/index.html',
+    tesoreria:    '/modules/tesoreria/index.html',
+    planilla:     '/modules/planilla/index.html',
+    tributaria:   '/modules/tributaria/index.html',
+    reportes:     '/modules/reportes/index.html',
+    contabilidad: '/modules/contabilidad/index.html',
+    conciliacion: '/modules/conciliacion/index.html',
   };
 
   if (modulo === 'dashboard') {
@@ -248,138 +242,203 @@ function navegarA(modulo) {
 
 // ── Dashboard principal ────────────────────────────────────────────
 function renderDashboard(area) {
-  const ahora = new Date();
-  const hora  = ahora.getHours();
-  let saludo  = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches';
+  const ahora   = new Date();
+  const hora    = ahora.getHours();
+  const saludo  = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches';
+  const mesAct  = String(ahora.getMonth() + 1).padStart(2, '0');
+  const anioAct = ahora.getFullYear();
+  const meses   = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
   area.innerHTML = `
     <div class="fadeIn">
-      <div class="page-header">
+      <div class="page-header" style="margin-bottom:16px">
         <div>
-          <h1>${saludo}, ${perfil_usuario?.nombre?.split(' ')[0] || 'Wendy'} 👋</h1>
-          <p>${fechaHoy()} &nbsp;·&nbsp; ${empresa_activa?.nombre || ''}</p>
+          <h1>${saludo}, ${perfil_usuario?.nombre?.split(' ')[0] || ''} 👋</h1>
+          <p style="color:var(--color-texto-suave)">${empresa_activa?.nombre || ''} &nbsp;·&nbsp; ${meses[ahora.getMonth()]} ${anioAct}</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="dash-mes" style="padding:7px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+            ${meses.map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}" ${String(i+1).padStart(2,'0')===mesAct?'selected':''}>${m}</option>`).join('')}
+          </select>
+          <select id="dash-anio" style="padding:7px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+            ${[anioAct-1,anioAct,anioAct+1].map(a=>`<option value="${a}" ${a===anioAct?'selected':''}>${a}</option>`).join('')}
+          </select>
+          <button onclick="cargarDashboard()" style="padding:7px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-family:var(--font);font-weight:500">🔄 Actualizar</button>
         </div>
       </div>
 
-      <!-- Stats rápidas -->
-      <div class="stats-grid" id="stats-grid">
-        <div class="stat-card">
-          <div class="stat-icono azul">🏢</div>
-          <div class="stat-info">
-            <div class="numero" id="stat-empresas">—</div>
-            <div class="etiqueta">Empresas operadoras</div>
-          </div>
+      <!-- KPIs principales -->
+      <div id="dash-kpis" class="stats-grid" style="margin-bottom:20px">
+        <div class="stat-card"><div class="stat-icono azul">⏳</div><div class="stat-info"><div class="numero">…</div><div class="etiqueta">Cargando</div></div></div>
+      </div>
+
+      <!-- Inversión por proyecto -->
+      <div class="grid-2" style="gap:16px;margin-bottom:20px">
+        <div class="card">
+          <h3 style="margin-bottom:12px;font-size:14px">📁 Inversión por proyecto</h3>
+          <div id="dash-proyectos"><div style="text-align:center;padding:20px;color:var(--color-texto-suave);font-size:13px">Cargando…</div></div>
         </div>
-        <div class="stat-card">
-          <div class="stat-icono verde">👤</div>
-          <div class="stat-info">
-            <div class="numero" id="stat-usuarios">—</div>
-            <div class="etiqueta">Usuarios activos</div>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icono amarillo">🏦</div>
-          <div class="stat-info">
-            <div class="numero" id="stat-bancos">—</div>
-            <div class="etiqueta">Bancos disponibles</div>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icono azul">📄</div>
-          <div class="stat-info">
-            <div class="numero" id="stat-documentos">—</div>
-            <div class="etiqueta">Tipos de documento</div>
-          </div>
+        <div class="card">
+          <h3 style="margin-bottom:12px;font-size:14px">🏷️ Desglose por concepto</h3>
+          <div id="dash-conceptos"><div style="text-align:center;padding:20px;color:var(--color-texto-suave);font-size:13px">Cargando…</div></div>
         </div>
       </div>
 
-      <!-- Módulos disponibles -->
-      <div class="card mb-24">
-        <h3 style="margin-bottom:16px">Módulos del sistema</h3>
-        <div class="grid-3" style="gap:12px">
-          ${renderTarjetaModulo('⚙️', 'Administración', 'Empresas, usuarios y catálogos globales', 'admin', true)}
-          ${renderTarjetaModulo('🗂️', 'Catálogos', 'Clientes, conceptos, proyectos, trabajadores', 'catalogos', true)}
-          ${renderTarjetaModulo('🏦', 'Tesorería', 'Cuentas bancarias, movimientos, importar EECC', 'tesoreria', true)}
-          ${renderTarjetaModulo('👥', 'Planilla', 'Trabajadores, remuneraciones, AFP, CTS', 'planilla', true)}
-          ${renderTarjetaModulo('📋', 'Tributaria', 'Registro ventas/compras, resumen IGV', 'tributaria', true)}
-          ${renderTarjetaModulo('🔍', 'OCR', 'Lectura de comprobantes PDF e imágenes', 'ocr', true)}
-          ${renderTarjetaModulo('📊', 'Reportes', 'Exportación y análisis multi-empresa', 'reportes', true)}
-          ${renderTarjetaModulo('📒', 'Contabilidad', 'Asientos, mayor, estados financieros', 'contabilidad', true)}
-          ${renderTarjetaModulo('🔗', 'Conciliación', 'Cruza movimientos bancarios con comprobantes y RH', 'conciliacion', true)}
+      <!-- Pendientes y observados -->
+      <div class="grid-2" style="gap:16px;margin-bottom:20px">
+        <div class="card">
+          <h3 style="margin-bottom:12px;font-size:14px">🔴 Movimientos PENDIENTES de comprobante</h3>
+          <div id="dash-pendientes"><div style="text-align:center;padding:20px;color:var(--color-texto-suave);font-size:13px">Cargando…</div></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-bottom:12px;font-size:14px">⚠️ Movimientos OBSERVADOS</h3>
+          <div id="dash-observados"><div style="text-align:center;padding:20px;color:var(--color-texto-suave);font-size:13px">Cargando…</div></div>
         </div>
       </div>
 
-      <!-- Info de empresa activa -->
+      <!-- Accesos rápidos -->
       <div class="card">
-        <h3 style="margin-bottom:16px">Empresa activa</h3>
-        <div class="grid-2">
-          <div>
-            <p class="text-muted text-sm">Nombre</p>
-            <p class="font-medium">${escapar(empresa_activa?.nombre || '—')}</p>
-          </div>
-          <div>
-            <p class="text-muted text-sm">RUC</p>
-            <p class="font-medium">${escapar(empresa_activa?.ruc || '—')}</p>
-          </div>
-          <div>
-            <p class="text-muted text-sm">Rol</p>
-            <p class="font-medium">
-              <span class="badge badge-primario">${escapar(empresa_activa?.rol || 'SUPER_ADMIN')}</span>
-            </p>
-          </div>
-          <div>
-            <p class="text-muted text-sm">Estado</p>
-            <p class="font-medium">
-              <span class="badge badge-activo">Activa</span>
-            </p>
-          </div>
+        <h3 style="margin-bottom:12px;font-size:14px">⚡ Accesos rápidos</h3>
+        <div class="grid-3" style="gap:10px">
+          ${[
+            ['🏦','Tesorería','tesoreria'],
+            ['🔗','Conciliación','conciliacion'],
+            ['📊','Reportes','reportes'],
+            ['👥','Planilla','planilla'],
+            ['📋','Tributaria','tributaria'],
+            ['⚙️','Administración','admin'],
+          ].map(([ico,nom,id])=>`
+            <div onclick="navegarA('${id}')" style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--color-borde);border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--color-hover)'" onmouseout="this.style.background=''">
+              <span style="font-size:22px">${ico}</span>
+              <span style="font-weight:500;font-size:13px">${nom}</span>
+            </div>`).join('')}
         </div>
       </div>
-    </div>
-  `;
-
-  // Cargar estadísticas en paralelo
-  cargarStats();
-}
-
-function renderTarjetaModulo(icono, nombre, desc, id, disponible) {
-  const cursor  = disponible ? 'cursor:pointer' : 'cursor:default; opacity:0.65';
-  const onclick = disponible ? `onclick="navegarA('${id}')"` : '';
-  const tag     = disponible
-    ? `<span class="badge badge-activo" style="font-size:11px">Disponible</span>`
-    : `<span class="badge" style="background:#EDF2F7;color:#718096;font-size:11px">Próximamente</span>`;
-  return `
-    <div class="card" style="padding:16px; ${cursor}; transition:box-shadow 0.2s"
-         ${onclick}
-         onmouseover="if(${disponible}) this.style.boxShadow='0 4px 12px rgba(0,0,0,0.12)'"
-         onmouseout="this.style.boxShadow=''">
-      <div style="font-size:28px; margin-bottom:8px">${icono}</div>
-      <div style="font-weight:600; margin-bottom:4px">${nombre}</div>
-      <div class="text-muted text-sm" style="margin-bottom:10px">${desc}</div>
-      ${tag}
     </div>`;
+
+  cargarDashboard();
 }
 
-async function cargarStats() {
-  // Empresas
-  const { count: cEmpresas } = await _supabase
-    .from('empresas_operadoras').select('*', { count: 'exact', head: true }).eq('activa', true);
-  document.getElementById('stat-empresas').textContent = cEmpresas ?? '—';
+async function cargarDashboard() {
+  const mes  = document.getElementById('dash-mes')?.value;
+  const anio = document.getElementById('dash-anio')?.value;
+  if (!mes || !anio || !empresa_activa) return;
 
-  // Usuarios
-  const { count: cUsuarios } = await _supabase
-    .from('usuarios').select('*', { count: 'exact', head: true }).eq('activo', true);
-  document.getElementById('stat-usuarios').textContent = cUsuarios ?? '—';
+  const desde = `${anio}-${mes}-01`;
+  const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
-  // Bancos
-  const { count: cBancos } = await _supabase
-    .from('catalogo_bancos').select('*', { count: 'exact', head: true }).eq('activo', true);
-  document.getElementById('stat-bancos').textContent = cBancos ?? '—';
+  const { data: filas } = await _supabase
+    .from('tesoreria_mbd')
+    .select('monto,moneda,entrega_doc,concepto,proyecto,empresa')
+    .eq('empresa_id', empresa_activa.id)
+    .gte('fecha_deposito', desde)
+    .lte('fecha_deposito', hasta);
 
-  // Tipos documento
-  const { count: cDocs } = await _supabase
-    .from('catalogo_tipos_documento').select('*', { count: 'exact', head: true }).eq('activo', true);
-  document.getElementById('stat-documentos').textContent = cDocs ?? '—';
+  const todas    = filas || [];
+  const soles    = todas.filter(r => r.moneda !== 'USD').reduce((s,r) => s + Number(r.monto), 0);
+  const dolares  = todas.filter(r => r.moneda === 'USD').reduce((s,r) => s + Number(r.monto), 0);
+  const pendientes = todas.filter(r => r.entrega_doc === 'PENDIENTE');
+  const observados = todas.filter(r => r.entrega_doc === 'OBSERVADO');
+  const emitidos   = todas.filter(r => r.entrega_doc === 'EMITIDO');
+
+  // KPIs
+  const kpisEl = document.getElementById('dash-kpis');
+  if (kpisEl) {
+    const _card = (icono, cls, num, lbl) =>
+      `<div class="stat-card"><div class="stat-icono ${cls}">${icono}</div><div class="stat-info"><div class="numero">${num}</div><div class="etiqueta">${lbl}</div></div></div>`;
+    kpisEl.innerHTML =
+      _card('💰','verde', `S/ ${_fmt(soles)}`, 'Total mes (S/)') +
+      (dolares ? _card('💵','azul', `$ ${_fmt(dolares)}`, 'Total mes (USD)') : '') +
+      _card('📄','azul', todas.length, 'Movimientos totales') +
+      _card('✅','verde', emitidos.length, 'Con comprobante') +
+      _card('🔴','rojo', pendientes.length, 'Pendientes doc.') +
+      _card('⚠️','amarillo', observados.length, 'Observados');
+  }
+
+  // Inversión por proyecto
+  const proyEl = document.getElementById('dash-proyectos');
+  if (proyEl) {
+    const mapProy = {};
+    todas.forEach(r => {
+      const k = (r.proyecto || 'Sin proyecto').trim();
+      mapProy[k] = (mapProy[k] || 0) + Number(r.monto);
+    });
+    const sortProy = Object.entries(mapProy).sort((a,b) => b[1]-a[1]);
+    const totalProy = sortProy.reduce((s,[,v]) => s+v, 0);
+    if (!sortProy.length) {
+      proyEl.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);font-size:13px;padding:16px">Sin datos en este periodo</p>';
+    } else {
+      proyEl.innerHTML = sortProy.map(([nom, monto]) => {
+        const pct = totalProy > 0 ? Math.round(monto / totalProy * 100) : 0;
+        return `<div style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+            <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%">${escapar(nom)}</span>
+            <span style="font-weight:700;color:var(--color-secundario)">S/ ${_fmt(monto)}</span>
+          </div>
+          <div style="height:6px;background:var(--color-borde);border-radius:3px">
+            <div style="height:6px;background:var(--color-secundario);border-radius:3px;width:${pct}%"></div>
+          </div>
+          <div style="font-size:11px;color:var(--color-texto-suave);text-align:right">${pct}%</div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // Desglose por concepto
+  const concEl = document.getElementById('dash-conceptos');
+  if (concEl) {
+    const mapConc = {};
+    todas.forEach(r => {
+      const k = (r.concepto || 'Sin concepto').trim();
+      mapConc[k] = (mapConc[k] || 0) + Number(r.monto);
+    });
+    const sortConc = Object.entries(mapConc).sort((a,b) => b[1]-a[1]);
+    if (!sortConc.length) {
+      concEl.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);font-size:13px;padding:16px">Sin datos en este periodo</p>';
+    } else {
+      concEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+        ${sortConc.map(([nom,monto],i) => `
+          <tr style="${i%2===0?'background:var(--color-hover)':''}">
+            <td style="padding:5px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(nom)}</td>
+            <td style="padding:5px 8px;text-align:right;font-weight:600;white-space:nowrap">S/ ${_fmt(monto)}</td>
+          </tr>`).join('')}
+      </table>`;
+    }
+  }
+
+  // Panel pendientes
+  const pendEl = document.getElementById('dash-pendientes');
+  if (pendEl) {
+    if (!pendientes.length) {
+      pendEl.innerHTML = '<p style="text-align:center;color:var(--color-exito);font-size:13px;padding:16px">✅ Sin pendientes</p>';
+    } else {
+      const totalPend = pendientes.reduce((s,r)=>s+Number(r.monto),0);
+      pendEl.innerHTML = `<div style="padding:8px 0">
+        <div style="font-size:22px;font-weight:700;color:#C53030;margin-bottom:4px">${pendientes.length} movimientos</div>
+        <div style="font-size:13px;color:var(--color-texto-suave)">Suma pendiente: <strong>S/ ${_fmt(totalPend)}</strong></div>
+        <button onclick="window.location.href='/modules/tesoreria/index.html'" style="margin-top:10px;padding:6px 14px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">→ Ir a Tesorería</button>
+      </div>`;
+    }
+  }
+
+  // Panel observados
+  const obsEl = document.getElementById('dash-observados');
+  if (obsEl) {
+    if (!observados.length) {
+      obsEl.innerHTML = '<p style="text-align:center;color:var(--color-exito);font-size:13px;padding:16px">✅ Sin observados</p>';
+    } else {
+      const totalObs = observados.reduce((s,r)=>s+Number(r.monto),0);
+      obsEl.innerHTML = `<div style="padding:8px 0">
+        <div style="font-size:22px;font-weight:700;color:#D69E2E;margin-bottom:4px">${observados.length} movimientos</div>
+        <div style="font-size:13px;color:var(--color-texto-suave)">Suma observada: <strong>S/ ${_fmt(totalObs)}</strong></div>
+        <button onclick="window.location.href='/modules/tesoreria/index.html'" style="margin-top:10px;padding:6px 14px;background:rgba(214,158,46,.1);color:#D69E2E;border:1px solid #D69E2E;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">→ Ir a Tesorería</button>
+      </div>`;
+    }
+  }
+}
+
+function _fmt(n) {
+  return Number(n).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // ── Módulo "En construcción" ──────────────────────────────────────

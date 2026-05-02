@@ -38,10 +38,14 @@ async function renderTabCompras(area) {
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span id="c-contador" class="text-muted text-sm"></span>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secundario btn-sm" onclick="exportarComprasExcel()">⬇ Excel</button>
             <button class="btn btn-secundario btn-sm" onclick="importarRegistroComprasSUNAT()">📊 Importar SUNAT</button>
-            <button class="btn btn-primario btn-sm"   onclick="abrirModalCompra(null)">+ Nueva compra</button>
+            <button class="btn btn-sm" onclick="eliminarMesCompras()"
+              style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
+              🗑️ Eliminar mes
+            </button>
+            <button class="btn btn-primario btn-sm" onclick="abrirModalCompra(null)">+ Nueva compra</button>
           </div>
         </div>
       </div>
@@ -474,4 +478,27 @@ function exportarComprasExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'RegistroCompras');
   XLSX.writeFile(wb, `registro_compras_${empresa_activa.nombre}_${new Date().toISOString().slice(0,7)}.xlsx`);
+}
+
+async function eliminarMesCompras() {
+  const periodo = document.getElementById('c-periodo')?.value;
+  if (!periodo) { mostrarToast('Selecciona un periodo primero', 'atencion'); return; }
+  const ok1 = await confirmar(
+    `¿Eliminar TODOS los registros de compras de ${periodo}?\nEsta acción no se puede deshacer.`,
+    { btnOk: 'Sí, eliminar mes', btnColor: '#C53030' }
+  );
+  if (!ok1) return;
+  const ok2 = await confirmar(
+    `CONFIRMACIÓN FINAL: ¿Borrar compras ${periodo} permanentemente?`,
+    { btnOk: 'Confirmar', btnColor: '#C53030' }
+  );
+  if (!ok2) return;
+  const { error } = await _supabase
+    .from('registro_compras')
+    .delete()
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('periodo', periodo);
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast(`✓ Registro de compras ${periodo} eliminado. Puedes volver a subir el archivo.`, 'exito');
+  await cargarCompras();
 }
