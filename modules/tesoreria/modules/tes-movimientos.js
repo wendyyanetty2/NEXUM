@@ -79,15 +79,9 @@ async function renderTabMovimientos(area) {
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()">🔄 Limpiar</button>
             <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()">⬇ Excel</button>
-            <button id="btn-editar-sel" class="btn btn-sm"
-              style="display:none;background:var(--color-secundario);color:#fff;border:none;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-size:13px"
-              onclick="abrirModalEdicionMasiva()">
-              ✏️ Editar seleccionados (<span id="mov-sel-count-edit">0</span>)
-            </button>
-            <button id="btn-eliminar-sel" class="btn btn-sm"
-              style="display:none;background:#C53030;color:#fff;border:none;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-size:13px"
-              onclick="eliminarSeleccionadosMov()">
-              🗑️ Eliminar seleccionados (<span id="mov-sel-count">0</span>)
+            <button class="btn btn-sm" onclick="_abrirModalEliminarMes()"
+              style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
+              🗑️ Eliminar mes
             </button>
             <button class="btn btn-primario btn-sm" onclick="abrirModalMovimiento(null)">+ Nuevo</button>
           </div>
@@ -305,6 +299,29 @@ async function renderTabMovimientos(area) {
           <button class="btn btn-primario"   onclick="guardarMovimiento()" id="btn-guardar-mov">Guardar</button>
         </div>
       </div>
+    </div>
+
+    <!-- Barra flotante de selección -->
+    <div id="mov-barra-seleccion" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:900;background:#1A202C;color:#fff;padding:12px 24px;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;box-shadow:0 -4px 24px rgba(0,0,0,0.35);border-top:2px solid var(--color-secundario)">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:22px">☑️</span>
+        <div>
+          <div id="mov-barra-count" style="font-weight:700;font-size:15px">0 seleccionados</div>
+          <div id="mov-barra-monto" style="font-size:12px;opacity:.75"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="_cancelarSeleccionMov()" style="padding:8px 16px;background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">
+          ✕ Cancelar selección
+        </button>
+        <button onclick="abrirModalEdicionMasiva()" style="padding:8px 16px;background:rgba(66,153,225,.3);color:#fff;border:1px solid rgba(66,153,225,.5);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
+          ✏️ Editar seleccionados
+        </button>
+        <button onclick="eliminarSeleccionadosMov()" style="padding:8px 20px;background:#C53030;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:700">
+          🗑️ Eliminar seleccionados
+        </button>
+      </div>
+    </div>
     </div>`;
 
   await Promise.all([
@@ -435,34 +452,70 @@ function toggleSeleccionMov(id, checked) {
 }
 
 function seleccionarTodosMov(checked) {
-  const inicio = (movimientos_pag - 1) * MOV_POR_PAG;
-  const pagina = movimientos_filtrada.slice(inicio, inicio + MOV_POR_PAG);
-  pagina.forEach(m => { if (checked) mov_seleccionados.add(m.id); else mov_seleccionados.delete(m.id); });
+  // Selecciona TODOS los filtrados (no solo la página visible)
+  movimientos_filtrada.forEach(m => { if (checked) mov_seleccionados.add(m.id); else mov_seleccionados.delete(m.id); });
   document.querySelectorAll('.chk-mov').forEach(el => el.checked = checked);
   _actualizarBtnEliminarSel();
 }
 
+function _cancelarSeleccionMov() {
+  mov_seleccionados.clear();
+  document.querySelectorAll('.chk-mov').forEach(el => el.checked = false);
+  const chkTodos = document.getElementById('chk-todos-mov');
+  if (chkTodos) { chkTodos.checked = false; chkTodos.indeterminate = false; }
+  _actualizarBtnEliminarSel();
+}
+
 function _actualizarBtnEliminarSel() {
-  const visible = mov_seleccionados.size > 0 ? 'inline-flex' : 'none';
-  const btnEl   = document.getElementById('btn-eliminar-sel');
-  const btnEd   = document.getElementById('btn-editar-sel');
-  const cnt     = document.getElementById('mov-sel-count');
-  const cntEd   = document.getElementById('mov-sel-count-edit');
-  if (btnEl)  btnEl.style.display  = visible;
-  if (btnEd)  btnEd.style.display  = visible;
-  if (cnt)    cnt.textContent       = mov_seleccionados.size;
-  if (cntEd)  cntEd.textContent     = mov_seleccionados.size;
+  const n     = mov_seleccionados.size;
+  const total = movimientos_filtrada.length;
+
+  // Barra flotante
+  const barra = document.getElementById('mov-barra-seleccion');
+  if (barra) barra.style.display = n > 0 ? 'flex' : 'none';
+  const barraCount = document.getElementById('mov-barra-count');
+  if (barraCount) barraCount.textContent = `${n} movimiento${n !== 1 ? 's' : ''} seleccionado${n !== 1 ? 's' : ''}`;
+
+  // Monto total seleccionado en la barra
+  const barraMonto = document.getElementById('mov-barra-monto');
+  if (barraMonto && n > 0) {
+    const sel = movimientos_lista.filter(m => mov_seleccionados.has(m.id));
+    const suma = sel.reduce((s, m) => s + (m.naturaleza === 'CARGO' ? -1 : 1) * Math.abs(parseFloat(m.importe || 0)), 0);
+    barraMonto.textContent = `Total seleccionado: ${formatearMoneda(Math.abs(suma), 'PEN')}`;
+  }
+
+  // Checkbox cabecera: indeterminate cuando hay selección parcial
+  const chkTodos = document.getElementById('chk-todos-mov');
+  if (chkTodos) {
+    chkTodos.checked       = n > 0 && n >= total;
+    chkTodos.indeterminate = n > 0 && n < total;
+  }
 }
 
 async function eliminarSeleccionadosMov() {
   const ids = [...mov_seleccionados];
   if (!ids.length) return;
-  if (!await confirmar(`¿Eliminar ${ids.length} movimiento(s) seleccionado(s)? Esta acción no se puede deshacer.`, { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
-  const { error } = await _supabase.from('movimientos').delete().in('id', ids);
-  if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
-  mostrarToast(`✓ ${ids.length} movimiento(s) eliminado(s).`, 'exito');
-  mov_seleccionados.clear();
+  if (!await confirmar(
+    `¿Eliminar ${ids.length} movimiento${ids.length !== 1 ? 's' : ''} seleccionado${ids.length !== 1 ? 's' : ''}?\nEsta acción no se puede deshacer.`,
+    { btnOk: 'Sí, eliminar', btnColor: '#C53030' }
+  )) return;
+
+  mostrarToast('Eliminando…', 'atencion');
+  // 1. Borrar conciliaciones relacionadas primero (FK constraint)
+  const { error: errConc } = await _eliminarConciliacionesDe(ids);
+  if (errConc) { mostrarToast('Error al limpiar conciliaciones: ' + errConc.message, 'error'); return; }
+
+  // 2. Borrar los movimientos en chunks de 100
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { error } = await _supabase.from('movimientos').delete().in('id', ids.slice(i, i + CHUNK));
+    if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
+  }
+
+  mostrarToast(`✅ ${ids.length} movimiento${ids.length !== 1 ? 's' : ''} eliminado${ids.length !== 1 ? 's' : ''}.`, 'exito');
+  _cancelarSeleccionMov();
   await cargarMovimientos();
+  _renderResumenMov();
 }
 
 function renderTablaMovimientos() {
@@ -745,11 +798,210 @@ async function guardarMovimiento() {
 }
 
 async function eliminarMovimiento(id) {
-  if (!await confirmar('¿Eliminar este movimiento?', { btnOk: 'Eliminar' })) return;
+  if (!await confirmar('¿Eliminar este movimiento?', { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
+  // Borrar conciliaciones relacionadas primero (evita error FK)
+  await _eliminarConciliacionesDe([id]);
   const { error } = await _supabase.from('movimientos').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('Eliminado', 'exito');
   await cargarMovimientos();
+}
+
+// ── Helper: borrar conciliaciones relacionadas (FK constraint) ───
+async function _eliminarConciliacionesDe(ids) {
+  if (!ids.length) return { error: null };
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { error } = await _supabase
+      .from('conciliaciones')
+      .delete()
+      .in('movimiento_id', ids.slice(i, i + CHUNK));
+    if (error) return { error };
+  }
+  return { error: null };
+}
+
+// ── Eliminar mes completo ─────────────────────────────────────────
+async function _abrirModalEliminarMes() {
+  const hoy    = new Date();
+  const mesD   = document.getElementById('mov-desde')?.value;
+  const mesH   = document.getElementById('mov-hasta')?.value;
+  const initY  = mesD ? mesD.slice(0, 4) : String(hoy.getFullYear());
+  const initM  = mesD ? mesD.slice(5, 7) : String(hoy.getMonth() + 1).padStart(2, '0');
+  const cuentaId = document.getElementById('mov-cuenta')?.value || '';
+  const cuentaNombre = cuentaId
+    ? (mov_cuentas.find(c => c.id === cuentaId)?.nombre_alias || 'cuenta seleccionada')
+    : 'todas las cuentas';
+
+  const anios = [hoy.getFullYear() - 1, hoy.getFullYear(), hoy.getFullYear() + 1];
+  const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cerrarModalEliminarMes()">
+      <div class="modal" style="max-width:520px;width:95%">
+        <div class="modal-header">
+          <h3>🗑️ Eliminar movimientos de un mes</h3>
+          <button class="modal-cerrar" onclick="_cerrarModalEliminarMes()">✕</button>
+        </div>
+        <div class="modal-body">
+
+          <div style="padding:12px 14px;background:rgba(197,48,48,.08);border-radius:8px;border-left:4px solid #C53030;margin-bottom:18px;font-size:13px">
+            ⚠️ <strong>Acción irreversible.</strong> Se eliminarán todos los movimientos del mes seleccionado junto con sus conciliaciones asociadas.
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+            <div class="campo" style="margin:0">
+              <label>Mes</label>
+              <select id="em-mes" onchange="_previewEliminarMes()" class="input-buscar w-full">
+                ${meses.map((n, i) => {
+                  const v = String(i + 1).padStart(2, '0');
+                  return `<option value="${v}" ${v === initM ? 'selected' : ''}>${n}</option>`;
+                }).join('')}
+              </select>
+            </div>
+            <div class="campo" style="margin:0">
+              <label>Año</label>
+              <select id="em-anio" onchange="_previewEliminarMes()" class="input-buscar w-full">
+                ${anios.map(a => `<option value="${a}" ${String(a) === initY ? 'selected' : ''}>${a}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div id="em-preview" style="padding:12px 16px;background:var(--color-bg);border-radius:8px;border:1px solid var(--color-borde);margin-bottom:16px;font-size:13px;min-height:60px">
+            <div class="cargando" style="padding:8px"><div class="spinner" style="width:20px;height:20px;border-width:2px"></div></div>
+          </div>
+
+          <div class="campo" style="margin-bottom:4px">
+            <label>Escribe <strong style="color:#C53030;font-family:monospace">CONFIRMAR</strong> para habilitar el botón</label>
+            <input type="text" id="em-confirm-texto" oninput="_checkTextoEliminarMes()" placeholder="Escribe CONFIRMAR aquí" class="input-buscar w-full" autocomplete="off">
+          </div>
+
+          <div id="em-alerta" class="alerta-error"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="_cerrarModalEliminarMes()">Cancelar</button>
+          <button class="btn" id="btn-em-confirmar" disabled onclick="_ejecutarEliminarMes('${cuentaId}')"
+            style="background:#C53030;color:#fff;border:none;border-radius:var(--radio);padding:9px 20px;cursor:pointer;font-family:var(--font);font-size:14px;font-weight:600;opacity:.45">
+            🗑️ Eliminar mes
+          </button>
+        </div>
+      </div>
+    </div>`;
+
+  _previewEliminarMes(cuentaId);
+}
+
+async function _previewEliminarMes(cuentaId) {
+  const mes  = document.getElementById('em-mes')?.value;
+  const anio = document.getElementById('em-anio')?.value;
+  if (!mes || !anio) return;
+
+  const prev = document.getElementById('em-preview');
+  if (prev) prev.innerHTML = '<div class="cargando" style="padding:8px"><div class="spinner" style="width:20px;height:20px;border-width:2px"></div><span style="font-size:12px">Calculando…</span></div>';
+
+  const desde = `${anio}-${mes}-01`;
+  const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
+
+  let q = _supabase
+    .from('movimientos')
+    .select('id, importe, naturaleza, moneda')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .gte('fecha', desde)
+    .lte('fecha', hasta);
+
+  const cid = cuentaId || document.getElementById('mov-cuenta')?.value || '';
+  if (cid) q = q.eq('cuenta_bancaria_id', cid);
+
+  const { data } = await q;
+  const filas = data || [];
+  const totalCargos  = filas.filter(r => r.naturaleza === 'CARGO').reduce((s, r) => s + parseFloat(r.importe), 0);
+  const totalAbonos  = filas.filter(r => r.naturaleza === 'ABONO').reduce((s, r) => s + parseFloat(r.importe), 0);
+  const nombreMes    = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(mes) - 1];
+
+  const cuentaNom = cid ? (mov_cuentas.find(c => c.id === cid)?.nombre_alias || '—') : 'Todas las cuentas';
+
+  if (prev) prev.innerHTML = filas.length === 0
+    ? `<div style="color:var(--color-texto-suave);text-align:center;padding:8px">Sin movimientos para ${nombreMes} ${anio}</div>`
+    : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><span style="color:var(--color-texto-suave);font-size:11px">Período</span><br><strong>${nombreMes} ${anio}</strong></div>
+        <div><span style="color:var(--color-texto-suave);font-size:11px">Cuenta</span><br><strong>${escapar(cuentaNom)}</strong></div>
+        <div><span style="color:var(--color-texto-suave);font-size:11px">Registros a eliminar</span><br><strong style="font-size:18px;color:#C53030">${filas.length}</strong></div>
+        <div><span style="color:var(--color-texto-suave);font-size:11px">Cargos / Abonos</span><br><strong style="color:var(--color-critico)">${formatearMoneda(totalCargos,'PEN')}</strong> / <strong style="color:var(--color-exito)">${formatearMoneda(totalAbonos,'PEN')}</strong></div>
+      </div>`;
+}
+
+function _checkTextoEliminarMes() {
+  const texto = document.getElementById('em-confirm-texto')?.value || '';
+  const btn   = document.getElementById('btn-em-confirmar');
+  if (!btn) return;
+  const ok = texto.trim().toUpperCase() === 'CONFIRMAR';
+  btn.disabled = !ok;
+  btn.style.opacity = ok ? '1' : '.45';
+  btn.style.cursor  = ok ? 'pointer' : 'not-allowed';
+}
+
+function _cerrarModalEliminarMes() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function _ejecutarEliminarMes(cuentaId) {
+  const mes  = document.getElementById('em-mes')?.value;
+  const anio = document.getElementById('em-anio')?.value;
+  const btn  = document.getElementById('btn-em-confirmar');
+  const alerta = document.getElementById('em-alerta');
+  if (!mes || !anio) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Eliminando…'; }
+
+  const desde = `${anio}-${mes}-01`;
+  const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
+
+  // 1. Obtener IDs del mes
+  let q = _supabase
+    .from('movimientos')
+    .select('id')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .gte('fecha', desde)
+    .lte('fecha', hasta);
+  const cid = cuentaId || '';
+  if (cid) q = q.eq('cuenta_bancaria_id', cid);
+
+  const { data, error: errQ } = await q;
+  if (errQ) {
+    if (alerta) { alerta.textContent = 'Error al consultar: ' + errQ.message; alerta.classList.add('visible'); }
+    if (btn) { btn.disabled = false; btn.textContent = '🗑️ Eliminar mes'; }
+    return;
+  }
+
+  const ids = (data || []).map(r => r.id);
+  if (!ids.length) { mostrarToast('No hay movimientos en ese período.', 'atencion'); _cerrarModalEliminarMes(); return; }
+
+  // 2. Borrar conciliaciones relacionadas
+  const { error: errConc } = await _eliminarConciliacionesDe(ids);
+  if (errConc) {
+    if (alerta) { alerta.textContent = 'Error al limpiar conciliaciones: ' + errConc.message; alerta.classList.add('visible'); }
+    if (btn) { btn.disabled = false; btn.textContent = '🗑️ Eliminar mes'; }
+    return;
+  }
+
+  // 3. Borrar movimientos en chunks
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { error } = await _supabase.from('movimientos').delete().in('id', ids.slice(i, i + CHUNK));
+    if (error) {
+      if (alerta) { alerta.textContent = 'Error al eliminar: ' + error.message; alerta.classList.add('visible'); }
+      if (btn) { btn.disabled = false; btn.textContent = '🗑️ Eliminar mes'; }
+      return;
+    }
+  }
+
+  mostrarToast(`✅ ${ids.length} movimientos eliminados del mes.`, 'exito');
+  _cerrarModalEliminarMes();
+  _cancelarSeleccionMov();
+  await cargarMovimientos();
+  _renderResumenMov();
 }
 
 // ── Edición masiva ────────────────────────────────────────────────
