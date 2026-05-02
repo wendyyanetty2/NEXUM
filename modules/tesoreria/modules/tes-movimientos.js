@@ -97,7 +97,7 @@ async function renderTabMovimientos(area) {
             <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:110px">N° de operación</th>
             <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:100px">Fecha</th>
             <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:150px">Descripción</th>
-            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:60px">Mon.</th>
+            <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:60px">Mon..</th>
             <th style="padding:8px 10px;text-align:right;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:100px">Monto</th>
             <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:200px">Proveedores / Empresa / Personal</th>
             <th style="padding:8px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:2px solid var(--color-borde);white-space:nowrap;min-width:120px">RUC / DNI</th>
@@ -337,10 +337,9 @@ async function cargarMovimientos() {
   const hasta = document.getElementById('mov-hasta')?.value;
   const cuentaId = document.getElementById('mov-cuenta')?.value;
 
-  // Lógica mejorada: Trae movimientos del periodo sin filtrar rígidamente por cuenta
-  // para permitir ver los registros recién importados de MBD.
+  // IMPORTANTE: Ahora consultamos la VISTA unificada vista_tesoreria_unificada
   let q = _supabase
-    .from('movimientos')
+    .from('vista_tesoreria_unificada')
     .select(`*,
       cuentas_bancarias(nombre_alias),
       empresas_clientes:empresa_cliente_id(nombre, ruc_dni),
@@ -360,9 +359,12 @@ async function cargarMovimientos() {
     q = q.or(`cuenta_bancaria_id.eq.${cuentaId},cuenta_bancaria_id.is.null`);
   }
 
-  const { data } = await q.order('fecha', { ascending: true })
-    .order('numero_operacion', { ascending: true })
-    .limit(1000);
+  const { data, error } = await q.order('fecha', { ascending: false }).limit(1000);
+
+  if (error) {
+    console.error('Error al cargar movimientos:', error);
+    return;
+  }
 
   movimientos_lista = data || [];
   filtrarMovimientos();
