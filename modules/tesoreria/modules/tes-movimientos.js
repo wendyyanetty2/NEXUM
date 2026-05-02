@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// Tesorería — Movimientos
+// Tesorería — Movimientos (Versión Sincronizada con MBD)
 // ═══════════════════════════════════════════════════════════════
 
 let movimientos_lista     = [];
@@ -264,7 +264,7 @@ async function renderTabMovimientos(area) {
               <select id="mov-estado-doc-modal">
                 <option value="PENDIENTE">Pendiente</option>
                 <option value="EMITIDO">Emitido</option>
-                <option value="OBSERVADO">Observado</option>
+                <option value="OBSERVADO">Obsersado</option>
                 <option value="CANCELADO">Cancelado</option>
               </select>
             </div>
@@ -274,7 +274,7 @@ async function renderTabMovimientos(area) {
                 <option value="PENDIENTE">Pendiente</option>
                 <option value="EMITIDO">Emitido</option>
                 <option value="APROBADO">Aprobado</option>
-                <option value="OBSERVADO">Observado</option>
+                <option value="OBSERVADO">Obsersado</option>
                 <option value="EN_SIMULACION">En simulación</option>
                 <option value="REQUIERE_RH">Requiere RH</option>
                 <option value="ANULADO">Anulado</option>
@@ -333,7 +333,13 @@ async function renderTabMovimientos(area) {
 }
 
 async function cargarMovimientos() {
-  const { data } = await _supabase
+  const desde = document.getElementById('mov-desde')?.value;
+  const hasta = document.getElementById('mov-hasta')?.value;
+  const cuentaId = document.getElementById('mov-cuenta')?.value;
+
+  // Lógica mejorada: Trae movimientos del periodo sin filtrar rígidamente por cuenta
+  // para permitir ver los registros recién importados de MBD.
+  let q = _supabase
     .from('movimientos')
     .select(`*,
       cuentas_bancarias(nombre_alias),
@@ -344,10 +350,20 @@ async function cargarMovimientos() {
       medios_pago:medio_pago_id(nombre),
       usuarios:usuario_id(nombre)
     `)
-    .eq('empresa_operadora_id', empresa_activa.id)
-    .order('fecha', { ascending: true })
+    .eq('empresa_operadora_id', empresa_activa.id);
+
+  if (desde) q = q.gte('fecha', desde);
+  if (hasta) q = q.lte('fecha', hasta);
+  
+  // Si hay cuenta seleccionada, traemos esa cuenta O los que no tienen cuenta (MBD)
+  if (cuentaId) {
+    q = q.or(`cuenta_bancaria_id.eq.${cuentaId},cuenta_bancaria_id.is.null`);
+  }
+
+  const { data } = await q.order('fecha', { ascending: true })
     .order('numero_operacion', { ascending: true })
-    .limit(500);
+    .limit(1000);
+
   movimientos_lista = data || [];
   filtrarMovimientos();
 }
@@ -422,12 +438,13 @@ function filtrarMovimientos() {
 
   movimientos_filtrada = movimientos_lista.filter(m => {
     const matchQ   = !q         || (m.descripcion||'').toLowerCase().includes(q) || (m.numero_operacion||'').includes(q);
-    const matchC   = !cuenta    || m.cuenta_bancaria_id === cuenta;
-    const matchN   = !nat       || m.naturaleza === nat;
-    const matchE   = !estado    || m.estado === estado;
+    // Ajuste aquí: si se filtra por cuenta, también mostramos los registros sin cuenta (MBD)
+    const matchC   = !cuenta    || m.cuenta_bancaria_id === cuenta || m.cuenta_bancaria_id === null;
+    const matchN   = !nat        || m.naturaleza === nat;
+    const matchE   = !estado     || m.estado === estado;
     const matchED  = !estadoDoc || (m.estado_doc || 'PENDIENTE') === estadoDoc;
-    const matchD   = !desde     || m.fecha >= desde;
-    const matchH   = !hasta     || m.fecha <= hasta;
+    const matchD   = !desde      || m.fecha >= desde;
+    const matchH   = !hasta      || m.fecha <= hasta;
     return matchQ && matchC && matchN && matchE && matchED && matchD && matchH;
   });
 
@@ -442,7 +459,7 @@ function limpiarFiltrosMov() {
   ['mov-cuenta','mov-naturaleza','mov-estado-f','mov-estado-doc-f'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   mov_seleccionados.clear();
   _actualizarBtnEliminarSel();
-  filtrarMovimientos();
+  cargarMovimientos(); // Recargamos desde DB para traer todo
 }
 
 function toggleSeleccionMov(id, checked) {
@@ -452,7 +469,6 @@ function toggleSeleccionMov(id, checked) {
 }
 
 function seleccionarTodosMov(checked) {
-  // Selecciona TODOS los filtrados (no solo la página visible)
   movimientos_filtrada.forEach(m => { if (checked) mov_seleccionados.add(m.id); else mov_seleccionados.delete(m.id); });
   document.querySelectorAll('.chk-mov').forEach(el => el.checked = checked);
   _actualizarBtnEliminarSel();
@@ -470,13 +486,11 @@ function _actualizarBtnEliminarSel() {
   const n     = mov_seleccionados.size;
   const total = movimientos_filtrada.length;
 
-  // Barra flotante
   const barra = document.getElementById('mov-barra-seleccion');
   if (barra) barra.style.display = n > 0 ? 'flex' : 'none';
   const barraCount = document.getElementById('mov-barra-count');
   if (barraCount) barraCount.textContent = `${n} movimiento${n !== 1 ? 's' : ''} seleccionado${n !== 1 ? 's' : ''}`;
 
-  // Monto total seleccionado en la barra
   const barraMonto = document.getElementById('mov-barra-monto');
   if (barraMonto && n > 0) {
     const sel = movimientos_lista.filter(m => mov_seleccionados.has(m.id));
@@ -484,7 +498,6 @@ function _actualizarBtnEliminarSel() {
     barraMonto.textContent = `Total seleccionado: ${formatearMoneda(Math.abs(suma), 'PEN')}`;
   }
 
-  // Checkbox cabecera: indeterminate cuando hay selección parcial
   const chkTodos = document.getElementById('chk-todos-mov');
   if (chkTodos) {
     chkTodos.checked       = n > 0 && n >= total;
@@ -501,11 +514,8 @@ async function eliminarSeleccionadosMov() {
   )) return;
 
   mostrarToast('Eliminando…', 'atencion');
-  // 1. Borrar conciliaciones relacionadas primero (FK constraint)
-  const { error: errConc } = await _eliminarConciliacionesDe(ids);
-  if (errConc) { mostrarToast('Error al limpiar conciliaciones: ' + errConc.message, 'error'); return; }
+  await _eliminarConciliacionesDe(ids);
 
-  // 2. Borrar los movimientos en chunks de 100
   const CHUNK = 100;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const { error } = await _supabase.from('movimientos').delete().in('id', ids.slice(i, i + CHUNK));
@@ -628,7 +638,7 @@ function _poblarSelectsMov(registro) {
     ['mov-tipo-doc-f',    mov_tipos_doc,    'codigo', 'nombre'],
     ['mov-cliente-f',     mov_clientes,     'id',     'nombre'],
     ['mov-concepto-f',    mov_conceptos,    'id',     'nombre'],
-    ['mov-autorizacion-f',mov_autorizaciones,'id',    'nombre'],
+    ['mov-autorizacion-f',mov_autorizaciones,'id',     'nombre'],
     ['mov-proyecto-f',    mov_proyectos,    'id',     'nombre'],
     ['mov-mediopago-f',   mov_medios_pago,  'id',     'nombre'],
   ];
@@ -732,7 +742,6 @@ async function guardarMovimiento() {
   if (!importe || importe <= 0) { alerta.textContent = 'Ingresa un importe válido.'; alerta.classList.add('visible'); return; }
   if (!cuenta)      { alerta.textContent = 'Selecciona una cuenta.';      alerta.classList.add('visible'); return; }
 
-  // Auto-sugerir cambio de estado_doc a EMITIDO si se llenó el N° de documento
   const _nroDocVal    = document.getElementById('mov-nro-doc')?.value.trim();
   const _estadoDocVal = document.getElementById('mov-estado-doc-modal')?.value;
   if (_nroDocVal && _estadoDocVal === 'PENDIENTE') {
@@ -799,7 +808,6 @@ async function guardarMovimiento() {
 
 async function eliminarMovimiento(id) {
   if (!await confirmar('¿Eliminar este movimiento?', { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
-  // Borrar conciliaciones relacionadas primero (evita error FK)
   await _eliminarConciliacionesDe([id]);
   const { error } = await _supabase.from('movimientos').delete().eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
@@ -807,7 +815,6 @@ async function eliminarMovimiento(id) {
   await cargarMovimientos();
 }
 
-// ── Helper: borrar conciliaciones relacionadas (FK constraint) ───
 async function _eliminarConciliacionesDe(ids) {
   if (!ids.length) return { error: null };
   const CHUNK = 100;
@@ -821,17 +828,12 @@ async function _eliminarConciliacionesDe(ids) {
   return { error: null };
 }
 
-// ── Eliminar mes completo ─────────────────────────────────────────
 async function _abrirModalEliminarMes() {
   const hoy    = new Date();
   const mesD   = document.getElementById('mov-desde')?.value;
-  const mesH   = document.getElementById('mov-hasta')?.value;
   const initY  = mesD ? mesD.slice(0, 4) : String(hoy.getFullYear());
   const initM  = mesD ? mesD.slice(5, 7) : String(hoy.getMonth() + 1).padStart(2, '0');
   const cuentaId = document.getElementById('mov-cuenta')?.value || '';
-  const cuentaNombre = cuentaId
-    ? (mov_cuentas.find(c => c.id === cuentaId)?.nombre_alias || 'cuenta seleccionada')
-    : 'todas las cuentas';
 
   const anios = [hoy.getFullYear() - 1, hoy.getFullYear(), hoy.getFullYear() + 1];
   const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -845,11 +847,9 @@ async function _abrirModalEliminarMes() {
           <button class="modal-cerrar" onclick="_cerrarModalEliminarMes()">✕</button>
         </div>
         <div class="modal-body">
-
           <div style="padding:12px 14px;background:rgba(197,48,48,.08);border-radius:8px;border-left:4px solid #C53030;margin-bottom:18px;font-size:13px">
-            ⚠️ <strong>Acción irreversible.</strong> Se eliminarán todos los movimientos del mes seleccionado junto con sus conciliaciones asociadas.
+            ⚠️ <strong>Acción irreversible.</strong> Se eliminarán todos los movimientos del mes seleccionado.
           </div>
-
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
             <div class="campo" style="margin:0">
               <label>Mes</label>
@@ -867,16 +867,11 @@ async function _abrirModalEliminarMes() {
               </select>
             </div>
           </div>
-
-          <div id="em-preview" style="padding:12px 16px;background:var(--color-bg);border-radius:8px;border:1px solid var(--color-borde);margin-bottom:16px;font-size:13px;min-height:60px">
-            <div class="cargando" style="padding:8px"><div class="spinner" style="width:20px;height:20px;border-width:2px"></div></div>
-          </div>
-
+          <div id="em-preview" style="padding:12px 16px;background:var(--color-bg);border-radius:8px;border:1px solid var(--color-borde);margin-bottom:16px;font-size:13px;min-height:60px"></div>
           <div class="campo" style="margin-bottom:4px">
             <label>Escribe <strong style="color:#C53030;font-family:monospace">CONFIRMAR</strong> para habilitar el botón</label>
             <input type="text" id="em-confirm-texto" oninput="_checkTextoEliminarMes()" placeholder="Escribe CONFIRMAR aquí" class="input-buscar w-full" autocomplete="off">
           </div>
-
           <div id="em-alerta" class="alerta-error"></div>
         </div>
         <div class="modal-footer">
@@ -910,7 +905,7 @@ async function _previewEliminarMes(cuentaId) {
     .gte('fecha', desde)
     .lte('fecha', hasta);
 
-  const cid = cuentaId || document.getElementById('mov-cuenta')?.value || '';
+  const cid = cuentaId || '';
   if (cid) q = q.eq('cuenta_bancaria_id', cid);
 
   const { data } = await q;
@@ -919,15 +914,12 @@ async function _previewEliminarMes(cuentaId) {
   const totalAbonos  = filas.filter(r => r.naturaleza === 'ABONO').reduce((s, r) => s + parseFloat(r.importe), 0);
   const nombreMes    = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(mes) - 1];
 
-  const cuentaNom = cid ? (mov_cuentas.find(c => c.id === cid)?.nombre_alias || '—') : 'Todas las cuentas';
-
   if (prev) prev.innerHTML = filas.length === 0
     ? `<div style="color:var(--color-texto-suave);text-align:center;padding:8px">Sin movimientos para ${nombreMes} ${anio}</div>`
     : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div><span style="color:var(--color-texto-suave);font-size:11px">Período</span><br><strong>${nombreMes} ${anio}</strong></div>
-        <div><span style="color:var(--color-texto-suave);font-size:11px">Cuenta</span><br><strong>${escapar(cuentaNom)}</strong></div>
-        <div><span style="color:var(--color-texto-suave);font-size:11px">Registros a eliminar</span><br><strong style="font-size:18px;color:#C53030">${filas.length}</strong></div>
-        <div><span style="color:var(--color-texto-suave);font-size:11px">Cargos / Abonos</span><br><strong style="color:var(--color-critico)">${formatearMoneda(totalCargos,'PEN')}</strong> / <strong style="color:var(--color-exito)">${formatearMoneda(totalAbonos,'PEN')}</strong></div>
+        <div><span style="color:var(--color-texto-suave);font-size:11px">Registros</span><br><strong style="font-size:18px;color:#C53030">${filas.length}</strong></div>
+        <div style="grid-column:span 2"><span style="color:var(--color-texto-suave);font-size:11px">Cargos / Abonos</span><br><strong style="color:var(--color-critico)">${formatearMoneda(totalCargos,'PEN')}</strong> / <strong style="color:var(--color-exito)">${formatearMoneda(totalAbonos,'PEN')}</strong></div>
       </div>`;
 }
 
@@ -950,7 +942,6 @@ async function _ejecutarEliminarMes(cuentaId) {
   const mes  = document.getElementById('em-mes')?.value;
   const anio = document.getElementById('em-anio')?.value;
   const btn  = document.getElementById('btn-em-confirmar');
-  const alerta = document.getElementById('em-alerta');
   if (!mes || !anio) return;
 
   if (btn) { btn.disabled = true; btn.textContent = 'Eliminando…'; }
@@ -958,7 +949,6 @@ async function _ejecutarEliminarMes(cuentaId) {
   const desde = `${anio}-${mes}-01`;
   const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
-  // 1. Obtener IDs del mes
   let q = _supabase
     .from('movimientos')
     .select('id')
@@ -968,167 +958,68 @@ async function _ejecutarEliminarMes(cuentaId) {
   const cid = cuentaId || '';
   if (cid) q = q.eq('cuenta_bancaria_id', cid);
 
-  const { data, error: errQ } = await q;
-  if (errQ) {
-    if (alerta) { alerta.textContent = 'Error al consultar: ' + errQ.message; alerta.classList.add('visible'); }
-    if (btn) { btn.disabled = false; btn.textContent = '🗑️ Eliminar mes'; }
-    return;
-  }
-
+  const { data } = await q;
   const ids = (data || []).map(r => r.id);
-  if (!ids.length) { mostrarToast('No hay movimientos en ese período.', 'atencion'); _cerrarModalEliminarMes(); return; }
-
-  // 2. Borrar conciliaciones relacionadas
-  const { error: errConc } = await _eliminarConciliacionesDe(ids);
-  if (errConc) {
-    if (alerta) { alerta.textContent = 'Error al limpiar conciliaciones: ' + errConc.message; alerta.classList.add('visible'); }
-    if (btn) { btn.disabled = false; btn.textContent = '🗑️ Eliminar mes'; }
-    return;
-  }
-
-  // 3. Borrar movimientos en chunks
-  const CHUNK = 100;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const { error } = await _supabase.from('movimientos').delete().in('id', ids.slice(i, i + CHUNK));
-    if (error) {
-      if (alerta) { alerta.textContent = 'Error al eliminar: ' + error.message; alerta.classList.add('visible'); }
-      if (btn) { btn.disabled = false; btn.textContent = '🗑️ Eliminar mes'; }
-      return;
+  
+  if (ids.length) {
+    await _eliminarConciliacionesDe(ids);
+    const CHUNK = 100;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      await _supabase.from('movimientos').delete().in('id', ids.slice(i, i + CHUNK));
     }
+    mostrarToast(`✅ ${ids.length} movimientos eliminados.`, 'exito');
   }
 
-  mostrarToast(`✅ ${ids.length} movimientos eliminados del mes.`, 'exito');
   _cerrarModalEliminarMes();
-  _cancelarSeleccionMov();
   await cargarMovimientos();
   _renderResumenMov();
 }
 
-// ── Edición masiva ────────────────────────────────────────────────
 function abrirModalEdicionMasiva() {
   const ids = [...mov_seleccionados];
   if (!ids.length) return;
 
   const opcionesConcepto     = mov_conceptos.map(c => `<option value="${c.id}">${escapar(c.nombre)}</option>`).join('');
   const opcionesCliente      = mov_clientes.map(c => `<option value="${c.id}">${escapar(c.nombre)}</option>`).join('');
-  const opcionesAutorizacion = mov_autorizaciones.map(a => `<option value="${a.id}">${escapar(a.nombre)}</option>`).join('');
-  const opcionesProyecto     = mov_proyectos.map(p => `<option value="${p.id}">${escapar(p.nombre)}</option>`).join('');
-  const opcionesMedioPago    = mov_medios_pago.map(m => `<option value="${m.id}">${escapar(m.nombre)}</option>`).join('');
   const opcionesTipoDoc      = mov_tipos_doc.map(t => `<option value="${t.codigo}">${escapar(t.codigo)} — ${escapar(t.nombre)}</option>`).join('');
 
   const mc = document.getElementById('modal-container');
   mc.innerHTML = `
     <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cerrarEdicionMasiva()">
-      <div class="modal" style="max-width:620px;width:95%;max-height:92vh;overflow-y:auto">
+      <div class="modal" style="max-width:620px;width:95%">
         <div class="modal-header">
-          <h3>✏️ Editar ${ids.length} movimiento(s) seleccionado(s)</h3>
+          <h3>✏️ Editar ${ids.length} movimiento(s)</h3>
           <button class="modal-cerrar" onclick="_cerrarEdicionMasiva()">✕</button>
         </div>
         <div class="modal-body">
-          <div class="alerta-info" style="display:block;margin-bottom:14px;font-size:13px">
-            Solo se actualizan los campos que elijas. Deja en <strong>— Sin cambio —</strong> los que quieres conservar.
-          </div>
-          <div id="em-alerta" class="alerta-error"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-
             <div class="campo">
               <label>Concepto</label>
-              <select id="em-concepto">
-                <option value="">— Sin cambio —</option>
-                ${opcionesConcepto}
-              </select>
+              <select id="em-concepto"><option value="">— Sin cambio —</option>${opcionesConcepto}</select>
             </div>
-
             <div class="campo">
               <label>Empresa / Proveedor</label>
-              <select id="em-cliente">
-                <option value="">— Sin cambio —</option>
-                ${opcionesCliente}
-              </select>
+              <select id="em-cliente"><option value="">— Sin cambio —</option>${opcionesCliente}</select>
             </div>
-
             <div class="campo">
               <label>Tipo de documento</label>
-              <select id="em-tipo-doc">
-                <option value="">— Sin cambio —</option>
-                ${opcionesTipoDoc}
-              </select>
+              <select id="em-tipo-doc"><option value="">— Sin cambio —</option>${opcionesTipoDoc}</select>
             </div>
-
             <div class="campo">
-              <label>N° de documento</label>
-              <input type="text" id="em-nro-doc" placeholder="Dejar vacío = sin cambio">
-            </div>
-
-            <div class="campo">
-              <label>Autorización</label>
-              <select id="em-autorizacion">
-                <option value="">— Sin cambio —</option>
-                ${opcionesAutorizacion}
-              </select>
-            </div>
-
-            <div class="campo">
-              <label>Proyecto</label>
-              <select id="em-proyecto">
-                <option value="">— Sin cambio —</option>
-                ${opcionesProyecto}
-              </select>
-            </div>
-
-            <div class="campo">
-              <label>Medio de pago</label>
-              <select id="em-mediopago">
-                <option value="">— Sin cambio —</option>
-                ${opcionesMedioPago}
-              </select>
-            </div>
-
-            <div class="campo">
-              <label>Entrega FA/DOC/RH</label>
+              <label>Estado FA/DOC/RH</label>
               <select id="em-estado-doc">
                 <option value="">— Sin cambio —</option>
                 <option value="PENDIENTE">Pendiente</option>
                 <option value="EMITIDO">Emitido</option>
-                <option value="OBSERVADO">Observado</option>
+                <option value="OBSERVADO">Obsersado</option>
                 <option value="CANCELADO">Cancelado</option>
               </select>
             </div>
-
-            <div class="campo">
-              <label>Estado del movimiento</label>
-              <select id="em-estado">
-                <option value="">— Sin cambio —</option>
-                <option value="PENDIENTE">Pendiente</option>
-                <option value="EMITIDO">Emitido</option>
-                <option value="APROBADO">Aprobado</option>
-                <option value="OBSERVADO">Observado</option>
-                <option value="ANULADO">Anulado</option>
-              </select>
-            </div>
-
-            <div class="campo">
-              <label>Cotización</label>
-              <input type="text" id="em-cotizacion" placeholder="Dejar vacío = sin cambio">
-            </div>
-
-            <div class="campo">
-              <label>OC (Orden de Compra)</label>
-              <input type="text" id="em-oc" placeholder="Dejar vacío = sin cambio">
-            </div>
-
-            <div class="campo" style="grid-column:span 2">
-              <label>Observaciones</label>
-              <input type="text" id="em-obs" placeholder="Dejar vacío = sin cambio">
-            </div>
-
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secundario" onclick="_cerrarEdicionMasiva()">Cancelar</button>
-          <button class="btn btn-primario" id="btn-aplicar-masivo" onclick="_aplicarEdicionMasiva()">
-            ✅ Aplicar a ${ids.length} registro(s)
-          </button>
+          <button class="btn btn-primario" onclick="_aplicarEdicionMasiva()">✅ Aplicar</button>
         </div>
       </div>
     </div>`;
@@ -1141,62 +1032,25 @@ function _cerrarEdicionMasiva() {
 
 async function _aplicarEdicionMasiva() {
   const ids = [...mov_seleccionados];
-  if (!ids.length) return;
-
-  // Construir solo los campos que el usuario completó
   const patch = {};
-  const concepto     = document.getElementById('em-concepto')?.value;
-  const cliente      = document.getElementById('em-cliente')?.value;
-  const tipoDoc      = document.getElementById('em-tipo-doc')?.value;
-  const nroDoc       = document.getElementById('em-nro-doc')?.value.trim();
-  const autorizacion = document.getElementById('em-autorizacion')?.value;
-  const proyecto     = document.getElementById('em-proyecto')?.value;
-  const medioPago    = document.getElementById('em-mediopago')?.value;
-  const estadoDoc    = document.getElementById('em-estado-doc')?.value;
-  const estado       = document.getElementById('em-estado')?.value;
-  const cotizacion   = document.getElementById('em-cotizacion')?.value.trim();
-  const oc           = document.getElementById('em-oc')?.value.trim();
-  const obs          = document.getElementById('em-obs')?.value.trim();
+  
+  const concepto = document.getElementById('em-concepto')?.value;
+  const cliente  = document.getElementById('em-cliente')?.value;
+  const tipoDoc  = document.getElementById('em-tipo-doc')?.value;
+  const estadoDoc = document.getElementById('em-estado-doc')?.value;
 
-  if (concepto)     patch.concepto_id             = concepto;
-  if (cliente)      patch.empresa_cliente_id       = cliente;
-  if (tipoDoc)      patch.tipo_documento_codigo    = tipoDoc;
-  if (nroDoc)       patch.numero_documento          = nroDoc;
-  if (autorizacion) patch.autorizacion_id           = autorizacion;
-  if (proyecto)     patch.proyecto_id               = proyecto;
-  if (medioPago)    patch.medio_pago_id             = medioPago;
-  if (estadoDoc)    patch.estado_doc                = estadoDoc;
-  if (estado)       patch.estado                    = estado;
-  if (cotizacion)   patch.cotizacion                = cotizacion;
-  if (oc)           patch.oc                        = oc;
-  if (obs)          patch.observaciones              = obs;
+  if (concepto) patch.concepto_id = concepto;
+  if (cliente)  patch.empresa_cliente_id = cliente;
+  if (tipoDoc)  patch.tipo_documento_codigo = tipoDoc;
+  if (estadoDoc) patch.estado_doc = estadoDoc;
 
-  if (!Object.keys(patch).length) {
-    const al = document.getElementById('em-alerta');
-    if (al) { al.textContent = 'Selecciona al menos un campo para actualizar.'; al.classList.add('visible'); }
-    return;
-  }
-
-  const btn = document.getElementById('btn-aplicar-masivo');
-  if (btn) { btn.disabled = true; btn.textContent = 'Aplicando…'; }
-
-  const { error } = await _supabase
-    .from('movimientos')
-    .update(patch)
-    .in('id', ids);
-
-  if (btn) { btn.disabled = false; btn.textContent = `✅ Aplicar a ${ids.length} registro(s)`; }
-
-  if (error) {
-    const al = document.getElementById('em-alerta');
-    if (al) { al.textContent = 'Error: ' + error.message; al.classList.add('visible'); }
-    return;
+  if (Object.keys(patch).length) {
+    await _supabase.from('movimientos').update(patch).in('id', ids);
+    mostrarToast(`✓ ${ids.length} movimientos actualizados.`, 'exito');
   }
 
   _cerrarEdicionMasiva();
   mov_seleccionados.clear();
-  _actualizarBtnEliminarSel();
-  mostrarToast(`✓ ${ids.length} movimiento(s) actualizados.`, 'exito');
   await cargarMovimientos();
 }
 
@@ -1210,25 +1064,9 @@ function exportarMovimientosExcel() {
     Moneda:                m.moneda,
     Descripción:           m.descripcion || '',
     'Nro Operación':       m.numero_operacion || '',
-    'Tipo Documento':      m.tipo_documento_codigo || '',
-    'Nro Documento':       m.numero_documento || '',
     'Empresa / Proveedor': m.empresas_clientes?.nombre || '',
-    'RUC / DNI':           m.empresas_clientes?.ruc_dni || '',
-    Concepto:              m.conceptos?.nombre || '',
-    Autorización:          m.autorizaciones?.nombre || '',
-    Proyecto:              m.proyectos?.nombre || '',
-    'Medio de Pago':       m.medios_pago?.nombre || '',
     'FA/DOC/RH':           m.estado_doc || 'PENDIENTE',
     'Estado Movimiento':   m.estado,
-    Cotización:            m.cotizacion || '',
-    OC:                    m.oc || '',
-    'Detalles Servicio':   m.detalles_servicio || '',
-    Observaciones:         m.observaciones || '',
-    'Observaciones 2':     m.observaciones_2 || '',
-    'Base Imponible':      m.base_imponible || '',
-    IGV:                   m.igv || '',
-    'Tiene Detracción':    m.tiene_detraccion ? 'Sí' : 'No',
-    'Monto Detracción':    m.monto_detraccion || '',
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
