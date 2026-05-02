@@ -38,6 +38,8 @@ function obtenerEmpresaActiva() {
 // ── Guardar empresa activa en sesión ──────────────────────────────────────────
 function guardarEmpresaActiva(empresa) {
   sessionStorage.setItem('nexum_empresa_activa', JSON.stringify(empresa));
+  sessionStorage.removeItem('nexum_permisos');     // forzar recomputo de permisos
+  sessionStorage.removeItem('nexum_mis_empresas'); // forzar recarga de empresas
 }
 
 // ── Cerrar sesión ─────────────────────────────────────────────────────────────
@@ -87,4 +89,111 @@ async function registrarHistorial(tabla, registroId, accion, datosAnteriores = n
     datos_anteriores: datosAnteriores,
     datos_nuevos: datosNuevos
   });
+}
+
+// ══════════════════════════════════════════════════════════════
+// NEXUM v3.0 — Sistema de permisos y control de acceso
+// ══════════════════════════════════════════════════════════════
+
+// Definición de módulos con permisos
+const NEXUM_PERMISOS_MODULOS = {
+  dashboard:    { nombre: 'Dashboard',      icono: '🏠' },
+  admin:        { nombre: 'Administración', icono: '⚙️' },
+  catalogos:    { nombre: 'Catálogos',      icono: '🗂️' },
+  tesoreria:    { nombre: 'Tesorería',      icono: '🏦' },
+  conciliacion: { nombre: 'Conciliación',   icono: '🔗' },
+  planilla:     { nombre: 'Planilla',       icono: '👥' },
+  tributaria:   { nombre: 'Tributaria',     icono: '📋' },
+  ocr:          { nombre: 'OCR',            icono: '🔍' },
+  reportes:     { nombre: 'Reportes',       icono: '📊' },
+  contabilidad: { nombre: 'Contabilidad',   icono: '📒' },
+};
+
+// Permisos por defecto según rol
+function _permisosBaseDeRol(rol) {
+  const ids = Object.keys(NEXUM_PERMISOS_MODULOS);
+  const all  = (v, e, d) => Object.fromEntries(ids.map(id => [id, { ver: v, editar: e, eliminar: d }]));
+
+  if (rol === 'SUPER_ADMIN') return all(true, true, true);
+
+  const base = all(true, false, false);
+  base.admin     = { ver: false, editar: false, eliminar: false };
+  base.dashboard = { ver: true,  editar: false, eliminar: false };
+
+  if (rol === 'CONTADOR') {
+    ids.filter(k => k !== 'admin').forEach(k => {
+      base[k].editar   = true;
+      base[k].eliminar = true;
+    });
+  } else if (rol === 'ASISTENTE') {
+    ids.filter(k => k !== 'admin').forEach(k => {
+      base[k].editar = true;
+    });
+  }
+  // CONSULTA: solo ver=true en todo excepto admin
+  return base;
+}
+
+// Obtener permisos activos (desde sessionStorage o derivados del rol)
+function obtenerPermisosActivos() {
+  const stored = sessionStorage.getItem('nexum_permisos');
+  if (stored) {
+    try { return JSON.parse(stored); } catch(e) {}
+  }
+  const empresa = obtenerEmpresaActiva();
+  const rol     = empresa?.rol || 'CONSULTA';
+  const p       = { rol, modulos: _permisosBaseDeRol(rol) };
+  sessionStorage.setItem('nexum_permisos', JSON.stringify(p));
+  return p;
+}
+
+function guardarPermisos(permisos) {
+  sessionStorage.setItem('nexum_permisos', JSON.stringify(permisos));
+}
+
+// Verificar permiso específico
+function tienePermiso(moduloId, accion = 'ver') {
+  const p = obtenerPermisosActivos();
+  return p?.modulos?.[moduloId]?.[accion] === true;
+}
+
+function puedeEditar(moduloId)   { return tienePermiso(moduloId, 'editar'); }
+function puedeEliminar(moduloId) { return tienePermiso(moduloId, 'eliminar'); }
+
+function esAdminSistema() {
+  const empresa = obtenerEmpresaActiva();
+  return empresa?.rol === 'SUPER_ADMIN';
+}
+
+// Cargar todas las empresas accesibles por el usuario (con caché en sessionStorage)
+async function cargarEmpresasDelUsuario() {
+  const stored = sessionStorage.getItem('nexum_mis_empresas');
+  if (stored) {
+    try { return JSON.parse(stored); } catch(e) {}
+  }
+
+  const perfil = await obtenerPerfil();
+  if (!perfil) return [];
+
+  let empresas = [];
+  if (perfil.es_super_admin) {
+    const { data } = await _supabase
+      .from('empresas_operadoras')
+      .select('*')
+      .eq('activa', true)
+      .order('nombre');
+    empresas = (data || []).map(e => ({ ...e, rol: 'SUPER_ADMIN' }));
+  } else {
+    const { data } = await _supabase
+      .from('usuarios_empresas')
+      .select('rol, empresa_operadora_id, empresas_operadoras(*)')
+      .eq('usuario_id', perfil.id)
+      .eq('activo', true);
+    empresas = (data || [])
+      .filter(ue => ue.empresas_operadoras?.activa)
+      .map(ue => ({ ...ue.empresas_operadoras, rol: ue.rol }));
+  }
+
+  sessionStorage.setItem('nexum_mis_empresas', JSON.stringify(empresas));
+  return empresas;
 }

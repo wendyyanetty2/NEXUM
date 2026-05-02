@@ -23,23 +23,36 @@ async function inicializarModulo(moduloActual) {
   const perfil = await obtenerPerfil();
   if (!perfil) { await cerrarSesion(); return null; }
 
+  // Verificar permiso de acceso al módulo
+  if (moduloActual !== 'dashboard' && !tienePermiso(moduloActual, 'ver')) {
+    mostrarToast('No tienes permiso para acceder a este módulo.', 'error');
+    setTimeout(() => { window.location.href = '/dashboard.html'; }, 1500);
+    return null;
+  }
+
+  // Cargar empresas del usuario (con caché)
+  const misEmpresas = await cargarEmpresasDelUsuario();
+
   _renderSidebar(moduloActual, empresa);
-  _renderHeader(perfil);
+  _renderHeader(perfil, empresa, misEmpresas);
   _renderModalPassword();
 
   return { perfil, empresa };
 }
 
+// ── Sidebar ───────────────────────────────────────────────────
 function _renderSidebar(moduloActual, empresa) {
-  const nav = NEXUM_MODULOS.map(m => {
-    const activo   = m.id === moduloActual ? 'activo' : '';
-    const click    = m.href ? `onclick="window.location.href='${m.href}'"` : '';
-    const pronto   = !m.href ? '<span class="badge-pronto">Pronto</span>' : '';
-    const disabled = !m.href ? 'style="opacity:0.55;cursor:default"' : '';
-    return `<a class="nav-item ${activo}" ${click} ${disabled}>
-      <span class="icono">${m.icono}</span> ${m.nombre} ${pronto}
-    </a>`;
-  }).join('\n');
+  const nav = NEXUM_MODULOS
+    .filter(m => tienePermiso(m.id, 'ver'))
+    .map(m => {
+      const activo   = m.id === moduloActual ? 'activo' : '';
+      const click    = m.href ? `onclick="window.location.href='${m.href}'"` : '';
+      const pronto   = !m.href ? '<span class="badge-pronto">Pronto</span>' : '';
+      const disabled = !m.href ? 'style="opacity:0.55;cursor:default"' : '';
+      return `<a class="nav-item ${activo}" ${click} ${disabled}>
+        <span class="icono">${m.icono}</span> ${m.nombre} ${pronto}
+      </a>`;
+    }).join('\n');
 
   const sidebar = document.getElementById('sidebar');
   sidebar.innerHTML = `
@@ -66,13 +79,47 @@ function _renderSidebar(moduloActual, empresa) {
     sidebar.style.background = empresa.color_primario;
 }
 
-function _renderHeader(perfil) {
+// ── Header ────────────────────────────────────────────────────
+function _renderHeader(perfil, empresa, misEmpresas) {
+  const selectorHTML = misEmpresas.length > 1
+    ? `<div class="sel-empresa-wrap" style="position:relative">
+        <button onclick="toggleSelectorEmpresa(event)"
+          style="display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--color-borde);border-radius:var(--radio);background:var(--color-bg-card);cursor:pointer;font-size:13px;color:var(--color-texto);max-width:200px">
+          <span>🏢</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px">${escapar(empresa.nombre_corto || empresa.nombre)}</span>
+          <span style="font-size:10px;flex-shrink:0">▾</span>
+        </button>
+        <div id="layout-dropdown-empresa" style="display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--color-bg-card);border:1px solid var(--color-borde);border-radius:var(--radio-lg);box-shadow:var(--sombra-md);min-width:260px;z-index:500;overflow:hidden">
+          <div style="padding:8px 12px;font-size:11px;color:var(--color-texto-suave);border-bottom:1px solid var(--color-borde);text-transform:uppercase;letter-spacing:.5px">Mis empresas</div>
+          ${misEmpresas.map(e => `
+            <button onclick="cambiarEmpresaRapido(${JSON.stringify(e).replace(/"/g, '&quot;')})"
+              style="display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;border:none;background:${e.id === empresa.id ? 'var(--color-hover)' : 'none'};cursor:pointer;font-family:var(--font);font-size:13px;color:var(--color-texto);text-align:left;transition:background .15s">
+              <div style="width:30px;height:30px;border-radius:50%;background:${e.color_primario||'#2C5282'};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;flex-shrink:0">${_iniciales(e.nombre)}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(e.nombre_corto || e.nombre)}</div>
+                <div style="font-size:11px;color:var(--color-texto-suave)">${escapar(e.rol)}</div>
+              </div>
+              ${e.id === empresa.id ? '<span style="color:var(--color-secundario);font-weight:700;flex-shrink:0">✓</span>' : ''}
+            </button>
+          `).join('')}
+        </div>
+      </div>`
+    : `<div style="padding:4px 10px;font-size:12px;color:var(--color-texto-suave);border:1px solid var(--color-borde);border-radius:var(--radio);background:var(--color-bg-card);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px">
+        🏢 ${escapar(empresa.nombre_corto || empresa.nombre)}
+      </div>`;
+
+  const rolBadge = empresa.rol && empresa.rol !== 'SUPER_ADMIN'
+    ? `<span style="font-size:10px;background:var(--color-hover);color:var(--color-texto-suave);padding:2px 7px;border-radius:10px;border:1px solid var(--color-borde)">${escapar(empresa.rol)}</span>`
+    : '';
+
   document.getElementById('header-top').innerHTML = `
     <div class="header-izq">
       <button class="btn-menu-movil" onclick="abrirSidebar()">☰</button>
       <div class="breadcrumb" id="breadcrumb-main">NEXUM &rsaquo; <span id="breadcrumb-sub">—</span></div>
     </div>
-    <div class="header-der">
+    <div class="header-der" style="gap:8px">
+      ${selectorHTML}
+      ${rolBadge}
       <button class="btn-tema" onclick="alternarTema()" title="Cambiar tema">🌙</button>
       <div class="header-usuario">
         <div class="avatar">${perfil.nombre.charAt(0).toUpperCase()}</div>
@@ -82,6 +129,30 @@ function _renderHeader(perfil) {
   actualizarIconoTema();
 }
 
+function _iniciales(nombre) {
+  return (nombre || '').split(' ').slice(0, 2).map(p => p[0] || '').join('').toUpperCase();
+}
+
+let _dropdownClickHandler = null;
+function toggleSelectorEmpresa(e) {
+  e && e.stopPropagation();
+  const dd = document.getElementById('layout-dropdown-empresa');
+  if (!dd) return;
+  const visible = dd.style.display !== 'none';
+  dd.style.display = visible ? 'none' : 'block';
+  if (!visible) {
+    if (_dropdownClickHandler) document.removeEventListener('click', _dropdownClickHandler);
+    _dropdownClickHandler = () => { dd.style.display = 'none'; };
+    setTimeout(() => document.addEventListener('click', _dropdownClickHandler, { once: true }), 10);
+  }
+}
+
+function cambiarEmpresaRapido(empresa) {
+  guardarEmpresaActiva(empresa);
+  window.location.reload();
+}
+
+// ── Modal contraseña ──────────────────────────────────────────
 function _renderModalPassword() {
   const mc = document.getElementById('modal-container');
   if (!mc) return;
@@ -130,6 +201,8 @@ function setBreadcrumb(texto) {
 // ── Empresa / sesión ──────────────────────────────────────────
 function cambiarEmpresa() {
   sessionStorage.removeItem('nexum_empresa_activa');
+  sessionStorage.removeItem('nexum_permisos');
+  sessionStorage.removeItem('nexum_mis_empresas');
   window.location.href = '/selector.html';
 }
 
