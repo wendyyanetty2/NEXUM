@@ -78,6 +78,7 @@ async function renderTabMovimientos(area) {
           <span id="mov-contador" class="text-muted text-sm"></span>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()">🔄 Limpiar</button>
+            <button class="btn btn-secundario btn-sm" onclick="cargarMovimientos()">🔄 Actualizar</button>
             <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()">⬇ Excel</button>
             <button class="btn btn-sm" onclick="_abrirModalEliminarMes()"
               style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
@@ -122,12 +123,10 @@ async function renderTabMovimientos(area) {
       </div>
       <div id="pag-movimientos" class="paginacion"></div>
     </div>
-
-    <!-- Modales se mantienen igual -->
-    `;
+  `;
 
   await Promise.all([
-    verificarYMigrarMBD(), // NUEVA FUNCIÓN: Fuerza la migración antes de cargar
+    verificarYMigrarMBD(), 
     cargarCuentasParaMov(),
     cargarCatalogosParaMov(),
   ]);
@@ -136,15 +135,9 @@ async function renderTabMovimientos(area) {
   _renderResumenMov();
 }
 
-/**
- * FUNCIÓN CLAVE: 
- * Busca registros en tesoreria_mbd que no estén en movimientos 
- * y los inserta físicamente asignándoles la cuenta de JVÑ.
- */
 async function verificarYMigrarMBD() {
-    console.log("Iniciando verificación de migración...");
+    console.log("Sincronizando con tabla de importación MBD...");
     
-    // 1. Obtener la cuenta bancaria por defecto de JVÑ
     const { data: cuenta } = await _supabase
         .from('cuentas_bancarias')
         .select('id')
@@ -154,9 +147,6 @@ async function verificarYMigrarMBD() {
 
     if (!cuenta) return;
 
-    // 2. Traer registros de tesoreria_mbd que no han sido migrados
-    // (Lógica simple: los traemos todos y el trigger o un rpc se encarga, 
-    // pero aquí lo haremos vía código para asegurar éxito inmediato)
     const { data: mbdData } = await _supabase
         .from('tesoreria_mbd')
         .select('*')
@@ -164,7 +154,6 @@ async function verificarYMigrarMBD() {
 
     if (!mbdData || mbdData.length === 0) return;
 
-    // 3. Intentar migración física (El INSERT evitará duplicados si tienes llaves únicas)
     const registrosParaMov = mbdData.map(reg => ({
         numero_operacion: reg.nro_operacion_bancaria,
         fecha: reg.fecha_deposito,
@@ -175,14 +164,18 @@ async function verificarYMigrarMBD() {
         estado_doc: reg.entrega_doc || 'PENDIENTE',
         empresa_operadora_id: empresa_activa.id,
         cuenta_bancaria_id: cuenta.id,
-        estado: 'PENDIENTE'
+        estado: 'PENDIENTE',
+        cotizacion: reg.cotizacion,
+        oc: reg.oc,
+        detalles_servicio: reg.detalles_servicio,
+        observaciones: reg.observaciones
     }));
 
-    // Insertar en bloques para no saturar
-    const { error } = await _supabase.from('movimientos').upsert(registrosParaMov, { onConflict: 'numero_operacion, fecha, importe' });
+    const { error } = await _supabase.from('movimientos')
+        .upsert(registrosParaMov, { onConflict: 'numero_operacion, fecha, importe' });
     
-    if (error) console.error("Error migrando:", error.message);
-    else console.log("Migración completada con éxito.");
+    if (error) console.error("Error en migración:", error.message);
+    else console.log("Migración MBD -> Movimientos exitosa.");
 }
 
 async function cargarMovimientos() {
@@ -190,7 +183,6 @@ async function cargarMovimientos() {
   const hasta = document.getElementById('mov-hasta')?.value;
   const cuentaId = document.getElementById('mov-cuenta')?.value;
 
-  // Consultamos la tabla FÍSICA de movimientos
   let q = _supabase
     .from('movimientos')
     .select(`*,
@@ -212,8 +204,13 @@ async function cargarMovimientos() {
     return;
   }
 
+  // Si después de la migración sigue vacío, intentamos forzar visualización
   movimientos_lista = data || [];
+  
+  const ctr = document.getElementById('mov-contador');
+  if (ctr) ctr.textContent = `${movimientos_lista.length} registros cargados`;
+  
   filtrarMovimientos();
 }
 
-// El resto de funciones auxiliares (filtrarMovimientos, renderTablaMovimientos, etc.) se mantienen igual que en tu código original.
+// Las funciones filtrarMovimientos, cargarCuentasParaMov, etc., se mantienen igual que en tu versión original.
