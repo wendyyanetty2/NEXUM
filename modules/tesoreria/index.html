@@ -27,7 +27,7 @@
       <div class="page-header">
         <div>
           <h1>🏦 Tesorería</h1>
-          <p>Cuentas bancarias, movimientos y conciliación</p>
+          <p>Cuentas bancarias, movimientos e importaciones</p>
         </div>
       </div>
 
@@ -37,7 +37,6 @@
         <button class="tab-btn"        id="tab-importar"      onclick="activarTab('importar')">⬆️ Importar EECC</button>
         <button class="tab-btn"        id="tab-mbd"           onclick="activarTab('mbd')">📥 Importar MBD</button>
         <button class="tab-btn"        id="tab-sunat"         onclick="activarTab('sunat')">📑 Importar SUNAT</button>
-        <button class="tab-btn"        id="tab-conciliacion"  onclick="activarTab('conciliacion')">🔗 Conciliación</button>
       </div>
 
       <div id="contenido-tab">
@@ -66,7 +65,6 @@
 <script src="../../modules/tesoreria/modules/tes-importar.js"></script>
 <script src="../../modules/tesoreria/modules/tes-importar-mbd.js"></script>
 <script src="../../modules/tesoreria/modules/tes-importar-sunat.js"></script>
-<script src="../../modules/tesoreria/modules/tes-conciliacion.js"></script>
 
 <script>
 let perfil_usuario = null;
@@ -91,7 +89,6 @@ function activarTab(tab) {
     importar:     () => renderTabImportar(area),
     mbd:          () => renderTabImportarMBD(area),
     sunat:        () => renderTabImportarSunat(area),
-    conciliacion: () => renderTabConciliacion(area),
   };
   if (mapa[tab]) mapa[tab]();
 }
