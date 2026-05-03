@@ -741,110 +741,145 @@ function procesarImportMBD(input) {
       const wb = XLSX.read(e.target.result, { type: 'array', cellDates: false, raw: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-      if (rows.length < 2) { mostrarToast('El archivo no tiene datos.', 'atencion'); return; }
 
-      const cabeceras = (rows[0] || []).map(h => (h || '').toString().trim().toLowerCase());
-      const esTieneEncabezado = cabeceras.some(h =>
-        ['fecha', 'monto', 'fecha depósito', 'fecha deposito', 'n° de operación', 'n° operacion', 'descripcion'].includes(h)
-      );
-      const inicio = esTieneEncabezado ? 1 : 0;
+      if (!rows || rows.length < 2) {
+        mostrarToast('El archivo está vacío o no tiene datos.', 'atencion');
+        return;
+      }
 
-      // Detectar formato con Medio de Pago (col 16) según cabecera, no por cantidad de cols
-      // (el archivo exportado tiene 21 cols pero NO tiene Medio de Pago — col 16 = Observaciones)
+      // Siempre saltamos la fila 0 (cabecera). Si el Excel empieza en fila 0 con datos,
+      // esa fila fallará validación y quedará como error — no es un problema.
+      const inicio = 1;
+
+      // Detectar si hay columna Medio de Pago por nombre de cabecera
+      const cabeceras = (rows[0] || []).map(h => (h || '').toString().toLowerCase());
       const formatoNuevo = cabeceras.some(h => h.includes('medio'));
 
       const toDate = v => {
         if (v === null || v === undefined || v === '') return null;
         if (typeof v === 'number') {
-          const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+          // Número serial de Excel → fecha UTC
+          const ms = Math.round((v - 25569) * 86400 * 1000);
+          const d  = new Date(ms);
           if (isNaN(d.getTime())) return null;
           return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
         }
-        if (v instanceof Date) return v.toISOString().slice(0,10);
+        if (v instanceof Date) {
+          if (isNaN(v.getTime())) return null;
+          return v.toISOString().slice(0, 10);
+        }
         const s = v.toString().trim();
         if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d,m,y]=s.split('/'); return `${y}-${m}-${d}`; }
-        const d = new Date(s); return isNaN(d) ? null : d.toISOString().slice(0,10);
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+          const [dd, mm, yyyy] = s.split('/');
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
+          const parts = s.split('/');
+          return `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+        }
+        const parsed = new Date(s);
+        return isNaN(parsed) ? null : parsed.toISOString().slice(0, 10);
       };
+
+      const toStr = v => (v === null || v === undefined || v === '') ? null : String(v).trim() || null;
       const toNum = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
 
-      _mbdDatosPreview = rows.slice(inicio).map((r, i) => {
-        const fecha = toDate(r[1]);
-        const monto = toNum(r[4]);
-        const ok    = !!fecha && monto !== null;
-        // Columnas 16+ dependen del formato
-        const medioPago    = formatoNuevo ? r[16]?.toString()||null : null;
-        const observaciones= formatoNuevo ? r[17]?.toString()||null : r[16]?.toString()||null;
-        const detalles     = formatoNuevo ? r[18]?.toString()||null : r[17]?.toString()||null;
-        const obs2         = formatoNuevo ? r[19]?.toString()||null : r[18]?.toString()||null;
-        return {
-          _fila: i + inicio + 2,
-          _ok: ok,
-          _error: !fecha ? 'Sin fecha' : monto === null ? 'Sin monto' : null,
-          empresa_id:               empresa_activa.id,
-          nro_operacion_bancaria:   r[0] !== null && r[0] !== undefined && r[0] !== ''
-            ? String(typeof r[0] === 'number' ? Math.round(r[0]) : r[0]).padStart(8,'0')
-            : null,
-          fecha_deposito:           fecha,
-          descripcion:              r[2]?.toString()||null,
-          moneda:                   r[3]?.toString()||'S/',
-          monto,
-          proveedor_empresa_personal: r[5]?.toString()||null,
-          ruc_dni:                  r[6]?.toString()||null,
-          cotizacion:               r[7]?.toString()||null,
-          oc:                       r[8]?.toString()||null,
-          proyecto:                 r[9]?.toString()||null,
-          concepto:                 r[10]?.toString()||null,
-          empresa:                  r[11]?.toString()||null,
-          entrega_doc:              r[12]?.toString()||'PENDIENTE',
-          nro_factura_doc:          r[13]?.toString()||null,
-          tipo_doc:                 r[14]?.toString()||null,
-          autorizacion:             r[15]?.toString()||null,
-          observaciones_3:          medioPago,
-          observaciones:            observaciones,
-          detalles_compra_servicio: detalles,
-          observaciones_2:          obs2,
-          creado_por:               perfil_usuario.id,
-        };
-      }).filter(r => r._fila > 0);
+      _mbdDatosPreview = rows.slice(inicio)
+        .filter(r => r && r.some(c => c !== null && c !== undefined && c !== ''))
+        .map((r, i) => {
+          const fecha = toDate(r[1]);
+          const monto = toNum(r[4]);
+          const ok    = !!fecha && monto !== null;
 
-      const validos  = _mbdDatosPreview.filter(r => r._ok).length;
-      const errores  = _mbdDatosPreview.length - validos;
+          // Columnas fijas 0-15
+          const nroOp = (r[0] !== null && r[0] !== undefined && r[0] !== '')
+            ? String(typeof r[0] === 'number' ? Math.round(r[0]) : r[0]).padStart(8, '0')
+            : null;
+
+          // Columnas 16+ según formato (con o sin Medio de Pago)
+          const observaciones = formatoNuevo ? toStr(r[17]) : toStr(r[16]);
+          const detalles      = formatoNuevo ? toStr(r[18]) : toStr(r[17]);
+          const obs2          = formatoNuevo ? toStr(r[19]) : toStr(r[18]);
+
+          // Objeto con SOLO las columnas que existen en tesoreria_mbd
+          return {
+            _fila:  i + inicio + 1,
+            _ok:    ok,
+            _error: !fecha ? 'Sin fecha válida' : monto === null ? 'Sin monto válido' : null,
+            empresa_id:                 empresa_activa.id,
+            nro_operacion_bancaria:     nroOp,
+            fecha_deposito:             fecha,
+            descripcion:                toStr(r[2]),
+            moneda:                     toStr(r[3]) || 'S/',
+            monto,
+            proveedor_empresa_personal: toStr(r[5]),
+            ruc_dni:                    toStr(r[6]),
+            cotizacion:                 toStr(r[7]),
+            oc:                         toStr(r[8]),
+            proyecto:                   toStr(r[9]),
+            concepto:                   toStr(r[10]),
+            empresa:                    toStr(r[11]),
+            entrega_doc:                toStr(r[12]) || 'PENDIENTE',
+            nro_factura_doc:            toStr(r[13]),
+            tipo_doc:                   toStr(r[14]),
+            autorizacion:               toStr(r[15]),
+            observaciones,
+            detalles_compra_servicio:   detalles,
+            observaciones_2:            obs2,
+          };
+        });
+
+      const validos = _mbdDatosPreview.filter(r => r._ok).length;
+      const errores = _mbdDatosPreview.length - validos;
+
+      // Mostrar vista previa — buscar los elementos del DOM
       const prevWrap = document.getElementById('mbd-preview-wrap');
       const prevCnt  = document.getElementById('mbd-prev-count');
       const prevRes  = document.getElementById('mbd-prev-resumen');
       const prevBody = document.getElementById('mbd-prev-tbody');
-      if (!prevWrap || !prevBody) return;
+
+      if (!prevWrap || !prevBody) {
+        // Fallback: si no hay panel de preview visible, confirmar directo si hay válidos
+        if (!validos) { mostrarToast('No hay filas con fecha y monto válidos.', 'atencion'); return; }
+        mostrarToast(`📋 ${validos} filas listas. Haz clic en "Confirmar e importar".`, 'exito');
+        return;
+      }
 
       if (prevCnt) prevCnt.textContent = _mbdDatosPreview.length;
-      if (prevRes) prevRes.textContent = `✅ ${validos} válidos  ⚠️ ${errores} con error (se omitirán)`;
+      if (prevRes) prevRes.textContent = `✅ ${validos} válidos   ⚠️ ${errores} con error (se omitirán)`;
 
-      const muestra = _mbdDatosPreview.slice(0, 20);
-      prevBody.innerHTML = muestra.map(r => `
+      prevBody.innerHTML = _mbdDatosPreview.slice(0, 25).map(r => `
         <tr ${!r._ok ? 'style="background:rgba(197,48,48,.05)"' : ''}>
           <td style="font-size:11px;color:var(--color-texto-suave)">${r._fila}</td>
           <td style="white-space:nowrap">${r.fecha_deposito || `<span style="color:#C53030">${r._error}</span>`}</td>
           <td style="text-align:right;font-weight:600">${r.monto !== null ? formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN') : '<span style="color:#C53030">—</span>'}</td>
-          <td>${escapar(r.moneda||'S/')}</td>
-          <td style="font-size:12px">${escapar((r.proveedor_empresa_personal||'—').slice(0,22))}</td>
-          <td style="font-size:12px">${escapar(r.concepto||'—')}</td>
-          <td style="font-size:12px">${escapar(r.tipo_doc||'—')}</td>
-          <td style="font-size:12px">${escapar(r.observaciones_3||'—')}</td>
+          <td>${escapar(r.moneda || 'S/')}</td>
+          <td style="font-size:12px">${escapar((r.proveedor_empresa_personal || '—').slice(0, 25))}</td>
+          <td style="font-size:12px">${escapar(r.concepto || '—')}</td>
+          <td style="font-size:12px">${escapar(r.tipo_doc || '—')}</td>
+          <td style="font-size:12px">${escapar(r.entrega_doc || '—')}</td>
           <td>${r._ok
-            ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">OK</span>'
-            : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px" title="${escapar(r._error||'')}">Error</span>`
+            ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">✓ OK</span>'
+            : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px">${escapar(r._error || 'Error')}</span>`
           }</td>
         </tr>`).join('');
 
-      if (_mbdDatosPreview.length > 20) {
-        prevBody.innerHTML += `<tr><td colspan="9" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_mbdDatosPreview.length - 20} filas más</td></tr>`;
+      if (_mbdDatosPreview.length > 25) {
+        prevBody.innerHTML += `<tr><td colspan="9" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_mbdDatosPreview.length - 25} filas más</td></tr>`;
       }
 
-      if (!validos) { mostrarToast('No hay filas válidas para importar.', 'atencion'); return; }
+      if (!validos) {
+        mostrarToast('No se encontraron filas con fecha y monto válidos. Revisa el formato.', 'atencion');
+        return;
+      }
+
       prevWrap.style.display = 'block';
       prevWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    } catch(err) {
-      mostrarToast('Error al leer el archivo: ' + err.message, 'error');
+
+    } catch (err) {
+      console.error('Error procesarImportMBD:', err);
+      mostrarToast('Error al leer el archivo Excel: ' + err.message, 'error');
     }
   };
   reader.readAsArrayBuffer(file);
@@ -858,26 +893,39 @@ function cancelarPreviewMBD() {
 
 async function confirmarImportMBD() {
   const validos = _mbdDatosPreview.filter(r => r._ok);
-  if (!validos.length) { mostrarToast('No hay registros válidos.', 'atencion'); return; }
+  if (!validos.length) { mostrarToast('No hay registros válidos para importar.', 'atencion'); return; }
 
   const btn = document.getElementById('btn-confirmar-mbd');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  // Excluir campos internos, observaciones_3 y creado_por (no existen en tesoreria_mbd)
-  const registros = validos.map(({ _fila, _ok, _error, observaciones_3, creado_por, ...r }) => r);
+  // Eliminar campos internos (_fila, _ok, _error) — el objeto solo tiene columnas válidas de DB
+  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
+
   const CHUNK = 50;
-  let ok = 0, errCount = 0;
+  let ok = 0, errCount = 0, primerError = null;
+
   for (let i = 0; i < registros.length; i += CHUNK) {
-    const { error } = await _supabase.from('tesoreria_mbd').insert(registros.slice(i, i + CHUNK));
-    if (error) errCount += Math.min(CHUNK, registros.length - i);
-    else ok += Math.min(CHUNK, registros.length - i);
+    const lote = registros.slice(i, i + CHUNK);
+    const { error } = await _supabase.from('tesoreria_mbd').insert(lote);
+    if (error) {
+      errCount += lote.length;
+      if (!primerError) primerError = error.message;
+      console.error('Error importando MBD lote', i, error);
+    } else {
+      ok += lote.length;
+    }
   }
 
   if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar e importar'; }
   cancelarPreviewMBD();
 
-  if (errCount > 0) mostrarToast(`Importado: ${ok} OK, ${errCount} errores.`, 'atencion');
-  else mostrarToast(`✓ ${ok} movimiento(s) importado(s).`, 'exito');
+  if (ok > 0 && errCount === 0) {
+    mostrarToast(`✓ ${ok} movimiento(s) importado(s) correctamente.`, 'exito');
+  } else if (ok > 0) {
+    mostrarToast(`Importado parcial: ${ok} OK, ${errCount} errores. Error: ${primerError}`, 'atencion');
+  } else {
+    mostrarToast(`Error al importar: ${primerError || 'Error desconocido'}`, 'error');
+  }
   cargarMBD();
 }
 
