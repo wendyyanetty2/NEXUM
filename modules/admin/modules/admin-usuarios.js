@@ -10,6 +10,11 @@ const USUARIOS_POR_PAG = 10;
 // Datos temporales al editar usuario
 let _usr_empresas_disponibles  = []; // todas las empresas del sistema
 let _usr_asignaciones_actuales = []; // asignaciones actuales del usuario editado
+// Permisos granulares temporales: { empresaId: { modulo: { ver, editar, eliminar } } }
+let _usr_permisos_temp = {};
+
+const AREAS_DISPONIBLES  = ['Gerencia', 'Contabilidad', 'RRHH', 'Operaciones', 'Otros'];
+const CARGOS_DISPONIBLES = ['Gerente', 'Supervisor', 'Analista', 'Secretaria', 'Contadora', 'Asistente', 'Otro'];
 
 async function renderTabUsuarios(area) {
   area.innerHTML = `
@@ -35,7 +40,7 @@ async function renderTabUsuarios(area) {
             <tr>
               <th>Usuario</th>
               <th>DNI</th>
-              <th>Teléfono</th>
+              <th>Área / Cargo</th>
               <th>Rol sistema</th>
               <th>Empresas</th>
               <th>Estado</th>
@@ -93,6 +98,20 @@ async function renderTabUsuarios(area) {
                 <input type="text" id="usr-telefono" placeholder="Ej: 987654321">
               </div>
               <div class="campo">
+                <label>Área</label>
+                <select id="usr-area">
+                  <option value="">— Seleccionar —</option>
+                  ${AREAS_DISPONIBLES.map(a=>`<option value="${a}">${a}</option>`).join('')}
+                </select>
+              </div>
+              <div class="campo">
+                <label>Cargo</label>
+                <select id="usr-cargo">
+                  <option value="">— Seleccionar —</option>
+                  ${CARGOS_DISPONIBLES.map(c=>`<option value="${c}">${c}</option>`).join('')}
+                </select>
+              </div>
+              <div class="campo">
                 <label>Estado</label>
                 <select id="usr-activo">
                   <option value="true">Activo</option>
@@ -112,13 +131,13 @@ async function renderTabUsuarios(area) {
             </div>
           </div>
 
-          <!-- TAB: Permisos (solo lectura, derivado del rol) -->
+          <!-- TAB: Permisos — editables por Super Admin, solo lectura para el resto -->
           <div id="panel-permisos" style="display:none">
-            <p class="text-muted text-sm" style="margin-bottom:14px">
-              Los permisos se derivan automáticamente del rol asignado a cada empresa.
-              Selecciona una empresa para ver sus permisos efectivos.
+            <p class="text-muted text-sm" style="margin-bottom:10px">
+              Permisos granulares por módulo. Si se dejan en blanco se usan los permisos del rol.
+              Solo Super Admin puede modificarlos.
             </p>
-            <div id="permisos-empresa-sel" style="margin-bottom:12px">
+            <div style="margin-bottom:12px">
               <select id="sel-empresa-permisos" onchange="renderPermisosEfectivos()" style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:var(--radio);background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:13px;width:100%">
                 <option value="">— Selecciona una empresa —</option>
               </select>
@@ -233,7 +252,10 @@ function renderTablaUsuarios(lista) {
         </div>
       </td>
       <td data-label="DNI">${escapar(u.dni || '—')}</td>
-      <td data-label="Teléfono">${escapar(u.telefono || '—')}</td>
+      <td data-label="Área / Cargo">
+        ${u.area ? `<div style="font-size:12px;font-weight:500">${escapar(u.area)}</div>` : ''}
+        ${u.cargo ? `<div style="font-size:11px;color:var(--color-texto-suave)">${escapar(u.cargo)}</div>` : (!u.area ? '—' : '')}
+      </td>
       <td data-label="Rol">
         ${u.es_super_admin
           ? '<span class="badge badge-primario">SUPER ADMIN</span>'
@@ -308,7 +330,8 @@ function cambiarPagUsuario(dir) {
 }
 
 async function abrirModalUsuario(id) {
-  usuario_editando = id;
+  usuario_editando    = id;
+  _usr_permisos_temp  = {};
   document.getElementById('alerta-usuario').classList.remove('visible');
   activarTabModal('datos');
 
@@ -329,14 +352,21 @@ async function abrirModalUsuario(id) {
     document.getElementById('usr-dni').value      = u.dni || '';
     document.getElementById('usr-telefono').value = u.telefono || '';
     document.getElementById('usr-activo').value   = String(u.activo);
+    document.getElementById('usr-area').value     = u.area || '';
+    document.getElementById('usr-cargo').value    = u.cargo || '';
     document.getElementById('campo-password').style.display = 'none';
 
-    // Cargar asignaciones actuales
+    // Cargar asignaciones actuales (incluye permisos_json)
     const { data: asigs } = await _supabase
       .from('usuarios_empresas')
-      .select('id, empresa_operadora_id, rol, activo')
+      .select('id, empresa_operadora_id, rol, activo, permisos_json')
       .eq('usuario_id', id);
     _usr_asignaciones_actuales = asigs || [];
+
+    // Precargar permisos granulares en temp para empresas que los tengan configurados
+    _usr_asignaciones_actuales.forEach(a => {
+      if (a.permisos_json) _usr_permisos_temp[a.empresa_operadora_id] = a.permisos_json;
+    });
   } else {
     document.getElementById('modal-usuario-titulo').textContent = 'Nuevo usuario';
     ['usr-nombre','usr-email','usr-dni','usr-telefono','usr-password']
@@ -414,45 +444,96 @@ function _actualizarSelectorPermisosEmpresas() {
 }
 
 function renderPermisosEfectivos() {
-  const sel    = document.getElementById('sel-empresa-permisos');
-  const empId  = sel?.value;
-  const cont   = document.getElementById('tabla-permisos-efectivos');
+  const sel   = document.getElementById('sel-empresa-permisos');
+  const empId = sel?.value;
+  const cont  = document.getElementById('tabla-permisos-efectivos');
   if (!empId || !cont) return;
 
   const selRol = document.getElementById('rol-emp-' + empId);
   const rol    = selRol?.value || 'CONSULTA';
-  const p      = _permisosBaseDeRol(rol);
+  const base   = _permisosBaseDeRol(rol);
+  // Usar permisos granulares ya guardados en _usr_permisos_temp para esta empresa,
+  // o la base del rol si no hay override
+  const actual = _usr_permisos_temp[empId] || base;
+  const esAdmin = perfil_usuario?.es_super_admin;
 
   const modulosVis = Object.entries(NEXUM_PERMISOS_MODULOS)
-    .filter(([id]) => id !== 'admin' || rol === 'SUPER_ADMIN');
+    .filter(([id]) => id !== 'admin');
 
-  const check = (val) => val
-    ? '<span class="permiso-check si">✓</span>'
-    : '<span class="permiso-check no">—</span>';
+  const chk = (empId, modId, accion, val) => {
+    const id = `perm-${empId}-${modId}-${accion}`;
+    if (esAdmin) {
+      return `<input type="checkbox" id="${id}" ${val ? 'checked' : ''}
+        onchange="_onPermisoCambio('${empId}','${modId}','${accion}',this.checked)"
+        style="width:16px;height:16px;cursor:pointer;accent-color:var(--color-secundario)">`;
+    }
+    return val
+      ? '<span style="color:#2F855A;font-size:15px">✓</span>'
+      : '<span style="color:#A0AEC0;font-size:15px">—</span>';
+  };
+
+  const tieneOverride = !!_usr_permisos_temp[empId];
 
   cont.innerHTML = `
-    <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:10px">
-      Permisos efectivos para el rol <strong>${rol}</strong>:
-    </p>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <span style="font-size:12px;color:var(--color-texto-suave)">
+        Rol base: <strong>${rol}</strong>${tieneOverride ? ' · <span style="color:var(--color-secundario)">Permisos personalizados activos</span>' : ''}
+      </span>
+      ${esAdmin ? `
+        <div style="display:flex;gap:6px">
+          <button onclick="_setPermisosDesdeRol('${empId}','${rol}')" style="padding:4px 10px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:1px solid var(--color-secundario);border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)">
+            ↺ Restaurar desde rol
+          </button>
+          <button onclick="_limpiarPermisosEmpresa('${empId}')" style="padding:4px 10px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)">
+            🗑️ Limpiar (usar rol)
+          </button>
+        </div>` : ''}
+    </div>
     <table class="permiso-grid">
       <thead>
         <tr>
-          <th style="min-width:140px">Módulo</th>
-          <th style="width:80px">Ver</th>
-          <th style="width:80px">Editar</th>
-          <th style="width:80px">Eliminar</th>
+          <th style="min-width:160px">Módulo</th>
+          <th style="width:70px;text-align:center">Ver</th>
+          <th style="width:70px;text-align:center">Editar</th>
+          <th style="width:80px;text-align:center">Eliminar</th>
         </tr>
       </thead>
       <tbody>
         ${modulosVis.map(([id, m]) => `
           <tr>
-            <td>${m.icono} ${m.nombre}</td>
-            <td>${check(p[id]?.ver)}</td>
-            <td>${check(p[id]?.editar)}</td>
-            <td>${check(p[id]?.eliminar)}</td>
+            <td style="font-size:13px">${m.icono} ${m.nombre}</td>
+            <td style="text-align:center">${chk(empId, id, 'ver',      actual[id]?.ver)}</td>
+            <td style="text-align:center">${chk(empId, id, 'editar',   actual[id]?.editar)}</td>
+            <td style="text-align:center">${chk(empId, id, 'eliminar', actual[id]?.eliminar)}</td>
           </tr>`).join('')}
       </tbody>
     </table>`;
+}
+
+function _onPermisoCambio(empId, modId, accion, valor) {
+  if (!_usr_permisos_temp[empId]) {
+    const selRol = document.getElementById('rol-emp-' + empId);
+    const rol = selRol?.value || 'CONSULTA';
+    _usr_permisos_temp[empId] = JSON.parse(JSON.stringify(_permisosBaseDeRol(rol)));
+  }
+  if (!_usr_permisos_temp[empId][modId]) _usr_permisos_temp[empId][modId] = {};
+  _usr_permisos_temp[empId][modId][accion] = valor;
+  // Refrescar el estado de override en la UI
+  const cont = document.getElementById('tabla-permisos-efectivos');
+  if (cont) {
+    const badge = cont.querySelector('[data-override-badge]');
+    if (badge) badge.style.display = 'inline';
+  }
+}
+
+function _setPermisosDesdeRol(empId, rol) {
+  _usr_permisos_temp[empId] = JSON.parse(JSON.stringify(_permisosBaseDeRol(rol)));
+  renderPermisosEfectivos();
+}
+
+function _limpiarPermisosEmpresa(empId) {
+  delete _usr_permisos_temp[empId];
+  renderPermisosEfectivos();
 }
 
 function cerrarModalUsuario() {
@@ -460,6 +541,7 @@ function cerrarModalUsuario() {
   usuario_editando              = null;
   _usr_asignaciones_actuales    = [];
   _usr_empresas_disponibles     = [];
+  _usr_permisos_temp            = {};
 }
 
 async function guardarUsuario() {
@@ -472,6 +554,8 @@ async function guardarUsuario() {
   const dni      = document.getElementById('usr-dni').value.trim() || null;
   const telefono = document.getElementById('usr-telefono').value.trim() || null;
   const activo   = document.getElementById('usr-activo').value === 'true';
+  const area     = document.getElementById('usr-area').value || null;
+  const cargo    = document.getElementById('usr-cargo').value || null;
 
   if (!nombre) { alerta.textContent = 'El nombre es obligatorio.'; alerta.classList.add('visible'); return; }
   if (!email)  { alerta.textContent = 'El email es obligatorio.';  alerta.classList.add('visible'); return; }
@@ -492,9 +576,9 @@ async function guardarUsuario() {
   if (usuario_editando) {
     const anterior = usuarios_lista.find(u => u.id === usuario_editando);
     ({ error } = await _supabase.from('usuarios')
-      .update({ nombre, dni, telefono, activo })
+      .update({ nombre, dni, telefono, activo, area, cargo })
       .eq('id', usuario_editando));
-    if (!error) await registrarHistorial('usuarios', usuario_editando, 'EDITAR', anterior, { nombre, dni, telefono, activo });
+    if (!error) await registrarHistorial('usuarios', usuario_editando, 'EDITAR', anterior, { nombre, dni, telefono, activo, area, cargo });
   } else {
     const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZm5oanlxZWh2ZHF6aWtqaG1nIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjczNDQ1MCwiZXhwIjoyMDkyMzEwNDUwfQ.zdGxwMEgPq8iN5zjfHUj9Gf3IEcDiebaNe0OOTF-ZUw';
     const resp = await fetch(`${NEXUM_CONFIG.supabase.url}/auth/v1/admin/users`, {
@@ -511,7 +595,7 @@ async function guardarUsuario() {
       error = { message: authData.msg || authData.error_description || 'Error al crear usuario en Auth' };
     } else {
       const { error: err2, data } = await _supabase.from('usuarios')
-        .insert({ auth_id: authData.id, email, nombre, dni, telefono, activo })
+        .insert({ auth_id: authData.id, email, nombre, dni, telefono, activo, area, cargo })
         .select().single();
       error = err2;
       if (!error && data) {
@@ -549,21 +633,23 @@ async function _guardarAsignacionesUsuario(usuarioId) {
     const rol     = sel?.value || 'CONTADOR';
     const asigExistente = _usr_asignaciones_actuales.find(a => a.empresa_operadora_id === emp.id);
 
+    // permisos_json: guardar los del temp si existen, o null (usa rol)
+    const permisosJson = _usr_permisos_temp[emp.id] || null;
+
     if (checked) {
       if (asigExistente) {
-        // Actualizar rol si cambió
-        if (asigExistente.rol !== rol || asigExistente.activo === false) {
+        const sinCambio = asigExistente.rol === rol && asigExistente.activo !== false;
+        const permCambiado = JSON.stringify(asigExistente.permisos_json) !== JSON.stringify(permisosJson);
+        if (!sinCambio || permCambiado) {
           await _supabase.from('usuarios_empresas')
-            .update({ rol, activo: true })
+            .update({ rol, activo: true, permisos_json: permisosJson })
             .eq('id', asigExistente.id);
         }
       } else {
-        // Crear nueva asignación
         await _supabase.from('usuarios_empresas')
-          .insert({ usuario_id: usuarioId, empresa_operadora_id: emp.id, rol, activo: true });
+          .insert({ usuario_id: usuarioId, empresa_operadora_id: emp.id, rol, activo: true, permisos_json: permisosJson });
       }
     } else if (asigExistente) {
-      // Desactivar asignación (no eliminar para mantener historial)
       await _supabase.from('usuarios_empresas')
         .update({ activo: false })
         .eq('id', asigExistente.id);
@@ -599,6 +685,8 @@ function exportarUsuariosExcel() {
     'Email':       u.email,
     'DNI':         u.dni || '',
     'Teléfono':    u.telefono || '',
+    'Área':        u.area || '',
+    'Cargo':       u.cargo || '',
     'Super Admin': u.es_super_admin ? 'Sí' : 'No',
     'Estado':      u.activo ? 'Activo' : 'Inactivo',
     'Creación':    formatearFecha(u.fecha_creacion)

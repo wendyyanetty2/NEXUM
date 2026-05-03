@@ -95,7 +95,7 @@ async function registrarHistorial(tabla, registroId, accion, datosAnteriores = n
 // NEXUM v3.0 — Sistema de permisos y control de acceso
 // ══════════════════════════════════════════════════════════════
 
-// Definición de módulos con permisos
+// Definición de módulos con permisos (OCR eliminado)
 const NEXUM_PERMISOS_MODULOS = {
   dashboard:    { nombre: 'Dashboard',      icono: '🏠' },
   admin:        { nombre: 'Administración', icono: '⚙️' },
@@ -104,7 +104,6 @@ const NEXUM_PERMISOS_MODULOS = {
   conciliacion: { nombre: 'Conciliación',   icono: '🔗' },
   planilla:     { nombre: 'Planilla',       icono: '👥' },
   tributaria:   { nombre: 'Tributaria',     icono: '📋' },
-  ocr:          { nombre: 'OCR',            icono: '🔍' },
   reportes:     { nombre: 'Reportes',       icono: '📊' },
   contabilidad: { nombre: 'Contabilidad',   icono: '📒' },
 };
@@ -142,7 +141,9 @@ function obtenerPermisosActivos() {
   }
   const empresa = obtenerEmpresaActiva();
   const rol     = empresa?.rol || 'CONSULTA';
-  const p       = { rol, modulos: _permisosBaseDeRol(rol) };
+  // Si la empresa tiene permisos granulares configurados, usarlos; si no, derivar del rol
+  const modulos = empresa?.permisos_json || _permisosBaseDeRol(rol);
+  const p       = { rol, modulos };
   sessionStorage.setItem('nexum_permisos', JSON.stringify(p));
   return p;
 }
@@ -186,12 +187,12 @@ async function cargarEmpresasDelUsuario() {
   } else {
     const { data } = await _supabase
       .from('usuarios_empresas')
-      .select('rol, empresa_operadora_id, empresas_operadoras(*)')
+      .select('rol, empresa_operadora_id, permisos_json, empresas_operadoras(*)')
       .eq('usuario_id', perfil.id)
       .eq('activo', true);
     empresas = (data || [])
       .filter(ue => ue.empresas_operadoras?.activa)
-      .map(ue => ({ ...ue.empresas_operadoras, rol: ue.rol }));
+      .map(ue => ({ ...ue.empresas_operadoras, rol: ue.rol, permisos_json: ue.permisos_json || null }));
   }
 
   sessionStorage.setItem('nexum_mis_empresas', JSON.stringify(empresas));
