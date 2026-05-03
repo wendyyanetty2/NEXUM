@@ -67,14 +67,19 @@ async function renderTabMovimientos(area) {
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span id="mov-contador" class="text-muted text-sm"></span>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()">🔄 Limpiar</button>
-            <button class="btn btn-secundario btn-sm" onclick="cargarMovimientos()">↺ Actualizar</button>
-            <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()">⬇ Excel</button>
+            <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()"
+              title="Restablecer todos los filtros a su valor por defecto">🔄 Limpiar filtros</button>
+            <button class="btn btn-secundario btn-sm" onclick="cargarMovimientos()"
+              title="Recargar los movimientos desde la base de datos">↺ Actualizar</button>
+            <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()"
+              title="Exportar los movimientos visibles a Excel (.xlsx)">⬇ Excel</button>
             <button class="btn btn-sm" onclick="_abrirModalEliminarMesMov()"
+              title="Eliminar TODOS los movimientos del mes seleccionado (requiere doble confirmación)"
               style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
-              🗑️ Eliminar mes
+              🗑️ Eliminar mes completo
             </button>
-            <button class="btn btn-primario btn-sm" onclick="abrirModalMovimiento(null)">+ Nuevo</button>
+            <button class="btn btn-primario btn-sm" onclick="abrirModalMovimiento(null)"
+              title="Agregar un nuevo movimiento manualmente">+ Nuevo</button>
           </div>
         </div>
       </div>
@@ -286,11 +291,14 @@ function renderTablaMovimientos() {
         <td style="${_TD}max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.observaciones_2||'')}">${escapar(r.observaciones_2||'—')}</td>
         <td style="${_TD}text-align:center;white-space:nowrap">
           <button onclick="abrirModalMovimiento('${r.id}')"
-            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Editar">✏️</button>
+            title="Editar este movimiento individualmente"
+            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
           <button onclick="_abrirModalDividirMBD('${r.id}')"
-            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Dividir en comprobantes">✂️</button>
+            title="Dividir este movimiento en varios comprobantes"
+            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✂️</button>
           <button onclick="eliminarMovimiento('${r.id}')"
-            style="padding:4px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Eliminar">🗑️</button>
+            title="Eliminar solo este movimiento"
+            style="padding:4px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
         </td>
       </tr>`;
     }).join('');
@@ -302,9 +310,9 @@ function renderTablaMovimientos() {
   const pagEl = document.getElementById('pag-movimientos');
   if (pagEl) pagEl.innerHTML = total > MOV_POR_PAG ? `
     <span class="pag-info">${inicio+1}–${Math.min(inicio+MOV_POR_PAG,total)} de ${total}</span>
-    <button class="btn-pag" onclick="cambiarPagMov(-1)" ${movimientos_pag<=1?'disabled':''}>‹</button>
+    <button class="btn-pag" title="Página anterior" onclick="cambiarPagMov(-1)" ${movimientos_pag<=1?'disabled':''}>‹</button>
     <span>${movimientos_pag} / ${pags}</span>
-    <button class="btn-pag" onclick="cambiarPagMov(1)"  ${movimientos_pag>=pags?'disabled':''}>›</button>` : '';
+    <button class="btn-pag" title="Página siguiente" onclick="cambiarPagMov(1)"  ${movimientos_pag>=pags?'disabled':''}>›</button>` : '';
 }
 
 function cambiarPagMov(dir) { movimientos_pag += dir; renderTablaMovimientos(); }
@@ -439,42 +447,58 @@ async function exportarMovimientosExcel() {
 // ── Barra flotante de acciones (aparece al seleccionar) ─────────────
 function _movActualizarBarra() {
   const n = mov_seleccionados.size;
+
+  // Buscar o crear el contenedor
   let barra = document.getElementById('mov-barra-masiva');
 
-  if (n === 0) { if (barra) barra.remove(); return; }
+  if (n === 0) {
+    if (barra) barra.remove();
+    return;
+  }
 
   if (!barra) {
     barra = document.createElement('div');
     barra.id = 'mov-barra-masiva';
-    barra.style.cssText = `
-      position:fixed;bottom:0;left:0;right:0;z-index:8000;
-      background:var(--color-primario);color:#fff;
-      padding:12px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-      box-shadow:0 -4px 24px rgba(0,0,0,.35);
-    `;
+    Object.assign(barra.style, {
+      position: 'fixed', bottom: '0', left: '0', right: '0', zIndex: '8000',
+      background: '#2C5282', color: '#fff',
+      padding: '12px 24px', display: 'flex', alignItems: 'center',
+      gap: '12px', flexWrap: 'wrap',
+      boxShadow: '0 -4px 24px rgba(0,0,0,.35)',
+      fontFamily: 'inherit',
+    });
     document.body.appendChild(barra);
   }
 
+  const editLabel = n === 1
+    ? '✏️ Editar este registro'
+    : `✏️ Editar ${n} registros`;
+
   barra.innerHTML = `
-    <span style="font-size:14px;font-weight:600">
+    <span style="font-size:14px;font-weight:600;white-space:nowrap">
       ☑ ${n} registro${n > 1 ? 's' : ''} seleccionado${n > 1 ? 's' : ''}
     </span>
     <div style="flex:1;min-width:16px"></div>
     <button onclick="_movEditarMasivo()"
-      style="padding:8px 18px;background:#fff;color:var(--color-primario);border:none;
-             border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;font-family:var(--font)">
-      ✏️ Editar campos
+      title="${n === 1
+        ? 'Editar individualmente el registro seleccionado'
+        : 'Abrir modal para editar campos en los ' + n + ' registros seleccionados (solo los campos que actives se sobreescribirán)'}"
+      style="padding:8px 18px;background:#fff;color:#2C5282;border:none;
+             border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit">
+      ${editLabel}
     </button>
     <button onclick="_movEliminarMasivo()"
+      title="Eliminar SOLO los ${n} registros seleccionados (distinto al botón \'Eliminar mes completo\')"
       style="padding:8px 18px;background:rgba(255,255,255,.18);color:#fff;
              border:1px solid rgba(255,255,255,.4);border-radius:6px;cursor:pointer;
-             font-weight:500;font-size:13px;font-family:var(--font)">
-      🗑️ Eliminar
+             font-weight:500;font-size:13px;font-family:inherit">
+      🗑️ Eliminar seleccionados
     </button>
     <button onclick="_movCancelarSeleccion()"
-      style="padding:8px 12px;background:none;color:rgba(255,255,255,.65);border:none;
-             border-radius:6px;cursor:pointer;font-size:13px;font-family:var(--font)">
-      ✕ Cancelar
+      title="Deseleccionar todos los registros y cerrar esta barra"
+      style="padding:8px 12px;background:none;color:rgba(255,255,255,.7);border:none;
+             border-radius:6px;cursor:pointer;font-size:13px;font-family:inherit">
+      ✕ Cancelar selección
     </button>
   `;
 }
@@ -602,14 +626,16 @@ function _movEditarMasivo() {
         position:sticky;bottom:0;background:var(--color-bg-card)">
         <div style="padding:8px 12px;background:rgba(44,82,130,.08);border-radius:6px;
           font-size:12px;color:var(--color-texto-suave);margin-bottom:12px">
-          ⚠️ Solo se sobrescribirán los campos con ☑ activado. Los demás no se tocarán.
+          ⚠️ Solo se sobrescribirán los campos con ☑ activado. Los campos sin ☑ no se tocarán en ningún registro.
         </div>
         <div style="display:flex;gap:10px;justify-content:flex-end">
           <button onclick="document.getElementById('overlay-masivo').remove()"
+            title="Cerrar sin guardar cambios"
             style="padding:9px 20px;border:1px solid var(--color-borde);border-radius:8px;
               background:var(--color-bg-card);color:var(--color-texto);cursor:pointer;
               font-size:13px;font-family:var(--font)">Cancelar</button>
           <button id="btn-guardar-masivo" onclick="_movGuardarMasivo()"
+            title="Aplicar los campos activados (☑) a todos los ${n} registros seleccionados en un solo guardado"
             style="padding:9px 20px;border:none;border-radius:8px;
               background:var(--color-secundario);color:#fff;cursor:pointer;
               font-size:13px;font-family:var(--font);font-weight:600">
