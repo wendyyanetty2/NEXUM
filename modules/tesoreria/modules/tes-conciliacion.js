@@ -171,16 +171,19 @@ async function _concCargarDatos() {
   if (nat === 'CARGO') { qVentas  = qVentas.eq('id',  '__NINGUNO__'); }
   if (nat === 'RH')    { qCompras = qCompras.eq('id', '__NINGUNO__'); qVentas = qVentas.eq('id', '__NINGUNO__'); }
 
-  // ── Lado banco: movimientos con cuenta bancaria ──
-  let qBanco = _supabase.from('movimientos')
-    .select('*, cuentas_bancarias(nombre_alias)')
-    .eq('empresa_operadora_id', empresa_activa.id)
-    .eq('conciliado', false)
-    .not('cuenta_bancaria_id', 'is', null)
-    .gte('fecha', desdeBanco)
-    .lte('fecha', hastaBanco);
-  if (nat === 'CARGO' || nat === 'ABONO') qBanco = qBanco.eq('naturaleza', nat);
-  if (nat === 'RH') qBanco = qBanco.eq('naturaleza', 'CARGO');
+  // ── Lado banco: tesoreria_mbd — SOLO pendientes sin comprobante ──
+  // Excluir EMITIDO y CANCELADO (ya tienen sustento o fueron descartados)
+  let qBanco = _supabase.from('tesoreria_mbd')
+    .select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .in('entrega_doc', ['PENDIENTE', 'OBSERVADO'])
+    .gte('fecha_deposito', desdeBanco)
+    .lte('fecha_deposito', hastaBanco);
+
+  // Filtro de naturaleza: derivado del signo del monto
+  // CARGO = monto negativo (<0), ABONO = monto positivo (≥0)
+  if (nat === 'CARGO' || nat === 'RH') qBanco = qBanco.lt('monto', 0);
+  if (nat === 'ABONO')                 qBanco = qBanco.gte('monto', 0);
 
   const [resComp, resVent, resRH, resBanco] = await Promise.all([qCompras, qVentas, qRH, qBanco]);
 
@@ -270,16 +273,21 @@ function _concNormalizarRH(rh) {
 }
 
 function _concNormalizarBanco(m) {
+  const monto = parseFloat(m.monto) || 0;
   return {
     id:          m.id,
     _source:     'BANCO',
     _raw:        m,
-    fecha:       m.fecha,
-    naturaleza:  m.naturaleza,
-    importe:     parseFloat(m.importe) || 0,
+    fecha:       m.fecha_deposito,                         // tesoreria_mbd usa fecha_deposito
+    naturaleza:  monto < 0 ? 'CARGO' : 'ABONO',           // derivado del signo del monto
+    importe:     Math.abs(monto),                          // siempre positivo para comparar
     moneda:      m.moneda || 'PEN',
-    descripcion: m.descripcion || m.numero_operacion || '',
-    cuenta:      m.cuentas_bancarias?.nombre_alias || '',
+    descripcion: m.proveedor_empresa_personal              // proveedor como descripción principal
+                 || m.descripcion
+                 || m.nro_operacion_bancaria || '',
+    nroOp:       m.nro_operacion_bancaria || '',
+    entregaDoc:  m.entrega_doc || 'PENDIENTE',
+    cuenta:      '',                                       // tesoreria_mbd no tiene cuenta bancaria directa
   };
 }
 
@@ -520,7 +528,7 @@ function _concRenderSugerencias() {
             return `
               <tr style="background:${rowBg}">
                 <td>${_concBadgeConfianza(confianza)}${alertaFecha}</td>
-                <td style="white-space:nowrap">${doc.fecha || '—'}</td>
+                <td style="white-space:nowrap">${formatearFecha(doc.fecha)}</td>
                 <td class="text-sm">
                   <div style="font-weight:500">${escapar((doc.nombre || doc.documento || '—').slice(0,30))}</div>
                   <div style="color:var(--color-texto-suave);font-size:11px">${doc.tipo}${doc.documento ? ' · ' + escapar(doc.documento.slice(0,18)) : ''}</div>
@@ -529,8 +537,8 @@ function _concRenderSugerencias() {
                   ${doc.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(doc.importe, doc.moneda)}
                 </td>
                 <td style="text-align:center;font-size:16px;color:var(--color-texto-suave)">⟷</td>
-                <td style="white-space:nowrap">${banco.fecha || '—'}</td>
-                <td class="text-sm">${escapar((banco.descripcion || '—').slice(0,30))}
+                <td style="white-space:nowrap">${formatearFecha(banco.fecha)}</td>
+                <td class="text-sm" title="${escapar(banco.descripcion||'')}">${escapar((banco.descripcion || '—').slice(0,30))}
                   ${banco.cuenta ? `<div style="font-size:11px;color:var(--color-texto-suave)">${escapar(banco.cuenta)}</div>` : ''}
                 </td>
                 <td class="text-right" style="font-weight:600;white-space:nowrap;color:${banco.naturaleza==='CARGO'?'var(--color-rojo)':'var(--color-verde)'}">
@@ -657,8 +665,8 @@ function _concRenderSinMatch() {
         return `
           <tr onclick="_concSeleccionarBanco('${b.id}')"
               style="cursor:pointer;${sel?'background:var(--color-primario-claro,#EBF8FF);font-weight:500':''}">
-            <td style="white-space:nowrap">${b.fecha || '—'}</td>
-            <td class="text-sm">${escapar((b.descripcion || '—').slice(0,26))}</td>
+            <td style="white-space:nowrap">${formatearFecha(b.fecha)}</td>
+            <td class="text-sm" title="${escapar(b.descripcion||'')}">${escapar((b.descripcion || '—').slice(0,26))}</td>
             <td class="text-right ${b.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
               ${b.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(b.importe, b.moneda)}
             </td>
@@ -748,13 +756,17 @@ function _concLimpiarSeleccion() {
 async function _concAprobarMatchInterno(doc, banco) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  // 1. Marcar movimiento bancario como conciliado
-  const { error: errBanco } = await _supabase.from('movimientos')
-    .update({ conciliado: true, fecha_conciliacion: hoy })
+  // 1. Actualizar tesoreria_mbd: marcar como EMITIDO + escribir N° comprobante
+  const { error: errBanco } = await _supabase.from('tesoreria_mbd')
+    .update({
+      entrega_doc:   'EMITIDO',
+      nro_factura_doc: doc.documento || null,   // número legible: E001-14, F001-xxx
+      tipo_doc:        doc._source  || null,    // COMPRA / RH / VENTA
+    })
     .eq('id', banco.id);
   if (errBanco) return errBanco.message;
 
-  // 2. Marcar documento en su tabla maestra
+  // 2. Marcar documento en su tabla maestra como conciliado
   const tablaDoc = doc._source === 'COMPRA' ? 'registro_compras'
                  : doc._source === 'VENTA'  ? 'registro_ventas'
                  : 'rh_registros';
@@ -763,7 +775,7 @@ async function _concAprobarMatchInterno(doc, banco) {
     .eq('id', doc.id);
   if (errDoc) return errDoc.message;
 
-  // 3. Auditoría en conciliaciones (fire-and-forget, tabla opcional)
+  // 3. Auditoría en conciliaciones (fire-and-forget)
   _supabase.from('conciliaciones').insert({
     empresa_operadora_id: empresa_activa.id,
     movimiento_id:        banco.id,
@@ -848,11 +860,19 @@ async function _concAprobarGrupoRH(bancoId, docIdsStr) {
 
   const hoy = new Date().toISOString().slice(0, 10);
 
-  const { error: errBanco } = await _supabase.from('movimientos')
-    .update({ conciliado: true, fecha_conciliacion: hoy })
+  // Reunir números de RH para anotarlos en el MBD
+  const nrosRH = grupo.docs.map(d => d.documento).filter(Boolean).join(', ');
+
+  const { error: errBanco } = await _supabase.from('tesoreria_mbd')
+    .update({
+      entrega_doc:     'EMITIDO',
+      nro_factura_doc: nrosRH || null,
+      tipo_doc:        'RH',
+    })
     .eq('id', bancoId);
   if (errBanco) { mostrarToast('Error banco: ' + errBanco.message, 'error'); return; }
 
+  const hoy = new Date().toISOString().slice(0, 10);
   const results = await Promise.all(
     docIds.map(docId =>
       _supabase.from('rh_registros')
@@ -989,7 +1009,7 @@ async function _concDeshacerMatch(docId, tipo) {
               : tipo === 'VENTA'  ? 'registro_ventas'
               : 'rh_registros';
 
-  // Recuperar movimiento_id para revertir el banco también
+  // Recuperar movimiento_id para revertir el MBD también
   const { data: docData } = await _supabase.from(tabla)
     .select('movimiento_id')
     .eq('id', docId)
@@ -1003,10 +1023,10 @@ async function _concDeshacerMatch(docId, tipo) {
     .eq('id', docId);
   if (errDoc) { mostrarToast('Error: ' + errDoc.message, 'error'); return; }
 
-  // Revertir movimiento bancario (sin bloquear si falla)
+  // Revertir tesoreria_mbd — vuelve a PENDIENTE sin comprobante
   if (movimientoId) {
-    await _supabase.from('movimientos')
-      .update({ conciliado: false, fecha_conciliacion: null })
+    await _supabase.from('tesoreria_mbd')
+      .update({ entrega_doc: 'PENDIENTE', nro_factura_doc: null, tipo_doc: null })
       .eq('id', movimientoId);
   }
 

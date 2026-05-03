@@ -764,10 +764,18 @@ function _renderTablaSinMatch(wrap) {
 async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefijo) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  // Actualizar tesoreria_mbd
+  // Actualizar tesoreria_mbd: EMITIDO + escribir el número de comprobante
+  const itemLocal = Object.values(_conItemCache).find(it => it.mov?.id === movId);
+  const nroDoc    = itemLocal?.doc?._ndoc || null;
+  const tipoDoc   = itemLocal?.doc?._tipo || null;
+
   const { error: errMov } = await _supabase
     .from('tesoreria_mbd')
-    .update({ entrega_doc: 'EMITIDO' })
+    .update({
+      entrega_doc:     'EMITIDO',
+      nro_factura_doc: nroDoc,
+      tipo_doc:        tipoDoc,
+    })
     .eq('id', movId);
 
   if (errMov) { mostrarToast('Error al actualizar movimiento: ' + errMov.message, 'error'); return; }
@@ -838,7 +846,11 @@ async function _aprobarEnLote() {
 
   for (const item of lista) {
     const { error: e1 } = await _supabase.from('tesoreria_mbd')
-      .update({ entrega_doc: 'EMITIDO' }).eq('id', item.mov.id);
+      .update({
+        entrega_doc:     'EMITIDO',
+        nro_factura_doc: item.doc._ndoc || null,
+        tipo_doc:        item.doc._tipo || null,
+      }).eq('id', item.mov.id);
 
     if (e1) { errores++; continue; }
 
@@ -959,8 +971,17 @@ async function _panelBuscar(movId) {
 }
 
 async function _vincularManual(movId, docTipo, docId) {
+  // Buscar el documento en los resultados para obtener su número legible
+  const todos = [..._con_resultados.exactos, ..._con_resultados.posibles, ..._con_resultados.sin_match];
+  const itemDoc = todos.find(i => i.doc?.id === docId);
+  const nroDoc  = itemDoc?.doc?._ndoc || null;
+
   const { error } = await _supabase.from('tesoreria_mbd')
-    .update({ entrega_doc: 'EMITIDO' }).eq('id', movId);
+    .update({
+      entrega_doc:     'EMITIDO',
+      nro_factura_doc: nroDoc,
+      tipo_doc:        docTipo,
+    }).eq('id', movId);
 
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
 
