@@ -377,7 +377,7 @@
   color: var(--color-texto);
   border-color: var(--color-borde);
 }
-[data-tema="oscuro"] .tab-btn { color: #718096; }
+[data-tema="oscuro"] .tab-btn { color: var(--color-texto-suave); }
 [data-tema="oscuro"] .tab-btn.activo { color: var(--color-secundario); }
 [data-tema="oscuro"] .en-construccion h2 { color: var(--color-texto); }
 [data-tema="oscuro"] .area-contenido .page-header h1 { color: var(--color-texto); }

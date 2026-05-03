@@ -38,7 +38,7 @@
   --color-bg-alt:      #252836;
   --color-borde:       #2D3748;
   --color-texto:       #E2E8F0;
-  --color-texto-suave: #718096;
+  --color-texto-suave: #A0AEC0;
   --color-hover:       #1E2533;
   --sombra-sm:         0 1px 3px rgba(0,0,0,0.3);
   --sombra-md:         0 4px 12px rgba(0,0,0,0.4);
@@ -188,6 +188,7 @@ h4 { font-size: 1rem;     font-weight: 600; }
   padding: 8px 12px; border: 1px solid var(--color-borde);
   border-radius: var(--radio); font-family: var(--font); font-size: 14px;
   outline: none; transition: border-color var(--transicion);
+  background: var(--color-bg-card); color: var(--color-texto);
 }
 .filtros-barra input[type="text"]:focus,
 .filtros-barra select:focus { border-color: var(--color-secundario); }
@@ -354,6 +355,8 @@ h4 { font-size: 1rem;     font-weight: 600; }
 [data-tema="oscuro"] .badge-critico  { background: rgba(197,48,48,.2);   color: #FC8181; }
 [data-tema="oscuro"] .badge-cargo    { background: rgba(66,153,225,.15); color: #90CDF4; }
 [data-tema="oscuro"] .badge-abono    { background: rgba(47,133,90,.15);  color: #9AE6B4; }
+[data-tema="oscuro"] .badge-info     { background: rgba(159,122,234,.2); color: #D6BCFA; }
+[data-tema="oscuro"] .btn-icono.peligro:hover { background: rgba(197,48,48,.2); }
 [data-tema="oscuro"] .btn-icono.peligro:hover { background: rgba(197,48,48,.2); }
 
 /* ── Responsive general ──────────────────────────────────────── */
