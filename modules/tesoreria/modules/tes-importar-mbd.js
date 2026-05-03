@@ -283,8 +283,6 @@ function renderResumenMBD(filas) {
   `;
 }
 
-let _mbdDatos = [];
-
 async function abrirModalMBD(id = null) {
   let item = null;
   await _mbdCargarCatalogos();
@@ -734,8 +732,6 @@ function procesarImportMBD(input) {
       );
       const inicio = esTieneEncabezado ? 1 : 0;
 
-      const formatoNuevo = cabeceras.some(h => h.includes('medio'));
-
       const toDate = v => {
         if (v === null || v === undefined || v === '') return null;
         if (typeof v === 'number') {
@@ -756,12 +752,6 @@ function procesarImportMBD(input) {
         const monto = toNum(r[4]);
         const ok    = !!fecha && monto !== null;
         
-        // Mapeo seguro basado en tu plantilla JSON
-        const medioPago     = r[16]?.toString()||null; 
-        const observaciones = r[17]?.toString()||null;
-        const detalles      = r[18]?.toString()||null;
-        const obs2          = r[19]?.toString()||null;
-
         return {
           _fila: i + inicio + 2,
           _ok: ok,
@@ -785,10 +775,11 @@ function procesarImportMBD(input) {
           nro_factura_doc:          r[13]?.toString()||null,
           tipo_doc:                 r[14]?.toString()||null,
           autorizacion:             r[15]?.toString()||null,
-          observaciones_3:          medioPago,
-          observaciones:            observaciones,
-          detalles_compra_servicio: detalles,
-          observaciones_2:          obs2,
+          observaciones:            r[16]?.toString()||null,
+          detalles_compra_servicio: r[17]?.toString()||null,
+          observaciones_2:          r[18]?.toString()||null,
+          observaciones_3:          r[19]?.toString()||null, // Medio de Pago
+          observaciones_4:          r[20]?.toString()||null,
           creado_por:               perfil_usuario.id,
         };
       }).filter(r => r._fila > 0);
@@ -850,14 +841,8 @@ async function confirmarImportMBD() {
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
   // Filtramos los registros para que solo tengan las columnas que la base de datos acepta.
-  // IMPORTANTE: Quitamos campos internos (_fila, _ok, _error) 
-  // y también observaciones_3 si el servidor da error con ella.
-  const registros = validos.map(({ _fila, _ok, _error, ...r }) => {
-    // Si tus pruebas fallan por 'observaciones_3' o 'creado_por', puedes eliminarlos aquí:
-    // delete r.observaciones_3; 
-    // delete r.creado_por;
-    return r;
-  });
+  // IMPORTANTE: Quitamos campos internos (_fila, _ok, _error)
+  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
 
   const CHUNK = 50;
   let ok = 0, errCount = 0;
@@ -1092,7 +1077,7 @@ function _abrirModalConciliacionMBD(idGrupo, ids) {
                 ${TIPOS_DOC_MBD.map(t => `<option value="${t.val}">${t.lab}</option>`).join('')}
               </select>
             </div>
-            <div class="campo">
+          <div class="campo">
               <label>N° Factura / Comprobante <span style="color:#C53030">*</span></label>
               <input type="text" id="conc-nro-doc" placeholder="Ej: F001-00123">
             </div>
