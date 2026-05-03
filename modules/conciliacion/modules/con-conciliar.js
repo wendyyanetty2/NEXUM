@@ -238,28 +238,62 @@ async function _ejecutarConciliacion(periodo, cuentaId) {
 function _calcularScore(movimiento, documento) {
   let score = 0;
 
+  // ── Monto (50 pts máx) ──────────────────────────────────────────
   const montoMov = Math.abs(parseFloat(movimiento.importe) || 0);
   const montoDoc = Math.abs(parseFloat(documento.total)    || 0);
   const diff     = Math.abs(montoMov - montoDoc);
 
   if (diff === 0) score += 50;
+  else if (diff <= 1) score += 45;
   else if (diff <= 5) score += 40;
   else if (montoDoc > 0 && diff / montoDoc < 0.02) score += 30;
+  else if (montoDoc > 0 && diff / montoDoc < 0.05) score += 15;
 
+  // ── Fecha (20 pts máx) ──────────────────────────────────────────
   const fechaMov = movimiento.fecha ? new Date(movimiento.fecha) : null;
   const fechaDoc = documento.fecha_doc ? new Date(documento.fecha_doc) : null;
   if (fechaMov && fechaDoc) {
     const dias = Math.abs((fechaMov - fechaDoc) / (1000 * 60 * 60 * 24));
-    if (dias === 0) score += 30;
-    else if (dias <= 3) score += 20;
-    else if (dias <= 7) score += 10;
+    if (dias === 0) score += 20;
+    else if (dias <= 3) score += 15;
+    else if (dias <= 7) score += 8;
   }
 
+  // ── RUC / DNI (15 pts) ──────────────────────────────────────────
   const rucMov = (movimiento.ruc_dni_raw || '').toString().trim();
   const rucDoc = (documento.ruc         || '').toString().trim();
-  if (rucMov && rucDoc && rucMov === rucDoc) score += 20;
+  if (rucMov && rucDoc && rucMov === rucDoc) score += 15;
 
-  return score;
+  // ── Proveedor / Empresa / Personal (15 pts) ─────────────────────
+  const provMov = (movimiento.nombre_proveedor_raw || movimiento.descripcion || '').toLowerCase().trim();
+  const provDoc = (documento.nombre_proveedor || documento.razon_social ||
+                   documento.prestadores_servicios?.nombre || '').toLowerCase().trim();
+  if (provMov && provDoc) {
+    if (provMov === provDoc) {
+      score += 15;
+    } else {
+      // Similitud fuzzy: palabras en común
+      const wordsA = provMov.split(/\s+/).filter(w => w.length > 3);
+      const wordsB = new Set(provDoc.split(/\s+/).filter(w => w.length > 3));
+      const comunes = wordsA.filter(w => wordsB.has(w)).length;
+      if (comunes >= 2) score += 12;
+      else if (comunes === 1) score += 6;
+      // Coincidencia parcial de substring
+      else if (provDoc.includes(provMov.slice(0, 6)) || provMov.includes(provDoc.slice(0, 6))) score += 5;
+    }
+  }
+
+  return Math.min(score, 100);
+}
+
+// Helper: score visual con color
+function _scoreChip(score) {
+  let bg, color;
+  if (score >= 80) { bg = '#dcfce7'; color = '#166534'; }
+  else if (score >= 60) { bg = '#fef9c3'; color = '#854d0e'; }
+  else if (score >= 40) { bg = '#ffedd5'; color = '#9a3412'; }
+  else { bg = '#fee2e2'; color = '#991b1b'; }
+  return `<span style="background:${bg};color:${color};padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;white-space:nowrap">${score}%</span>`;
 }
 
 function _conActivarSubtab(tab) {
@@ -290,6 +324,21 @@ function _conActivarSubtab(tab) {
   if (tab === 'sin_match') _renderTablaSinMatch(wrap);
 }
 
+// ── Helpers de tabla ─────────────────────────────────────────────
+function _tdEstado(estado) {
+  const cfg = {
+    PENDIENTE: { bg:'#C53030', label:'PENDIENTE' },
+    OBSERVADO: { bg:'#D69E2E', label:'OBSERVADO' },
+    EMITIDO:   { bg:'#2F855A', label:'EMITIDO'   },
+    CANCELADO: { bg:'#718096', label:'CANCELADO'  },
+  }[estado] || { bg:'#718096', label: estado || '—' };
+  return `<span style="background:${cfg.bg};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${cfg.label}</span>`;
+}
+
+function _thCon(cols) {
+  return cols.map(c => `<th style="white-space:nowrap;padding:9px 10px;font-size:11px">${c}</th>`).join('');
+}
+
 // ── Tabla Exactos ─────────────────────────────────────────────────
 function _renderTablaExactos(wrap) {
   const lista = _con_resultados.exactos;
@@ -297,63 +346,48 @@ function _renderTablaExactos(wrap) {
     wrap.innerHTML = '<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)"><p>Sin matches exactos para este periodo</p></div>';
     return;
   }
-
+  const _TD = 'padding:7px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;font-size:12px';
   wrap.innerHTML = `
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:12px">
+    <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+      <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;background:var(--color-bg-card)">
         <thead>
-          <tr>
-            <th>Movimiento</th>
-            <th>Fecha Mov</th>
-            <th>Monto</th>
-            <th>Documento match</th>
-            <th>Score</th>
-            <th>Acciones</th>
+          <tr style="background:var(--color-primario);color:#fff">
+            ${_thCon(['N° Operación','Fecha','Descripción','Proveedor / Empresa / Personal','Monto','Score','Comprobante sugerido','Tipo DOC','Estado','Acciones'])}
           </tr>
         </thead>
-        <tbody id="con-tbody-exactos">
-          ${lista.map((item, idx) => `
-            <tr id="con-row-ex-${idx}">
-              <td class="text-sm">
-                <div style="font-weight:500">${escapar((item.mov.descripcion || '').slice(0, 40))}</div>
-                <div class="text-muted" style="font-size:11px">${escapar(item.mov.numero_operacion || '—')}</div>
-              </td>
-              <td style="white-space:nowrap">${formatearFecha(item.mov.fecha)}</td>
-              <td style="white-space:nowrap">
-                <span class="${item.mov.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
-                  ${item.mov.naturaleza === 'CARGO' ? '-' : '+'}${formatearMoneda(Math.abs(item.mov.importe), item.mov.moneda)}
+        <tbody>
+          ${lista.map((item, idx) => {
+            const m   = item.mov;
+            const d   = item.doc;
+            const prov = d.nombre_proveedor || d.razon_social || d.prestadores_servicios?.nombre || '—';
+            const nDoc = d.numero_documento || d.numero_rh || d.serie_numero || d.id?.slice(0,8) || '—';
+            return `<tr id="con-row-ex-${idx}" onmouseover="this.style.background='var(--color-hover)'" onmouseout="this.style.background=''">
+              <td style="${_TD};font-family:monospace;font-size:11px">${escapar(m.numero_operacion || '—')}</td>
+              <td style="${_TD};white-space:nowrap">${formatearFecha(m.fecha)}</td>
+              <td style="${_TD};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.descripcion||'')}">${escapar((m.descripcion||'—').slice(0,35))}</td>
+              <td style="${_TD};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.nombre_proveedor_raw||'')}"><strong>${escapar((m.nombre_proveedor_raw||'—').slice(0,30))}</strong></td>
+              <td style="${_TD};text-align:right;white-space:nowrap">
+                <span class="${m.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:700">
+                  ${m.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(Math.abs(m.importe||0),m.moneda)}
                 </span>
               </td>
-              <td class="text-sm">
-                <div>
-                  <span class="badge badge-info" style="font-size:10px">${item.doc._tipo}</span>
-                  ${escapar((item.doc.numero_documento || item.doc.numero_rh || item.doc.serie_numero || item.doc.id?.slice(0,8) || '—'))}
-                </div>
-                <div class="text-muted" style="font-size:11px">
-                  ${escapar((item.doc.nombre_proveedor || item.doc.razon_social || item.doc.prestadores_servicios?.nombre || '—').slice(0,35))}
-                </div>
-                <div style="font-weight:500;font-size:11px">${formatearMoneda(item.doc.total, item.mov.moneda)}</div>
+              <td style="${_TD};text-align:center">${_scoreChip(item.score)}</td>
+              <td style="${_TD};max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(prov)}">
+                <div style="font-size:11px;font-weight:600">${escapar(nDoc)}</div>
+                <div style="font-size:10px;color:var(--color-texto-suave)">${escapar(prov.slice(0,25))}</div>
               </td>
-              <td>
-                <span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">
-                  ${item.score}
-                </span>
-              </td>
-              <td>
+              <td style="${_TD};text-align:center"><span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${escapar(d._tipo||'—')}</span></td>
+              <td style="${_TD}">${_tdEstado(m.estado_doc)}</td>
+              <td style="${_TD}">
                 <div style="display:flex;gap:4px;white-space:nowrap">
-                  <button class="btn btn-sm btn-primario"
-                          style="font-size:11px;padding:4px 8px"
-                          onclick="_aprobarMatch('${item.mov.id}','${item.doc._tipo}','${item.doc.id}',${item.score},'EXACTO',${idx},'ex')">
-                    ✓ Aprobar
-                  </button>
-                  <button class="btn btn-sm btn-secundario"
-                          style="font-size:11px;padding:4px 8px"
-                          onclick="_rechazarMatch(${idx},'ex')">
-                    ✗ Rechazar
-                  </button>
+                  <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 8px"
+                    onclick="_aprobarMatch('${m.id}','${d._tipo}','${d.id}',${item.score},'EXACTO',${idx},'ex')">✓ Aprobar</button>
+                  <button class="btn btn-sm btn-secundario" style="font-size:11px;padding:4px 8px"
+                    onclick="_rechazarMatch(${idx},'ex')">✗</button>
                 </div>
               </td>
-            </tr>`).join('')}
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>`;
@@ -366,63 +400,48 @@ function _renderTablaPosibles(wrap) {
     wrap.innerHTML = '<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)"><p>Sin matches posibles para este periodo</p></div>';
     return;
   }
-
+  const _TD = 'padding:7px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;font-size:12px';
   wrap.innerHTML = `
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:12px">
+    <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+      <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;background:var(--color-bg-card)">
         <thead>
-          <tr>
-            <th>Movimiento</th>
-            <th>Fecha Mov</th>
-            <th>Monto</th>
-            <th>Posible match</th>
-            <th>Score</th>
-            <th>Acciones</th>
+          <tr style="background:var(--color-primario);color:#fff">
+            ${_thCon(['N° Operación','Fecha','Descripción','Proveedor / Empresa / Personal','Monto','Score','Comprobante sugerido','Tipo DOC','Estado','Acciones'])}
           </tr>
         </thead>
         <tbody>
-          ${lista.map((item, idx) => `
-            <tr id="con-row-pos-${idx}">
-              <td class="text-sm">
-                <div style="font-weight:500">${escapar((item.mov.descripcion || '').slice(0, 40))}</div>
-                <div class="text-muted" style="font-size:11px">${escapar(item.mov.numero_operacion || '—')}</div>
-              </td>
-              <td style="white-space:nowrap">${formatearFecha(item.mov.fecha)}</td>
-              <td style="white-space:nowrap">
-                <span class="${item.mov.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
-                  ${item.mov.naturaleza === 'CARGO' ? '-' : '+'}${formatearMoneda(Math.abs(item.mov.importe), item.mov.moneda)}
+          ${lista.map((item, idx) => {
+            const m   = item.mov;
+            const d   = item.doc;
+            const prov = d.nombre_proveedor || d.razon_social || d.prestadores_servicios?.nombre || '—';
+            const nDoc = d.numero_documento || d.numero_rh || d.serie_numero || d.id?.slice(0,8) || '—';
+            return `<tr id="con-row-pos-${idx}" onmouseover="this.style.background='var(--color-hover)'" onmouseout="this.style.background=''">
+              <td style="${_TD};font-family:monospace;font-size:11px">${escapar(m.numero_operacion || '—')}</td>
+              <td style="${_TD};white-space:nowrap">${formatearFecha(m.fecha)}</td>
+              <td style="${_TD};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.descripcion||'')}">${escapar((m.descripcion||'—').slice(0,35))}</td>
+              <td style="${_TD};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.nombre_proveedor_raw||'')}"><strong>${escapar((m.nombre_proveedor_raw||'—').slice(0,30))}</strong></td>
+              <td style="${_TD};text-align:right;white-space:nowrap">
+                <span class="${m.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:700">
+                  ${m.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(Math.abs(m.importe||0),m.moneda)}
                 </span>
               </td>
-              <td class="text-sm">
-                <div>
-                  <span class="badge badge-warning" style="font-size:10px">${item.doc._tipo}</span>
-                  ${escapar((item.doc.numero_documento || item.doc.numero_rh || item.doc.serie_numero || item.doc.id?.slice(0,8) || '—'))}
-                </div>
-                <div class="text-muted" style="font-size:11px">
-                  ${escapar((item.doc.nombre_proveedor || item.doc.razon_social || item.doc.prestadores_servicios?.nombre || '—').slice(0,35))}
-                </div>
-                <div style="font-weight:500;font-size:11px">${formatearMoneda(item.doc.total, item.mov.moneda)}</div>
+              <td style="${_TD};text-align:center">${_scoreChip(item.score)}</td>
+              <td style="${_TD};max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(prov)}">
+                <div style="font-size:11px;font-weight:600">${escapar(nDoc)}</div>
+                <div style="font-size:10px;color:var(--color-texto-suave)">${escapar(prov.slice(0,25))}</div>
               </td>
-              <td>
-                <span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">
-                  ${item.score}
-                </span>
-              </td>
-              <td>
+              <td style="${_TD};text-align:center"><span style="background:#D69E2E;color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${escapar(d._tipo||'—')}</span></td>
+              <td style="${_TD}">${_tdEstado(m.estado_doc)}</td>
+              <td style="${_TD}">
                 <div style="display:flex;gap:4px;white-space:nowrap">
-                  <button class="btn btn-sm btn-primario"
-                          style="font-size:11px;padding:4px 8px"
-                          onclick="_aprobarMatch('${item.mov.id}','${item.doc._tipo}','${item.doc.id}',${item.score},'POSIBLE',${idx},'pos')">
-                    ✓ Aprobar
-                  </button>
-                  <button class="btn btn-sm btn-secundario"
-                          style="font-size:11px;padding:4px 8px"
-                          onclick="_rechazarMatch(${idx},'pos')">
-                    ✗ Sin match
-                  </button>
+                  <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 8px"
+                    onclick="_aprobarMatch('${m.id}','${d._tipo}','${d.id}',${item.score},'POSIBLE',${idx},'pos')">✓ Aprobar</button>
+                  <button class="btn btn-sm btn-secundario" style="font-size:11px;padding:4px 8px"
+                    onclick="_rechazarMatch(${idx},'pos')">✗</button>
                 </div>
               </td>
-            </tr>`).join('')}
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>`;
@@ -432,7 +451,7 @@ function _renderTablaPosibles(wrap) {
 function _renderTablaSinMatch(wrap) {
   const lista = _con_resultados.sin_match;
   if (!lista.length) {
-    wrap.innerHTML = '<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)"><p>Todos los movimientos tienen match</p></div>';
+    wrap.innerHTML = '<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)"><p>Todos los movimientos tienen match ✓</p></div>';
     return;
   }
 
@@ -445,44 +464,41 @@ function _renderTablaSinMatch(wrap) {
     { v: 'COMISION',      t: 'Comisión bancaria' },
     { v: 'OTRO',          t: 'Otro' },
   ];
+  const _TD = 'padding:7px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;font-size:12px';
 
   wrap.innerHTML = `
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:12px">
+    <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+      <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;background:var(--color-bg-card)">
         <thead>
-          <tr>
-            <th>Fecha</th>
-            <th>Descripción</th>
-            <th>Monto</th>
-            <th>Proveedor / Referencia</th>
-            <th>Clasificar como</th>
-            <th></th>
+          <tr style="background:var(--color-primario);color:#fff">
+            ${_thCon(['N° Operación','Fecha','Descripción','Proveedor / Empresa / Personal','Monto','Estado','Clasificar como',''])}
           </tr>
         </thead>
         <tbody>
-          ${lista.map((item, idx) => `
-            <tr id="con-row-sm-${idx}">
-              <td style="white-space:nowrap">${formatearFecha(item.mov.fecha)}</td>
-              <td class="text-sm">${escapar((item.mov.descripcion || '').slice(0, 50))}</td>
-              <td style="white-space:nowrap">
-                <span class="${item.mov.naturaleza === 'CARGO' ? 'text-rojo' : 'text-verde'}">
-                  ${item.mov.naturaleza === 'CARGO' ? '-' : '+'}${formatearMoneda(Math.abs(item.mov.importe), item.mov.moneda)}
+          ${lista.map((item, idx) => {
+            const m = item.mov;
+            return `<tr id="con-row-sm-${idx}" onmouseover="this.style.background='var(--color-hover)'" onmouseout="this.style.background=''">
+              <td style="${_TD};font-family:monospace;font-size:11px">${escapar(m.numero_operacion || '—')}</td>
+              <td style="${_TD};white-space:nowrap">${formatearFecha(m.fecha)}</td>
+              <td style="${_TD};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.descripcion||'')}">${escapar((m.descripcion||'—').slice(0,40))}</td>
+              <td style="${_TD};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(m.nombre_proveedor_raw||'')}"><strong>${escapar((m.nombre_proveedor_raw||'—').slice(0,30))}</strong></td>
+              <td style="${_TD};text-align:right;white-space:nowrap">
+                <span class="${m.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:700">
+                  ${m.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(Math.abs(m.importe||0),m.moneda)}
                 </span>
               </td>
-              <td class="text-sm text-muted">${escapar((item.mov.nombre_proveedor_raw || item.mov.observaciones || '—').slice(0,35))}</td>
-              <td>
-                <select id="con-clas-${idx}" class="input-buscar" style="font-size:12px;padding:4px 8px">
+              <td style="${_TD}">${_tdEstado(m.estado_doc)}</td>
+              <td style="${_TD}">
+                <select id="con-clas-${idx}" style="padding:4px 8px;border:1px solid var(--color-borde);border-radius:4px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
                   ${opciones.map(o => `<option value="${o.v}">${o.t}</option>`).join('')}
                 </select>
               </td>
-              <td>
-                <button class="btn btn-sm btn-primario"
-                        style="font-size:11px;padding:4px 10px"
-                        onclick="_guardarClasificacion('${item.mov.id}',${idx})">
-                  Guardar
-                </button>
+              <td style="${_TD}">
+                <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 10px"
+                  onclick="_guardarClasificacion('${m.id}',${idx})">Guardar</button>
               </td>
-            </tr>`).join('')}
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>`;
