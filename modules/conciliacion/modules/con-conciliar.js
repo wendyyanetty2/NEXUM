@@ -37,6 +37,19 @@ async function renderTabConciliar(area) {
             <button class="btn btn-primario w-full" onclick="_conIniciar()">🔗 Iniciar conciliación</button>
           </div>
         </div>
+
+        <!-- Toggle: incluir RH y comprobantes de meses adyacentes -->
+        <div style="margin-top:12px;padding:10px 14px;background:rgba(44,82,130,.07);border-radius:8px;border:1px solid rgba(44,82,130,.2);display:flex;align-items:flex-start;gap:10px">
+          <input type="checkbox" id="con-incluir-adyacentes"
+            style="margin-top:2px;width:15px;height:15px;cursor:pointer;accent-color:var(--color-secundario);flex-shrink:0">
+          <label for="con-incluir-adyacentes" style="cursor:pointer;font-size:13px;color:var(--color-texto);line-height:1.4">
+            <strong>📅 Buscar RH y compras en meses adyacentes (±3 meses)</strong><br>
+            <span style="font-size:11px;color:var(--color-texto-suave)">
+              Actívalo si hay RH o facturas emitidas fuera del mes que corresponden a movimientos de este periodo.
+              El motor buscará comprobantes desde 3 meses antes hasta 3 meses después.
+            </span>
+          </label>
+        </div>
       </div>
 
       <!-- ═══ PANEL DE AVANCE ══════════════════════════════════════ -->
@@ -67,29 +80,29 @@ async function renderTabConciliar(area) {
           </div>
 
           <!-- Alertas de validación -->
-          <div id="pan-alertas" style="margin-bottom:10px"></div>
+          <div id="pan-alertas" style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px"></div>
 
           <!-- Stats por estado -->
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
-            <div style="padding:10px 14px;background:rgba(34,197,94,.08);border-radius:8px;border-left:3px solid #22c55e">
-              <div style="font-size:10px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.5px">✅ Emitidos</div>
-              <div id="pan-emit-n"   style="font-size:20px;font-weight:700;color:#166534">0</div>
-              <div id="pan-emit-s"   style="font-size:11px;color:#166534;opacity:.8"></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+            <div style="padding:10px 14px;background:#16a34a;border-radius:8px;color:#fff">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">✅ Emitidos</div>
+              <div id="pan-emit-n" style="font-size:22px;font-weight:700">0</div>
+              <div id="pan-emit-s" style="font-size:11px;opacity:.8"></div>
             </div>
-            <div style="padding:10px 14px;background:rgba(245,158,11,.08);border-radius:8px;border-left:3px solid #f59e0b">
-              <div style="font-size:10px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.5px">⚠️ Observados</div>
-              <div id="pan-obs-n"    style="font-size:20px;font-weight:700;color:#92400e">0</div>
-              <div id="pan-obs-s"    style="font-size:11px;color:#92400e;opacity:.8"></div>
+            <div style="padding:10px 14px;background:#b45309;border-radius:8px;color:#fff">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">⚠️ Observados</div>
+              <div id="pan-obs-n"  style="font-size:22px;font-weight:700">0</div>
+              <div id="pan-obs-s"  style="font-size:11px;opacity:.8"></div>
             </div>
-            <div style="padding:10px 14px;background:rgba(239,68,68,.08);border-radius:8px;border-left:3px solid #ef4444">
-              <div style="font-size:10px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.5px">🔴 Pendientes</div>
-              <div id="pan-pend-n"   style="font-size:20px;font-weight:700;color:#991b1b">0</div>
-              <div id="pan-pend-s"   style="font-size:11px;color:#991b1b;opacity:.8"></div>
+            <div style="padding:10px 14px;background:#dc2626;border-radius:8px;color:#fff">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">🔴 Pendientes</div>
+              <div id="pan-pend-n" style="font-size:22px;font-weight:700">0</div>
+              <div id="pan-pend-s" style="font-size:11px;opacity:.8"></div>
             </div>
-            <div style="padding:10px 14px;background:var(--color-hover);border-radius:8px;border-left:3px solid var(--color-borde)">
-              <div style="font-size:10px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.5px">📋 Total</div>
-              <div id="pan-total-n"  style="font-size:20px;font-weight:700;color:var(--color-texto)">0</div>
-              <div id="pan-total-s"  style="font-size:11px;color:var(--color-texto-suave)"></div>
+            <div style="padding:10px 14px;background:var(--color-primario);border-radius:8px;color:#fff">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">📋 Total</div>
+              <div id="pan-total-n" style="font-size:22px;font-weight:700">0</div>
+              <div id="pan-total-s" style="font-size:11px;opacity:.8"></div>
             </div>
           </div>
         </div>
@@ -216,11 +229,28 @@ async function _conIniciar() {
   }
 }
 
+// ── Helper: calcula array de periodos adyacentes ─────────────────
+function _conPeriodosAdyacentes(periodo, delta = 3) {
+  const [yyyy, mm] = periodo.split('-');
+  const lista = [];
+  for (let d = -delta; d <= delta; d++) {
+    const fecha = new Date(parseInt(yyyy), parseInt(mm) - 1 + d, 1);
+    lista.push(`${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return lista;
+}
+
 // ── Motor de conciliación ────────────────────────────────────────
 async function _ejecutarConciliacion(periodo) {
   const [yyyy, mm] = periodo.split('-');
   const inicio = `${yyyy}-${mm}-01`;
   const fin    = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
+
+  // Si el toggle está activo, ampliamos el rango de comprobantes a ±3 meses
+  const incluirAdyacentes = document.getElementById('con-incluir-adyacentes')?.checked ?? false;
+  const periodosDoc = incluirAdyacentes
+    ? _conPeriodosAdyacentes(periodo, 3)
+    : [periodo];
 
   const [resMbd, resCompras, resVentas, resRh] = await Promise.all([
     _supabase
@@ -235,19 +265,19 @@ async function _ejecutarConciliacion(periodo) {
       .from('registro_compras')
       .select('*')
       .eq('empresa_operadora_id', empresa_activa.id)
-      .eq('periodo', periodo),
+      .in('periodo', periodosDoc),
 
     _supabase
       .from('registro_ventas')
       .select('*')
       .eq('empresa_operadora_id', empresa_activa.id)
-      .eq('periodo', periodo),
+      .in('periodo', periodosDoc),
 
     _supabase
       .from('rh_registros')
       .select('*, prestadores_servicios(nombre, dni)')
       .eq('empresa_operadora_id', empresa_activa.id)
-      .eq('periodo', periodo),
+      .in('periodo', periodosDoc),
   ]);
 
   const movBanco = resMbd.data || [];
@@ -1201,59 +1231,51 @@ async function _conRefrescarPanel() {
   await _conValidar(rows, { emitN, obsN, pendN, totalN });
 }
 
-// ── Validaciones automáticas ────────────────────────────────────────
+// ── Validaciones automáticas (chips compactos) ──────────────────────
 async function _conValidar(filas, { emitN, obsN, pendN, totalN }) {
   const alertasEl = document.getElementById('pan-alertas');
   if (!alertasEl) return;
 
-  const alertas = [];
+  const chips = [];
 
-  // 1. Mes conciliado al 100%
+  // 1. Mes 100% conciliado
   if (totalN > 0 && pendN === 0 && obsN === 0) {
-    alertas.push({ tipo: 'exito', msg: '✅ Conciliación del mes al 100% — no quedan pendientes.' });
+    chips.push({ solid: '#16a34a', msg: '✅ Mes conciliado al 100%' });
   }
 
   // 2. Observados sin resolver
   if (obsN > 0) {
-    alertas.push({ tipo: 'atencion', msg: `⚠️ ${obsN} movimiento(s) en estado OBSERVADO sin resolver.` });
+    chips.push({ solid: '#b45309',
+      msg: `⚠ ${obsN} observado${obsN > 1 ? 's' : ''} sin resolver` });
   }
 
-  // 3. Más del 20% pendiente
+  // 3. >20% pendiente
   if (totalN > 0 && pendN / totalN > 0.2) {
-    alertas.push({
-      tipo: 'atencion',
-      msg: `🔴 ${pendN} de ${totalN} movimientos aún PENDIENTES (${Math.round(pendN / totalN * 100)}%).`,
-    });
+    chips.push({ solid: '#dc2626',
+      msg: `🔴 ${pendN} pendiente${pendN > 1 ? 's' : ''} (${Math.round(pendN / totalN * 100)}%)` });
   }
 
-  // 4. Comprobantes duplicados (mismo nro_factura_doc en ≥2 filas EMITIDO)
+  // 4. Comprobantes duplicados
   if (emitN >= 2) {
     const conteo = {};
-    filas
-      .filter(r => r.entrega_doc === 'EMITIDO' && r.nro_factura_doc)
-      .forEach(r => { conteo[r.nro_factura_doc] = (conteo[r.nro_factura_doc] || 0) + 1; });
+    filas.filter(r => r.entrega_doc === 'EMITIDO' && r.nro_factura_doc)
+         .forEach(r => { conteo[r.nro_factura_doc] = (conteo[r.nro_factura_doc] || 0) + 1; });
     const dups = Object.entries(conteo).filter(([, c]) => c > 1).map(([n]) => n);
     if (dups.length) {
-      alertas.push({
-        tipo: 'error',
-        msg: `❌ Comprobante(s) duplicado(s): ${dups.slice(0, 4).join(', ')}${dups.length > 4 ? '…' : ''}`,
-      });
+      chips.push({ solid: '#7c3aed',
+        msg: `❌ Duplicados: ${dups.slice(0, 3).join(', ')}${dups.length > 3 ? '…' : ''}` });
     }
   }
 
-  if (!alertas.length) { alertasEl.innerHTML = ''; return; }
+  if (!chips.length) { alertasEl.innerHTML = ''; return; }
 
-  const col = {
-    exito:    { bg: 'rgba(34,197,94,.12)',  border: '#22c55e', text: '#166534' },
-    atencion: { bg: 'rgba(245,158,11,.12)', border: '#f59e0b', text: '#92400e' },
-    error:    { bg: 'rgba(239,68,68,.12)',  border: '#ef4444', text: '#991b1b' },
-  };
-  alertasEl.innerHTML = alertas.map(a => {
-    const c = col[a.tipo] || col.atencion;
-    return `<div style="padding:8px 12px;margin-bottom:6px;background:${c.bg};
-      border:1px solid ${c.border};border-radius:6px;color:${c.text};
-      font-size:12px;font-weight:500">${a.msg}</div>`;
-  }).join('');
+  // Usamos fondo sólido + texto blanco para que funcione en modo oscuro y claro
+  alertasEl.innerHTML = chips.map(c => `
+    <span title="${c.msg}" style="display:inline-flex;align-items:center;
+      padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;
+      white-space:nowrap;color:#fff;background:${c.solid}">
+      ${c.msg}
+    </span>`).join('');
 }
 
 // ── Exportar avance completo del mes a Excel ────────────────────────
