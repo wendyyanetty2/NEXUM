@@ -9,6 +9,9 @@ const MOV_POR_PAG        = 20;
 let mov_seleccionados    = new Set();
 
 async function renderTabMovimientos(area) {
+  // Limpiar barra masiva de sesiones anteriores
+  document.getElementById('mov-barra-masiva')?.remove();
+
   const hoy      = new Date();
   const mesAct   = String(hoy.getMonth() + 1).padStart(2, '0');
   const anioAct  = hoy.getFullYear();
@@ -64,14 +67,19 @@ async function renderTabMovimientos(area) {
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span id="mov-contador" class="text-muted text-sm"></span>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()">🔄 Limpiar</button>
-            <button class="btn btn-secundario btn-sm" onclick="cargarMovimientos()">↺ Actualizar</button>
-            <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()">⬇ Excel</button>
+            <button class="btn btn-secundario btn-sm" onclick="limpiarFiltrosMov()"
+              title="Restablecer todos los filtros a su valor por defecto">🔄 Limpiar filtros</button>
+            <button class="btn btn-secundario btn-sm" onclick="cargarMovimientos()"
+              title="Recargar los movimientos desde la base de datos">↺ Actualizar</button>
+            <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()"
+              title="Exportar los movimientos visibles a Excel (.xlsx)">⬇ Excel</button>
             <button class="btn btn-sm" onclick="_abrirModalEliminarMesMov()"
+              title="Eliminar TODOS los movimientos del mes seleccionado (requiere doble confirmación)"
               style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
-              🗑️ Eliminar mes
+              🗑️ Eliminar mes completo
             </button>
-            <button class="btn btn-primario btn-sm" onclick="abrirModalMovimiento(null)">+ Nuevo</button>
+            <button class="btn btn-primario btn-sm" onclick="abrirModalMovimiento(null)"
+              title="Agregar un nuevo movimiento manualmente">+ Nuevo</button>
           </div>
         </div>
       </div>
@@ -141,6 +149,7 @@ async function cargarMovimientos() {
   movimientos_lista = data || [];
   movimientos_pag   = 1;
   mov_seleccionados = new Set();
+  _movActualizarBarra();
   filtrarMovimientos();
 }
 
@@ -282,11 +291,14 @@ function renderTablaMovimientos() {
         <td style="${_TD}max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.observaciones_2||'')}">${escapar(r.observaciones_2||'—')}</td>
         <td style="${_TD}text-align:center;white-space:nowrap">
           <button onclick="abrirModalMovimiento('${r.id}')"
-            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Editar">✏️</button>
+            title="Editar este movimiento individualmente"
+            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
           <button onclick="_abrirModalDividirMBD('${r.id}')"
-            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Dividir en comprobantes">✂️</button>
+            title="Dividir este movimiento en varios comprobantes"
+            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✂️</button>
           <button onclick="eliminarMovimiento('${r.id}')"
-            style="padding:4px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Eliminar">🗑️</button>
+            title="Eliminar solo este movimiento"
+            style="padding:4px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
         </td>
       </tr>`;
     }).join('');
@@ -298,9 +310,9 @@ function renderTablaMovimientos() {
   const pagEl = document.getElementById('pag-movimientos');
   if (pagEl) pagEl.innerHTML = total > MOV_POR_PAG ? `
     <span class="pag-info">${inicio+1}–${Math.min(inicio+MOV_POR_PAG,total)} de ${total}</span>
-    <button class="btn-pag" onclick="cambiarPagMov(-1)" ${movimientos_pag<=1?'disabled':''}>‹</button>
+    <button class="btn-pag" title="Página anterior" onclick="cambiarPagMov(-1)" ${movimientos_pag<=1?'disabled':''}>‹</button>
     <span>${movimientos_pag} / ${pags}</span>
-    <button class="btn-pag" onclick="cambiarPagMov(1)"  ${movimientos_pag>=pags?'disabled':''}>›</button>` : '';
+    <button class="btn-pag" title="Página siguiente" onclick="cambiarPagMov(1)"  ${movimientos_pag>=pags?'disabled':''}>›</button>` : '';
 }
 
 function cambiarPagMov(dir) { movimientos_pag += dir; renderTablaMovimientos(); }
@@ -315,11 +327,13 @@ function limpiarFiltrosMov() {
 
 function seleccionarTodosMov(checked) {
   movimientos_filtrada.forEach(r => { if (checked) mov_seleccionados.add(r.id); else mov_seleccionados.delete(r.id); });
+  _movActualizarBarra();
   renderTablaMovimientos();
 }
 
 function toggleSeleccionMov(id, checked) {
   if (checked) mov_seleccionados.add(id); else mov_seleccionados.delete(id);
+  _movActualizarBarra();
 }
 
 async function eliminarMovimiento(id) {
@@ -424,4 +438,299 @@ async function exportarMovimientosExcel() {
   const anio = document.getElementById('mov-anio')?.value || '';
   XLSX.writeFile(wb, `MBD_${empresa_activa.nombre_corto||empresa_activa.nombre}_${anio}${mes}.xlsx`);
   mostrarToast(`✓ Excel exportado.`, 'exito');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// EDICIÓN / ELIMINACIÓN MASIVA
+// ══════════════════════════════════════════════════════════════════
+
+// ── Barra flotante de acciones (aparece al seleccionar) ─────────────
+function _movActualizarBarra() {
+  const n = mov_seleccionados.size;
+
+  // Buscar o crear el contenedor
+  let barra = document.getElementById('mov-barra-masiva');
+
+  if (n === 0) {
+    if (barra) barra.remove();
+    return;
+  }
+
+  if (!barra) {
+    barra = document.createElement('div');
+    barra.id = 'mov-barra-masiva';
+    Object.assign(barra.style, {
+      position: 'fixed', bottom: '0', left: '0', right: '0', zIndex: '8000',
+      background: '#2C5282', color: '#fff',
+      padding: '12px 24px', display: 'flex', alignItems: 'center',
+      gap: '12px', flexWrap: 'wrap',
+      boxShadow: '0 -4px 24px rgba(0,0,0,.35)',
+      fontFamily: 'inherit',
+    });
+    document.body.appendChild(barra);
+  }
+
+  const editLabel = n === 1
+    ? '✏️ Editar este registro'
+    : `✏️ Editar ${n} registros`;
+
+  barra.innerHTML = `
+    <span style="font-size:14px;font-weight:600;white-space:nowrap">
+      ☑ ${n} registro${n > 1 ? 's' : ''} seleccionado${n > 1 ? 's' : ''}
+    </span>
+    <div style="flex:1;min-width:16px"></div>
+    <button onclick="_movEditarMasivo()"
+      title="${n === 1
+        ? 'Editar individualmente el registro seleccionado'
+        : 'Abrir modal para editar campos en los ' + n + ' registros seleccionados (solo los campos que actives se sobreescribirán)'}"
+      style="padding:8px 18px;background:#fff;color:#2C5282;border:none;
+             border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit">
+      ${editLabel}
+    </button>
+    <button onclick="_movEliminarMasivo()"
+      title="Eliminar SOLO los ${n} registros seleccionados (distinto al botón \'Eliminar mes completo\')"
+      style="padding:8px 18px;background:rgba(255,255,255,.18);color:#fff;
+             border:1px solid rgba(255,255,255,.4);border-radius:6px;cursor:pointer;
+             font-weight:500;font-size:13px;font-family:inherit">
+      🗑️ Eliminar seleccionados
+    </button>
+    <button onclick="_movCancelarSeleccion()"
+      title="Deseleccionar todos los registros y cerrar esta barra"
+      style="padding:8px 12px;background:none;color:rgba(255,255,255,.7);border:none;
+             border-radius:6px;cursor:pointer;font-size:13px;font-family:inherit">
+      ✕ Cancelar selección
+    </button>
+  `;
+}
+
+function _movCancelarSeleccion() {
+  mov_seleccionados.clear();
+  _movActualizarBarra();
+  const hdr = document.getElementById('chk-todos-mov');
+  if (hdr) hdr.checked = false;
+  renderTablaMovimientos();
+}
+
+// ── Genera una fila de campo editable con checkbox ──────────────────
+function _movFilaCampo(campo, label, tipo, opciones) {
+  const inputId = `mas-${campo}`;
+  const chkId   = `chk-mas-${campo}`;
+  const inputEstilo = `width:100%;padding:6px 10px;border:1px solid var(--color-borde);
+    border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);
+    font-family:var(--font);font-size:13px;opacity:.4;cursor:not-allowed;box-sizing:border-box`;
+
+  const inputHtml = tipo === 'select'
+    ? `<select id="${inputId}" disabled style="${inputEstilo}">
+        ${opciones.map(o => `<option value="${o.v}">${o.t}</option>`).join('')}
+       </select>`
+    : `<input type="text" id="${inputId}" disabled placeholder="${label}"
+        style="${inputEstilo}">`;
+
+  return `
+    <div style="display:flex;gap:10px;align-items:flex-start;
+                padding:10px 0;border-bottom:1px solid var(--color-borde)">
+      <div style="padding-top:3px">
+        <input type="checkbox" id="${chkId}"
+          onchange="_movToggleCampo('${campo}',this.checked)"
+          style="width:16px;height:16px;cursor:pointer;accent-color:var(--color-secundario)">
+      </div>
+      <div style="flex:1;min-width:0">
+        <label for="${chkId}"
+          style="display:block;font-size:12px;font-weight:600;
+                 color:var(--color-texto-suave);margin-bottom:5px;cursor:pointer">
+          ${label}
+        </label>
+        ${inputHtml}
+      </div>
+    </div>`;
+}
+
+function _movToggleCampo(campo, enabled) {
+  const inp = document.getElementById(`mas-${campo}`);
+  if (!inp) return;
+  inp.disabled       = !enabled;
+  inp.style.opacity  = enabled ? '1' : '.4';
+  inp.style.cursor   = enabled ? '' : 'not-allowed';
+  if (enabled) inp.focus();
+}
+
+// ── Abrir modal de edición masiva ───────────────────────────────────
+function _movEditarMasivo() {
+  const n = mov_seleccionados.size;
+  if (n === 0) return;
+
+  // Un solo registro → edición individual normal
+  if (n === 1) {
+    abrirModalMovimiento([...mov_seleccionados][0]);
+    return;
+  }
+
+  const TIPO_DOC = [
+    { v: '',              t: '— Seleccionar —' },
+    { v: 'FA',            t: 'FA — Factura' },
+    { v: 'BOLETA',        t: 'BV — Boleta de venta' },
+    { v: 'RH',            t: 'RH — Recibo de honorarios' },
+    { v: 'GASTO_DIRECTO', t: 'Gasto directo' },
+    { v: 'ITF',           t: 'ITF — Impuesto bancario' },
+    { v: 'COMISION',      t: 'Comisión bancaria' },
+    { v: 'OTRO',          t: 'Otro' },
+  ];
+
+  const ESTADO = [
+    { v: '',          t: '— Seleccionar —' },
+    { v: 'PENDIENTE', t: '🔴 Pendiente' },
+    { v: 'EMITIDO',   t: '🟢 Emitido' },
+    { v: 'OBSERVADO', t: '🟡 Observado' },
+    { v: 'CANCELADO', t: '⚫ Cancelado' },
+  ];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'overlay-masivo';
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:center;z-index:9000`;
+
+  overlay.innerHTML = `
+    <div style="background:var(--color-bg-card);border-radius:12px;width:94%;max-width:500px;
+      max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.4);
+      border:1px solid var(--color-borde)">
+
+      <!-- Cabecera fija -->
+      <div style="padding:18px 22px;border-bottom:1px solid var(--color-borde);
+        display:flex;align-items:center;justify-content:space-between;
+        position:sticky;top:0;background:var(--color-bg-card);z-index:1">
+        <div>
+          <div style="font-weight:700;font-size:15px">✏️ Editar campos en ${n} registros</div>
+          <div style="font-size:12px;color:var(--color-texto-suave);margin-top:3px">
+            Solo se modificarán los campos que actives (☑)
+          </div>
+        </div>
+        <button onclick="document.getElementById('overlay-masivo').remove()"
+          style="background:none;border:none;cursor:pointer;font-size:20px;
+                 color:var(--color-texto-suave);padding:4px">✕</button>
+      </div>
+
+      <!-- Campos -->
+      <div style="padding:4px 22px 8px">
+        ${_movFilaCampo('proveedor_empresa_personal', 'Proveedor / Empresa / Personal', 'text')}
+        ${_movFilaCampo('ruc_dni',         'RUC / DNI',             'text')}
+        ${_movFilaCampo('nro_factura_doc', 'N° Factura / DOC',      'text')}
+        ${_movFilaCampo('tipo_doc',        'Tipo de DOC',           'select', TIPO_DOC)}
+        ${_movFilaCampo('entrega_doc',     'Estado DOC',            'select', ESTADO)}
+        ${_movFilaCampo('autorizacion',    'Autorización',          'text')}
+        ${_movFilaCampo('concepto',        'Concepto',              'text')}
+        ${_movFilaCampo('observaciones',   'Observaciones',         'text')}
+      </div>
+
+      <!-- Pie fijo -->
+      <div style="padding:14px 22px;border-top:1px solid var(--color-borde);
+        position:sticky;bottom:0;background:var(--color-bg-card)">
+        <div style="padding:8px 12px;background:rgba(44,82,130,.08);border-radius:6px;
+          font-size:12px;color:var(--color-texto-suave);margin-bottom:12px">
+          ⚠️ Solo se sobrescribirán los campos con ☑ activado. Los campos sin ☑ no se tocarán en ningún registro.
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button onclick="document.getElementById('overlay-masivo').remove()"
+            title="Cerrar sin guardar cambios"
+            style="padding:9px 20px;border:1px solid var(--color-borde);border-radius:8px;
+              background:var(--color-bg-card);color:var(--color-texto);cursor:pointer;
+              font-size:13px;font-family:var(--font)">Cancelar</button>
+          <button id="btn-guardar-masivo" onclick="_movGuardarMasivo()"
+            title="Aplicar los campos activados (☑) a todos los ${n} registros seleccionados en un solo guardado"
+            style="padding:9px 20px;border:none;border-radius:8px;
+              background:var(--color-secundario);color:#fff;cursor:pointer;
+              font-size:13px;font-family:var(--font);font-weight:600">
+            ✅ Guardar en ${n} registros
+          </button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── Guardar edición masiva ──────────────────────────────────────────
+async function _movGuardarMasivo() {
+  const CAMPOS = [
+    'proveedor_empresa_personal', 'ruc_dni', 'nro_factura_doc',
+    'tipo_doc', 'entrega_doc', 'autorizacion', 'concepto', 'observaciones',
+  ];
+
+  const payload = {};
+  for (const c of CAMPOS) {
+    if (!document.getElementById(`chk-mas-${c}`)?.checked) continue;
+    const val = (document.getElementById(`mas-${c}`)?.value || '').trim();
+    payload[c] = val || null;
+  }
+
+  if (!Object.keys(payload).length) {
+    mostrarToast('Activa al menos un campo para editar', 'atencion');
+    return;
+  }
+
+  const ids = [...mov_seleccionados];
+  const n   = ids.length;
+
+  const btn = document.getElementById('btn-guardar-masivo');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+
+  const { error } = await _supabase
+    .from('tesoreria_mbd')
+    .update(payload)
+    .in('id', ids)
+    .eq('empresa_id', empresa_activa.id);
+
+  if (error) {
+    mostrarToast('Error al actualizar: ' + error.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = `✅ Guardar en ${n} registros`; }
+    return;
+  }
+
+  // Parchear caché local (evita recargar desde BD)
+  movimientos_lista = movimientos_lista.map(r =>
+    ids.includes(r.id) ? { ...r, ...payload } : r
+  );
+
+  document.getElementById('overlay-masivo')?.remove();
+  mov_seleccionados.clear();
+  _movActualizarBarra();
+  const hdr = document.getElementById('chk-todos-mov');
+  if (hdr) hdr.checked = false;
+  filtrarMovimientos();
+
+  mostrarToast(`✅ ${n} registro${n > 1 ? 's' : ''} actualizado${n > 1 ? 's' : ''} correctamente`, 'exito');
+}
+
+// ── Eliminar masivo ─────────────────────────────────────────────────
+async function _movEliminarMasivo() {
+  const ids = [...mov_seleccionados];
+  const n   = ids.length;
+
+  if (!await confirmar(
+    `¿Eliminar los ${n} registro${n > 1 ? 's' : ''} seleccionado${n > 1 ? 's' : ''}?\n\nEsta acción no se puede deshacer.`,
+    { btnOk: 'Sí, eliminar', btnColor: '#C53030' }
+  )) return;
+
+  if (!await confirmar(
+    `CONFIRMACIÓN FINAL: ¿Borrar ${n} movimiento${n > 1 ? 's' : ''} permanentemente?`,
+    { btnOk: 'Confirmar', btnColor: '#C53030' }
+  )) return;
+
+  const { error } = await _supabase
+    .from('tesoreria_mbd')
+    .delete()
+    .in('id', ids)
+    .eq('empresa_id', empresa_activa.id);
+
+  if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
+
+  // Parchear caché local
+  movimientos_lista = movimientos_lista.filter(r => !ids.includes(r.id));
+  mov_seleccionados.clear();
+  _movActualizarBarra();
+  const hdr = document.getElementById('chk-todos-mov');
+  if (hdr) hdr.checked = false;
+  filtrarMovimientos();
+
+  mostrarToast(`✅ ${n} registro${n > 1 ? 's' : ''} eliminado${n > 1 ? 's' : ''}`, 'exito');
 }
