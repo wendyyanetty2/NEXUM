@@ -58,7 +58,7 @@ async function renderTabMovimientos(area) {
           <div>
             <label class="label-filtro">Buscar</label>
             <input type="text" id="mov-buscar" oninput="filtrarMovimientos()" class="input-buscar w-full"
-                   placeholder="Descripción, N° op, proveedor…">
+                   placeholder="Descripción, proveedor, 15/01/2026…">
           </div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -144,26 +144,64 @@ async function cargarMovimientos() {
   filtrarMovimientos();
 }
 
+// ── Detección de fecha en búsqueda ───────────────────────────────
+function _parsearFechaBusqueda(texto) {
+  // DD/MM/YYYY o D/M/YYYY → { tipo:'dia', dia, mes, anio }
+  const mDia = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mDia) return { tipo:'dia', dia:mDia[1].padStart(2,'0'), mes:mDia[2].padStart(2,'0'), anio:mDia[3] };
+  // MM/YYYY o M/YYYY → { tipo:'mes', mes, anio }
+  const mMes = texto.match(/^(\d{1,2})\/(\d{4})$/);
+  if (mMes) return { tipo:'mes', mes:mMes[1].padStart(2,'0'), anio:mMes[2] };
+  // YYYY → { tipo:'anio', anio }
+  const mAnio = texto.match(/^(\d{4})$/);
+  if (mAnio && parseInt(mAnio[1]) >= 2000) return { tipo:'anio', anio:mAnio[1] };
+  return null;
+}
+
+function _fechaCoincide(isoDate, filtro) {
+  if (!isoDate || !filtro) return false;
+  const [fanio, fmes, fdia] = (isoDate || '').split('-');
+  if (filtro.tipo === 'dia')  return fanio === filtro.anio && fmes === filtro.mes && fdia === filtro.dia;
+  if (filtro.tipo === 'mes')  return fanio === filtro.anio && fmes === filtro.mes;
+  if (filtro.tipo === 'anio') return fanio === filtro.anio;
+  return false;
+}
+
 function filtrarMovimientos() {
   const nat   = document.getElementById('mov-naturaleza')?.value || '';
   const est   = document.getElementById('mov-estado-doc-f')?.value || '';
-  const q     = (document.getElementById('mov-buscar')?.value || '').toLowerCase();
+  const qRaw  = (document.getElementById('mov-buscar')?.value || '').trim();
+  const q     = qRaw.toLowerCase();
+
+  // Detectar si la búsqueda es una fecha
+  const fechaFiltro = q ? _parsearFechaBusqueda(qRaw) : null;
 
   movimientos_filtrada = movimientos_lista.filter(r => {
     if (nat === 'CARGO'  && Number(r.monto) >= 0) return false;
     if (nat === 'ABONO'  && Number(r.monto) < 0)  return false;
     if (est && r.entrega_doc !== est) return false;
     if (q) {
-      const haystack = [r.nro_operacion_bancaria,r.descripcion,r.proveedor_empresa_personal,
-        r.ruc_dni,r.concepto,r.empresa,r.proyecto,r.nro_factura_doc,r.autorizacion,r.observaciones]
-        .map(v=>(v||'').toLowerCase()).join(' ');
-      if (!haystack.includes(q)) return false;
+      if (fechaFiltro) {
+        // Filtrar por fecha exacta / mes / año
+        if (!_fechaCoincide(r.fecha_deposito, fechaFiltro)) return false;
+      } else {
+        // Búsqueda de texto normal
+        const haystack = [r.nro_operacion_bancaria,r.descripcion,r.proveedor_empresa_personal,
+          r.ruc_dni,r.concepto,r.empresa,r.proyecto,r.nro_factura_doc,r.autorizacion,r.observaciones]
+          .map(v=>(v||'').toLowerCase()).join(' ');
+        if (!haystack.includes(q)) return false;
+      }
     }
     return true;
   });
 
   const ctr = document.getElementById('mov-contador');
-  if (ctr) ctr.textContent = `${movimientos_filtrada.length} de ${movimientos_lista.length} registros`;
+  if (ctr) {
+    const fechaLabel = fechaFiltro
+      ? ` · 📅 Fecha: <strong>${qRaw}</strong>`
+      : '';
+    ctr.innerHTML = `${movimientos_filtrada.length} de ${movimientos_lista.length} registros${fechaLabel}`;
+  }
 
   _renderResumenMov();
   renderTablaMovimientos();
