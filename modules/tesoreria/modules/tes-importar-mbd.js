@@ -1152,3 +1152,4 @@ function estiloBtnPrimario() { return 'padding:8px 16px;background:var(--color-s
 function estiloBtnSecundario() { return 'padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px'; }
 function estiloBtnIcono(tipo) { const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)'; const co = tipo === 'danger' ? '#C53030' : 'var(--color-secundario)'; return `padding:4px 8px;background:${bg};color:${co};border:none;border-radius:4px;cursor:pointer;font-size:13px`; }
 function estiloCard(color) { return `background:${color};color:#fff;padding:12px 16px;border-radius:8px;min-width:140px`; }
+
