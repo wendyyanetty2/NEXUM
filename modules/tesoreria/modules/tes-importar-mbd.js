@@ -744,13 +744,14 @@ function procesarImportMBD(input) {
       if (rows.length < 2) { mostrarToast('El archivo no tiene datos.', 'atencion'); return; }
 
       const cabeceras = (rows[0] || []).map(h => (h || '').toString().trim().toLowerCase());
-      const esTieneEncabezado = cabeceras.some(h => ['fecha', 'monto', 'fecha depósito', 'fecha deposito'].includes(h));
-      const inicio = esTieneEncabezado ? 1 : 1;
+      const esTieneEncabezado = cabeceras.some(h =>
+        ['fecha', 'monto', 'fecha depósito', 'fecha deposito', 'n° de operación', 'n° operacion', 'descripcion'].includes(h)
+      );
+      const inicio = esTieneEncabezado ? 1 : 0;
 
-      // Detectar formato nuevo (20 cols con Medio de Pago) vs antiguo (19 cols)
-      const tieneMedioPago = cabeceras.some(h => h.includes('medio'));
-      const maxCols = Math.max(...rows.slice(inicio, inicio+5).map(r => (r||[]).length));
-      const formatoNuevo = tieneMedioPago || maxCols >= 20;
+      // Detectar formato con Medio de Pago (col 16) según cabecera, no por cantidad de cols
+      // (el archivo exportado tiene 21 cols pero NO tiene Medio de Pago — col 16 = Observaciones)
+      const formatoNuevo = cabeceras.some(h => h.includes('medio'));
 
       const toDate = v => {
         if (v === null || v === undefined || v === '') return null;
@@ -862,7 +863,8 @@ async function confirmarImportMBD() {
   const btn = document.getElementById('btn-confirmar-mbd');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
+  // Excluir campos internos y observaciones_3 (Medio de Pago no existe en DB)
+  const registros = validos.map(({ _fila, _ok, _error, observaciones_3, ...r }) => r);
   const CHUNK = 50;
   let ok = 0, errCount = 0;
   for (let i = 0; i < registros.length; i += CHUNK) {
