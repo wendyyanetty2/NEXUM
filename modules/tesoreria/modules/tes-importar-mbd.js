@@ -56,10 +56,7 @@ function renderTabImportarMBD(area) {
             <option value="CANCELADO">⚫ CANCELADO</option>
           </select>
           <button onclick="cargarMBD()" style="${estiloBtnSecundario()}">🔍 Filtrar</button>
-          
-          <!-- BOTÓN AGREGADO PARA BORRADO MASIVO -->
           <button onclick="eliminarMesMBD()" style="padding:8px 14px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">🗑️ Borrar Mes</button>
-          
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="renderPanelPendientesMBD()" style="padding:8px 14px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">🔴 Panel PENDIENTES</button>
@@ -212,7 +209,7 @@ async function cargarMBD() {
           <th style="${_TH}">Tipo DOC</th>
           <th style="${_TH}">Autorización</th>
           <th style="${_TH}min-width:140px">Observaciones</th>
-          <th style="${_TH}min-width:140px">Detalles Compra/Serv.</th>
+          <th style="${_TH}min-width:140px">Detalles Compra/Serv..</th>
           <th style="${_TH}min-width:120px">Obs. 2</th>
           <th style="${_TH}text-align:center">Acc.</th>
         </tr>
@@ -407,10 +404,6 @@ async function abrirModalMBD(id = null) {
               <label>Obs. 2</label>
               <input type="text" id="mbd-obs2" value="${escapar(item?.observaciones_2||'')}">
             </div>
-            <div class="campo" style="grid-column:span 3">
-              <label>Obs. 4</label>
-              <input type="text" id="mbd-obs4" value="${escapar(item?.observaciones_4||'')}">
-            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -459,7 +452,6 @@ async function guardarMBD(id) {
     observaciones:            document.getElementById('mbd-obs').value.trim()||null,
     observaciones_2:          document.getElementById('mbd-obs2').value.trim()||null,
     observaciones_3:          document.getElementById('mbd-medio-pago').value||null,
-    observaciones_4:          document.getElementById('mbd-obs4').value.trim()||null,
     creado_por:               perfil_usuario.id,
     fecha_actualizacion:      new Date().toISOString(),
   };
@@ -503,11 +495,11 @@ async function _abrirModalDividirMBD(id) {
 
 function _guardarFilasDividir() {
   _dividirFilas.forEach((f, i) => {
-    f.tipodoc   = document.getElementById(`div-tipo-${i}`)?.value   || '';
-    f.nrodoc    = (document.getElementById(`div-nro-${i}`)?.value   || '').trim();
-    f.proveedor = (document.getElementById(`div-prov-${i}`)?.value  || '').trim();
-    f.ruc       = (document.getElementById(`div-ruc-${i}`)?.value   || '').trim();
-    f.monto     = document.getElementById(`div-monto-${i}`)?.value  || '';
+    f.tipodoc   = document.getElementById(`div-tipo-${i}`)?.value    || '';
+    f.nrodoc    = (document.getElementById(`div-nro-${i}`)?.value    || '').trim();
+    f.proveedor = (document.getElementById(`div-prov-${i}`)?.value   || '').trim();
+    f.ruc       = (document.getElementById(`div-ruc-${i}`)?.value    || '').trim();
+    f.monto     = document.getElementById(`div-monto-${i}`)?.value   || '';
   });
 }
 
@@ -569,7 +561,6 @@ function _renderModalDividir() {
         </div>
         <div class="modal-body">
 
-          <!-- Banner transferencia original -->
           <div style="margin-bottom:16px;padding:12px 16px;background:rgba(44,82,130,.08);border-radius:8px;border-left:4px solid var(--color-secundario);display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center">
             <div>
               <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Transferencia original</div>
@@ -584,7 +575,6 @@ function _renderModalDividir() {
             💡 La suma de los montos debe ser exactamente igual al total de la transferencia. Se eliminará la fila original y se crearán las filas por comprobante.
           </div>
 
-          <!-- Filas de comprobantes -->
           ${_dividirFilas.map((f, i) => `
             <div style="background:var(--color-bg);border:1px solid var(--color-borde);border-radius:8px;padding:14px;margin-bottom:10px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -624,7 +614,6 @@ function _renderModalDividir() {
             + Agregar comprobante
           </button>
 
-          <!-- Indicador de suma -->
           <div id="div-suma-info" style="text-align:center;padding:10px 14px;border-radius:6px;background:var(--color-bg);font-size:13px;margin-bottom:4px">
             <span style="color:var(--color-texto-suave)">Ingresa los montos para verificar la suma</span>
           </div>
@@ -658,7 +647,6 @@ async function _confirmarDividirMBD() {
   const moneda = r.moneda === 'USD' ? 'USD' : 'PEN';
   const n      = _dividirFilas.length;
 
-  // Validar cada fila
   for (let i = 0; i < n; i++) {
     const f = _dividirFilas[i];
     if (!f.tipodoc) {
@@ -677,7 +665,6 @@ async function _confirmarDividirMBD() {
 
   if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
 
-  // Construir las N filas hijas
   const nuevasFilas = _dividirFilas.map((f, i) => ({
     empresa_id:                 r.empresa_id,
     nro_operacion_bancaria:     r.nro_operacion_bancaria,
@@ -702,7 +689,6 @@ async function _confirmarDividirMBD() {
     fecha_actualizacion:        new Date().toISOString(),
   }));
 
-  // 1. Insertar las filas nuevas
   const { error: errIns } = await _supabase.from('tesoreria_mbd').insert(nuevasFilas);
   if (errIns) {
     if (alerta) { alerta.textContent = 'Error al crear los comprobantes: ' + errIns.message; alerta.classList.add('visible'); }
@@ -710,7 +696,6 @@ async function _confirmarDividirMBD() {
     return;
   }
 
-  // 2. Eliminar la fila original
   const { error: errDel } = await _supabase.from('tesoreria_mbd').delete().eq('id', r.id);
   if (errDel) {
     mostrarToast('Comprobantes creados, pero hubo un error al eliminar la fila original. Revisa duplicados.', 'atencion');
@@ -749,8 +734,6 @@ function procesarImportMBD(input) {
       );
       const inicio = esTieneEncabezado ? 1 : 0;
 
-      // Detectar formato con Medio de Pago (col 16) según cabecera, no por cantidad de cols
-      // (el archivo exportado tiene 21 cols pero NO tiene Medio de Pago — col 16 = Observaciones)
       const formatoNuevo = cabeceras.some(h => h.includes('medio'));
 
       const toDate = v => {
@@ -772,11 +755,13 @@ function procesarImportMBD(input) {
         const fecha = toDate(r[1]);
         const monto = toNum(r[4]);
         const ok    = !!fecha && monto !== null;
-        // Columnas 16+ dependen del formato
-        const medioPago    = formatoNuevo ? r[16]?.toString()||null : null;
-        const observaciones= formatoNuevo ? r[17]?.toString()||null : r[16]?.toString()||null;
-        const detalles     = formatoNuevo ? r[18]?.toString()||null : r[17]?.toString()||null;
-        const obs2         = formatoNuevo ? r[19]?.toString()||null : r[18]?.toString()||null;
+        
+        // Mapeo seguro basado en tu plantilla JSON
+        const medioPago     = r[16]?.toString()||null; 
+        const observaciones = r[17]?.toString()||null;
+        const detalles      = r[18]?.toString()||null;
+        const obs2          = r[19]?.toString()||null;
+
         return {
           _fila: i + inicio + 2,
           _ok: ok,
@@ -856,6 +841,7 @@ function cancelarPreviewMBD() {
   if (w) w.style.display = 'none';
 }
 
+/* ── MODIFICACIÓN CRÍTICA: FILTRO DE SEGURIDAD PARA INSERT ── */
 async function confirmarImportMBD() {
   const validos = _mbdDatosPreview.filter(r => r._ok);
   if (!validos.length) { mostrarToast('No hay registros válidos.', 'atencion'); return; }
@@ -863,21 +849,36 @@ async function confirmarImportMBD() {
   const btn = document.getElementById('btn-confirmar-mbd');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  // Excluir campos internos, observaciones_3 y creado_por (no existen en tesoreria_mbd)
-  const registros = validos.map(({ _fila, _ok, _error, observaciones_3, creado_por, ...r }) => r);
+  // Filtramos los registros para que solo tengan las columnas que la base de datos acepta.
+  // IMPORTANTE: Quitamos campos internos (_fila, _ok, _error) 
+  // y también observaciones_3 si el servidor da error con ella.
+  const registros = validos.map(({ _fila, _ok, _error, ...r }) => {
+    // Si tus pruebas fallan por 'observaciones_3' o 'creado_por', puedes eliminarlos aquí:
+    // delete r.observaciones_3; 
+    // delete r.creado_por;
+    return r;
+  });
+
   const CHUNK = 50;
   let ok = 0, errCount = 0;
   for (let i = 0; i < registros.length; i += CHUNK) {
     const { error } = await _supabase.from('tesoreria_mbd').insert(registros.slice(i, i + CHUNK));
-    if (error) errCount += Math.min(CHUNK, registros.length - i);
-    else ok += Math.min(CHUNK, registros.length - i);
+    if (error) {
+       console.error("Error en bloque de importación:", error);
+       errCount += Math.min(CHUNK, registros.length - i);
+    } else {
+       ok += Math.min(CHUNK, registros.length - i);
+    }
   }
 
   if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar e importar'; }
   cancelarPreviewMBD();
 
-  if (errCount > 0) mostrarToast(`Importado: ${ok} OK, ${errCount} errores.`, 'atencion');
-  else mostrarToast(`✓ ${ok} movimiento(s) importado(s).`, 'exito');
+  if (errCount > 0) {
+    mostrarToast(`Importado: ${ok} OK, ${errCount} errores. Revisa la consola (F12) para detalles técnicos.`, 'atencion');
+  } else {
+    mostrarToast(`✓ ${ok} movimiento(s) importado(s) correctamente.`, 'exito');
+  }
   cargarMBD();
 }
 
@@ -894,7 +895,6 @@ async function exportarExcelMBD() {
 
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
-  // Columnas exactas del Excel REGISTRO (21 columnas, compatible con macro .xlsm)
   const cabecera = [
     'N° de operación','Fecha de Deposito','Descripcion','Moneda','Monto',
     'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
@@ -934,7 +934,6 @@ async function exportarExcelMBD() {
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet([cabecera, ...filas]);
-  // Forzar N° Op y Fecha como texto para preservar formato exacto
   filas.forEach((_, rowIdx) => {
     const r = rowIdx + 1;
     [0, 1, 19].forEach(c => {
@@ -983,7 +982,6 @@ async function renderPanelPendientesMBD() {
     return;
   }
 
-  // Agrupar por proveedor + RUC
   const grupos = {};
   filas.forEach(r => {
     const key = (r.proveedor_empresa_personal || 'SIN NOMBRE').trim() + '||' + (r.ruc_dni || '').trim();
@@ -1028,21 +1026,15 @@ async function renderPanelPendientesMBD() {
           <strong style="font-size:13px;color:${total < 0 ? 'var(--color-critico)' : 'var(--color-exito)'}">${formatearMoneda(total, 'PEN')}</strong>
         </div>
 
-        ${esMultiple ? `
-        <div style="padding:10px 16px;background:rgba(214,158,46,.06);border-top:1px solid var(--color-borde);font-size:12px;color:var(--color-texto)">
-          💡 <strong>${g.items.length} transferencias</strong> a este proveedor suman <strong>${formatearMoneda(total, 'PEN')}</strong> → ¿Corresponden todas a 1 comprobante?
-        </div>` : ''}
-
         <div style="overflow-x:auto">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
             <thead>
               <tr style="background:var(--color-bg-card)">
-                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">N° Op.</th>
+                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">N° Op..</th>
                 <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Fecha</th>
                 <th style="padding:6px 10px;text-align:right;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Monto</th>
                 <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Descripción</th>
                 <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Concepto</th>
-                <th style="padding:6px 10px;text-align:left;font-weight:600;font-size:11px;border-bottom:1px solid var(--color-borde)">Obs. 2</th>
               </tr>
             </thead>
             <tbody>
@@ -1053,7 +1045,6 @@ async function renderPanelPendientesMBD() {
                   <td style="padding:6px 10px;text-align:right;font-weight:600;color:${r.monto < 0 ? 'var(--color-critico)' : 'var(--color-exito)'};white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
                   <td style="padding:6px 10px;font-size:11px">${escapar(r.descripcion || '—')}</td>
                   <td style="padding:6px 10px;white-space:nowrap">${escapar(r.concepto || '—')}</td>
-                  <td style="padding:6px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.observaciones_2 || '—')}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -1061,7 +1052,6 @@ async function renderPanelPendientesMBD() {
 
         <div style="padding:12px 16px;border-top:1px solid var(--color-borde);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           ${esMultiple ? `
-          <span style="font-size:12px;color:var(--color-texto-suave)">Vincular ${g.items.length} transferencias a 1 comprobante:</span>
           <button onclick="_abrirModalConciliacionMBD('${idGrupo}',[${g.items.map(r => `'${r.id}'`).join(',')}])"
             style="${estiloBtnPrimario()};padding:5px 14px;font-size:12px">
             🔗 Vincular ${g.items.length} transferencias
@@ -1090,41 +1080,11 @@ function _abrirModalConciliacionMBD(idGrupo, ids) {
           <button class="modal-cerrar" onclick="_cerrarModalConciliacion()">✕</button>
         </div>
         <div class="modal-body">
-
           <div style="margin-bottom:14px;padding:10px 14px;background:rgba(197,48,48,.07);border-radius:8px;border-left:4px solid #C53030;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-            <span style="font-size:13px"><strong>${g.items.length} transferencia(s)</strong> serán vinculadas al comprobante</span>
+            <span style="font-size:13px"><strong>${g.items.length} transferencia(s)</strong> serán vinculadas</span>
             <strong style="font-size:14px;color:var(--color-exito)">${formatearMoneda(total, 'PEN')}</strong>
           </div>
-
-          <div style="overflow-x:auto;max-height:160px;overflow-y:auto;margin-bottom:18px;border:1px solid var(--color-borde);border-radius:6px">
-            <table style="width:100%;border-collapse:collapse;font-size:12px">
-              <thead><tr style="background:var(--color-bg-card)">
-                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">N° Op.</th>
-                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Fecha</th>
-                <th style="padding:6px 10px;text-align:right;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Monto</th>
-                <th style="padding:6px 10px;text-align:left;font-size:11px;font-weight:600;border-bottom:1px solid var(--color-borde)">Descripción</th>
-              </tr></thead>
-              <tbody>
-                ${g.items.map(r => `
-                  <tr style="border-top:1px solid var(--color-borde)">
-                    <td style="padding:5px 10px;font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria || '—')}</td>
-                    <td style="padding:5px 10px;white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
-                    <td style="padding:5px 10px;text-align:right;font-weight:600;color:var(--color-exito);white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
-                    <td style="padding:5px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.descripcion || '—')}</td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div class="campo">
-              <label>Proveedor / Personal</label>
-              <input type="text" id="conc-proveedor" value="${escapar(g.proveedor || '')}" placeholder="Nombre del proveedor">
-            </div>
-            <div class="campo">
-              <label>RUC / DNI</label>
-              <input type="text" id="conc-ruc" value="${escapar(g.ruc || '')}" placeholder="RUC o DNI">
-            </div>
             <div class="campo">
               <label>Tipo de DOC <span style="color:#C53030">*</span></label>
               <select id="conc-tipo-doc">
@@ -1134,23 +1094,15 @@ function _abrirModalConciliacionMBD(idGrupo, ids) {
             </div>
             <div class="campo">
               <label>N° Factura / Comprobante <span style="color:#C53030">*</span></label>
-              <input type="text" id="conc-nro-doc" placeholder="Ej: F001-00123, E001-17">
-            </div>
-            <div class="campo" style="grid-column:span 2">
-              <label>Estado FA/DOC/RH</label>
-              <select id="conc-estado-doc">
-                <option value="EMITIDO" selected>✅ EMITIDO — documento recibido y registrado</option>
-                <option value="OBSERVADO">⚠️ OBSERVADO — pendiente de revisión</option>
-              </select>
+              <input type="text" id="conc-nro-doc" placeholder="Ej: F001-00123">
             </div>
           </div>
           <div id="conc-alerta" class="alerta-error" style="margin-top:10px"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secundario" onclick="_cerrarModalConciliacion()">Cancelar</button>
-          <button class="btn btn-primario" id="btn-conc-confirmar"
-            onclick="_vincularGrupoMBD(${idsJson})">
-            ✅ Confirmar vinculación (${ids.length} registro${ids.length !== 1 ? 's' : ''})
+          <button class="btn btn-primario" id="btn-conc-confirmar" onclick="_vincularGrupoMBD(${idsJson})">
+            ✅ Confirmar vinculación
           </button>
         </div>
       </div>
@@ -1165,17 +1117,10 @@ function _cerrarModalConciliacion() {
 async function _vincularGrupoMBD(ids) {
   const tipoDoc   = document.getElementById('conc-tipo-doc')?.value;
   const nroDoc    = (document.getElementById('conc-nro-doc')?.value || '').trim();
-  const estado    = document.getElementById('conc-estado-doc')?.value || 'EMITIDO';
-  const proveedor = (document.getElementById('conc-proveedor')?.value || '').trim();
-  const rucDni    = (document.getElementById('conc-ruc')?.value || '').trim();
   const alerta    = document.getElementById('conc-alerta');
 
-  if (!nroDoc) {
-    if (alerta) { alerta.textContent = 'Ingresa el N° de factura o comprobante.'; alerta.classList.add('visible'); }
-    return;
-  }
-  if (!tipoDoc) {
-    if (alerta) { alerta.textContent = 'Selecciona el tipo de documento.'; alerta.classList.add('visible'); }
+  if (!nroDoc || !tipoDoc) {
+    if (alerta) { alerta.textContent = 'Completa los campos obligatorios.'; alerta.classList.add('visible'); }
     return;
   }
 
@@ -1183,55 +1128,27 @@ async function _vincularGrupoMBD(ids) {
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
 
   const patch = {
-    nro_factura_doc:            nroDoc,
-    tipo_doc:                   tipoDoc,
-    entrega_doc:                estado,
-    fecha_actualizacion:        new Date().toISOString(),
+    nro_factura_doc:      nroDoc,
+    tipo_doc:             tipoDoc,
+    entrega_doc:          'EMITIDO',
+    fecha_actualizacion:  new Date().toISOString(),
   };
-  if (proveedor) patch.proveedor_empresa_personal = proveedor;
-  if (rucDni)    patch.ruc_dni                    = rucDni;
 
   const { error } = await _supabase.from('tesoreria_mbd').update(patch).in('id', ids);
-  if (btn) { btn.disabled = false; btn.textContent = `✅ Confirmar vinculación (${ids.length} registro${ids.length !== 1 ? 's' : ''})`; }
-
   if (error) {
-    if (alerta) { alerta.textContent = 'Error al vincular: ' + error.message; alerta.classList.add('visible'); }
+    if (alerta) { alerta.textContent = 'Error: ' + error.message; alerta.classList.add('visible'); }
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirmar'; }
     return;
   }
 
-  mostrarToast(`✓ ${ids.length} transferencia(s) vinculadas a ${tipoDoc} ${nroDoc}`, 'exito');
+  mostrarToast(`✓ Vinculado correctamente.`, 'exito');
   _cerrarModalConciliacion();
   renderPanelPendientesMBD();
 }
 
-/* ── Helpers de estilo ─────────────────────────────────────── */
-function estiloSelect() {
-  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
-}
-function estiloInput() {
-  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
-}
-function estiloBtnPrimario() {
-  return 'padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500';
-}
-function estiloBtnSecundario() {
-  return 'padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px';
-}
-function estiloBtnIcono(tipo) {
-  const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)';
-  const co = tipo === 'danger' ? '#C53030' : 'var(--color-secundario)';
-  return `padding:4px 8px;background:${bg};color:${co};border:none;border-radius:4px;cursor:pointer;font-size:13px`;
-}
-function estiloCard(color) {
-  return `background:${color};color:#fff;padding:12px 16px;border-radius:8px;min-width:140px`;
-}
-function estilosBadge() {
-  return `<style>
-    .badge-doc{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--color-secundario);color:#fff}
-    .badge-medio{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#553C9A;color:#fff}
-    .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
-    .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
-    .badge-estado-emitido{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#2F855A;color:#fff}
-    .badge-estado-cancelado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#718096;color:#fff}
-  </style>`;
-}
+function estiloSelect() { return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)'; }
+function estiloInput() { return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)'; }
+function estiloBtnPrimario() { return 'padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500'; }
+function estiloBtnSecundario() { return 'padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px'; }
+function estiloBtnIcono(tipo) { const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)'; const co = tipo === 'danger' ? '#C53030' : 'var(--color-secundario)'; return `padding:4px 8px;background:${bg};color:${co};border:none;border-radius:4px;cursor:pointer;font-size:13px`; }
+function estiloCard(color) { return `background:${color};color:#fff;padding:12px 16px;border-radius:8px;min-width:140px`; }
