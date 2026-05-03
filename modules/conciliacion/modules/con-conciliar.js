@@ -5,6 +5,7 @@
 let _con_resultados     = { exactos: [], posibles: [], sin_match: [] };
 let _con_tab_activo     = 'exactos';
 let _con_periodo_actual = null;
+let _conItemCache       = {}; // cache de items para acceso seguro sin JSON en onclick
 
 // Estado de filtros/orden por tab
 let _con_filtros = {
@@ -534,6 +535,9 @@ function _rowMatchHtml(item, idx, prefijo, _TD) {
   const prov = d._proveedor || '—';
   const nDoc = d._ndoc || '—';
   const tipoBg = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
+  // Usamos idx+prefijo como clave para lookup seguro (sin JSON en onclick)
+  const key  = `${prefijo}_${idx}`;
+  _conItemCache[key] = item;
 
   return `<tr id="con-row-${prefijo}-${idx}"
     onmouseover="this.style.background='var(--color-hover)'"
@@ -560,13 +564,124 @@ function _rowMatchHtml(item, idx, prefijo, _TD) {
       <div style="display:flex;gap:4px;white-space:nowrap">
         <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 9px"
           onclick="_aprobarMatch('${m.id}','${d._tipo}','${d.id}',${item.score},'${prefijo==='ex'?'EXACTO':'POSIBLE'}',${idx},'${prefijo}')">✓ Aprobar</button>
-        <button title="Buscar manualmente" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px"
-          onclick="_abrirPanelManual('${m.id}',${JSON.stringify(m.monto)},${JSON.stringify(m.fecha_deposito)},${JSON.stringify(m.nro_operacion_bancaria||'')})">🔍</button>
-        <button title="Rechazar" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
+        <button title="Ver comprobante sugerido" style="padding:4px 8px;background:rgba(39,103,73,.15);color:#276749;border:1px solid rgba(39,103,73,.3);border-radius:4px;cursor:pointer;font-size:13px"
+          onclick="_verComprobante('${key}')">👁️</button>
+        <button title="Buscar comprobante manualmente" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px"
+          onclick="_abrirPanelManualPorKey('${key}')">🔍</button>
+        <button title="Rechazar sugerencia" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
           onclick="_rechazarMatch(${idx},'${prefijo}')">✕</button>
       </div>
     </td>
   </tr>`;
+}
+
+// ── Vista rápida del comprobante sugerido ─────────────────────────
+function _verComprobante(key) {
+  const item = _conItemCache[key];
+  if (!item) { mostrarToast('Dato no disponible', 'atencion'); return; }
+
+  const m = item.mov;
+  const d = item.doc;
+
+  const tipoBg  = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
+  const tipoIcon = d._tipo === 'RH' ? '🧾' : d._tipo === 'VENTA' ? '📄' : '🛒';
+
+  // Detalles extras según tipo
+  const extrasDoc = d._tipo === 'RH'
+    ? `<div class="__cv-fila"><span class="__cv-lbl">DNI prestador</span><span>${escapar(d._ruc || '—')}</span></div>`
+    : `<div class="__cv-fila"><span class="__cv-lbl">RUC proveedor</span><span>${escapar(d._ruc || '—')}</span></div>`;
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:center;z-index:9999`;
+
+  overlay.innerHTML = `
+    <div style="background:var(--color-bg-card);border-radius:12px;padding:0;max-width:480px;width:94%;
+      box-shadow:0 20px 60px rgba(0,0,0,.4);border:1px solid var(--color-borde);overflow:hidden">
+
+      <!-- Header -->
+      <div style="background:${tipoBg};padding:16px 20px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:22px">${tipoIcon}</span>
+        <div>
+          <div style="color:#fff;font-weight:700;font-size:15px">${escapar(d._ndoc || '—')}</div>
+          <div style="color:rgba(255,255,255,.75);font-size:12px">Comprobante sugerido · ${escapar(d._tipo || '')}</div>
+        </div>
+        <button onclick="this.closest('[style*=fixed]').remove()"
+          style="margin-left:auto;background:rgba(255,255,255,.2);border:none;border-radius:50%;
+            width:28px;height:28px;cursor:pointer;color:#fff;font-size:16px;line-height:1">✕</button>
+      </div>
+
+      <!-- Cuerpo -->
+      <style>
+        .__cv-sec { padding:14px 20px; border-bottom:1px solid var(--color-borde); }
+        .__cv-sec:last-child { border-bottom:none; }
+        .__cv-titulo { font-size:10px;font-weight:700;color:var(--color-texto-suave);
+          text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px; }
+        .__cv-fila { display:flex;justify-content:space-between;align-items:baseline;
+          font-size:13px;color:var(--color-texto);padding:3px 0; }
+        .__cv-lbl { color:var(--color-texto-suave);font-size:12px;flex-shrink:0;margin-right:12px; }
+        .__cv-monto { font-size:22px;font-weight:700;color:var(--color-exito); }
+      </style>
+
+      <!-- Comprobante -->
+      <div class="__cv-sec">
+        <div class="__cv-titulo">📋 Datos del comprobante</div>
+        <div class="__cv-fila"><span class="__cv-lbl">Número</span><strong style="color:var(--color-secundario)">${escapar(d._ndoc || '—')}</strong></div>
+        <div class="__cv-fila"><span class="__cv-lbl">Proveedor / Prestador</span><span>${escapar(d._proveedor || '—')}</span></div>
+        ${extrasDoc}
+        <div class="__cv-fila"><span class="__cv-lbl">Fecha emisión</span><span>${formatearFecha(d._fecha)}</span></div>
+        <div class="__cv-fila"><span class="__cv-lbl">Total</span><strong class="__cv-monto">${formatearMoneda(d._total, 'PEN')}</strong></div>
+      </div>
+
+      <!-- Movimiento bancario -->
+      <div class="__cv-sec">
+        <div class="__cv-titulo">🏦 Movimiento bancario</div>
+        <div class="__cv-fila"><span class="__cv-lbl">N° Operación</span><span style="font-family:monospace">${escapar(m.nro_operacion_bancaria || '—')}</span></div>
+        <div class="__cv-fila"><span class="__cv-lbl">Fecha depósito</span><span>${formatearFecha(m.fecha_deposito)}</span></div>
+        <div class="__cv-fila"><span class="__cv-lbl">Proveedor / Empresa</span><span>${escapar(m.proveedor_empresa_personal || '—')}</span></div>
+        <div class="__cv-fila"><span class="__cv-lbl">Monto</span>
+          <strong style="color:${Number(m.monto)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda(m.monto, m.moneda==='USD'?'USD':'PEN')}</strong>
+        </div>
+      </div>
+
+      <!-- Score -->
+      <div class="__cv-sec" style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div class="__cv-titulo" style="margin-bottom:4px">🎯 Confianza del match</div>
+          <div style="font-size:12px;color:var(--color-texto-suave)">
+            ${item.score >= 85 ? '✅ Alta — se puede aprobar con confianza'
+              : item.score >= 60 ? '⚠️ Media — revisa antes de aprobar'
+              : '❌ Baja — verificar manualmente'}
+          </div>
+        </div>
+        ${_scoreChip(item.score)}
+      </div>
+
+      <!-- Acciones -->
+      <div style="padding:14px 20px;display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="this.closest('[style*=fixed]').remove()"
+          style="padding:8px 16px;border:1px solid var(--color-borde);border-radius:8px;
+            background:var(--color-bg-card);color:var(--color-texto);cursor:pointer;font-size:13px;font-family:var(--font)">
+          Cerrar
+        </button>
+        <button onclick="this.closest('[style*=fixed]').remove(); _aprobarMatch('${m.id}','${d._tipo}','${d.id}',${item.score},'${item.score>=85?'EXACTO':'POSIBLE'}',${parseInt(key.split('_')[1])},'${key.split('_')[0]}')"
+          style="padding:8px 16px;border:none;border-radius:8px;background:#2C5282;color:#fff;
+            cursor:pointer;font-size:13px;font-family:var(--font);font-weight:500">
+          ✓ Aprobar este match
+        </button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── Panel lateral búsqueda manual (por key) ───────────────────────
+function _abrirPanelManualPorKey(key) {
+  const item = _conItemCache[key];
+  if (!item) { mostrarToast('Dato no disponible', 'atencion'); return; }
+  const m = item.mov;
+  _abrirPanelManual(m.id, m.monto, m.fecha_deposito, m.nro_operacion_bancaria || '');
 }
 
 // ── Tabla Sin Match ───────────────────────────────────────────────
@@ -633,8 +748,8 @@ function _renderTablaSinMatch(wrap) {
                 <div style="display:flex;gap:4px">
                   <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 9px"
                     onclick="_guardarClasificacion('${m.id}',${idx})">Guardar</button>
-                  <button title="Buscar manualmente" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px"
-                    onclick="_abrirPanelManual('${m.id}',${JSON.stringify(m.monto)},${JSON.stringify(m.fecha_deposito)},${JSON.stringify(m.nro_operacion_bancaria||'')})">🔍</button>
+                  <button title="Buscar comprobante manualmente" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px"
+                    onclick="_abrirPanelManual('${m.id}',${m.monto},'${m.fecha_deposito || ''}','${(m.nro_operacion_bancaria||'').replace(/'/g,'') }')">🔍</button>
                 </div>
               </td>
             </tr>`;
