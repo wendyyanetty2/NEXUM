@@ -18,9 +18,10 @@ let _con_filtros = {
 async function renderTabConciliar(area) {
   area.innerHTML = `
     <div class="fadeIn">
-      <!-- Paso 1 -->
+
+      <!-- Selector de periodo + borrar -->
       <div class="card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
           <h3 style="margin:0">Seleccionar periodo</h3>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button onclick="_conBorrarMes()" style="padding:6px 12px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">🗑️ Borrar mes</button>
@@ -30,7 +31,7 @@ async function renderTabConciliar(area) {
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-items:end">
           <div class="campo" style="margin-bottom:0">
             <label class="label-filtro">Mes / Periodo</label>
-            <input type="month" id="con-periodo" class="input-buscar w-full">
+            <input type="month" id="con-periodo" class="input-buscar w-full" onchange="_conPanelCambiarMes()">
           </div>
           <div>
             <button class="btn btn-primario w-full" onclick="_conIniciar()">🔗 Iniciar conciliación</button>
@@ -38,7 +39,63 @@ async function renderTabConciliar(area) {
         </div>
       </div>
 
-      <!-- Resumen -->
+      <!-- ═══ PANEL DE AVANCE ══════════════════════════════════════ -->
+      <div id="con-panel-avance" style="display:none;margin-bottom:16px">
+        <div class="card" style="padding:18px 22px;border-left:4px solid var(--color-secundario)">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+            <div>
+              <span style="font-weight:700;font-size:14px">📊 Avance de conciliación — </span>
+              <span id="pan-label-mes" style="font-weight:700;font-size:14px;color:var(--color-secundario)"></span>
+            </div>
+            <button onclick="_conExportarAvance()" class="btn btn-sm btn-secundario">📥 Exportar avance</button>
+          </div>
+
+          <!-- Barra de progreso -->
+          <div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--color-texto-suave);margin-bottom:4px">
+              <span id="pan-barra-label">Calculando…</span>
+              <span id="pan-pct" style="font-weight:700;font-size:14px;color:var(--color-secundario)">0%</span>
+            </div>
+            <div style="height:14px;background:var(--color-hover);border-radius:7px;overflow:hidden">
+              <div id="pan-barra" style="height:100%;width:0%;background:var(--color-secundario);border-radius:7px;transition:width 0.5s ease"></div>
+            </div>
+          </div>
+
+          <!-- Indicador mes completo -->
+          <div id="pan-completo" style="display:none;margin-bottom:12px;padding:8px 14px;background:rgba(34,197,94,.12);border:1px solid #22c55e;border-radius:8px;color:#166534;font-weight:600;font-size:13px;text-align:center">
+            ✅ Mes conciliado completo — todos los movimientos tienen comprobante
+          </div>
+
+          <!-- Alertas de validación -->
+          <div id="pan-alertas" style="margin-bottom:10px"></div>
+
+          <!-- Stats por estado -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
+            <div style="padding:10px 14px;background:rgba(34,197,94,.08);border-radius:8px;border-left:3px solid #22c55e">
+              <div style="font-size:10px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.5px">✅ Emitidos</div>
+              <div id="pan-emit-n"   style="font-size:20px;font-weight:700;color:#166534">0</div>
+              <div id="pan-emit-s"   style="font-size:11px;color:#166534;opacity:.8"></div>
+            </div>
+            <div style="padding:10px 14px;background:rgba(245,158,11,.08);border-radius:8px;border-left:3px solid #f59e0b">
+              <div style="font-size:10px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.5px">⚠️ Observados</div>
+              <div id="pan-obs-n"    style="font-size:20px;font-weight:700;color:#92400e">0</div>
+              <div id="pan-obs-s"    style="font-size:11px;color:#92400e;opacity:.8"></div>
+            </div>
+            <div style="padding:10px 14px;background:rgba(239,68,68,.08);border-radius:8px;border-left:3px solid #ef4444">
+              <div style="font-size:10px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.5px">🔴 Pendientes</div>
+              <div id="pan-pend-n"   style="font-size:20px;font-weight:700;color:#991b1b">0</div>
+              <div id="pan-pend-s"   style="font-size:11px;color:#991b1b;opacity:.8"></div>
+            </div>
+            <div style="padding:10px 14px;background:var(--color-hover);border-radius:8px;border-left:3px solid var(--color-borde)">
+              <div style="font-size:10px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.5px">📋 Total</div>
+              <div id="pan-total-n"  style="font-size:20px;font-weight:700;color:var(--color-texto)">0</div>
+              <div id="pan-total-s"  style="font-size:11px;color:var(--color-texto-suave)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sugerencias del motor (tabs) -->
       <div id="con-resumen" style="display:none;margin-bottom:16px">
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
           <div class="card" style="text-align:center;border-left:4px solid #22c55e;padding:16px;cursor:pointer" onclick="_conActivarSubtab('exactos')">
@@ -62,6 +119,7 @@ async function renderTabConciliar(area) {
           <button class="btn btn-sm btn-primario"   id="con-itab-exactos"   onclick="_conActivarSubtab('exactos')">🟢 Exactos</button>
           <button class="btn btn-sm btn-secundario" id="con-itab-posibles"  onclick="_conActivarSubtab('posibles')">🟡 Posibles</button>
           <button class="btn btn-sm btn-secundario" id="con-itab-sin_match" onclick="_conActivarSubtab('sin_match')">🔴 Sin match</button>
+          <button class="btn btn-sm btn-secundario" id="con-itab-historial" onclick="_conActivarSubtab('historial')">📋 Historial</button>
           <div style="flex:1"></div>
           <button id="con-btn-lote" class="btn btn-sm" style="display:none;background:#166534;color:#fff;border-radius:var(--radio)"
             onclick="_aprobarEnLote()">✅ Aprobar todos los exactos</button>
@@ -70,7 +128,7 @@ async function renderTabConciliar(area) {
         <div id="con-tabla-wrap"></div>
       </div>
 
-      <!-- Vacío -->
+      <!-- Estado vacío -->
       <div id="con-vacio" class="card" style="text-align:center;padding:48px;color:var(--color-texto-suave)">
         <div style="font-size:48px;margin-bottom:12px">🔗</div>
         <p style="font-weight:500">Selecciona un periodo e inicia la conciliación</p>
@@ -151,6 +209,7 @@ async function _conIniciar() {
 
     _conActualizarBtnLote();
     _conActivarSubtab('exactos');
+    _conRefrescarPanel(); // mostrar panel de avance al iniciar
 
   } catch (err) {
     if (tablaWrap) tablaWrap.innerHTML = `<div class="alerta-error">${escapar(err.message)}</div>`;
@@ -362,7 +421,7 @@ function _thFijo(label) {
 // ── Activar subtab ───────────────────────────────────────────────
 function _conActivarSubtab(tab) {
   _con_tab_activo = tab;
-  ['exactos','posibles','sin_match'].forEach(t => {
+  ['exactos','posibles','sin_match','historial'].forEach(t => {
     const btn = document.getElementById('con-itab-' + t);
     if (btn) btn.className = 'btn btn-sm ' + (t === tab ? 'btn-primario' : 'btn-secundario');
   });
@@ -371,6 +430,7 @@ function _conActivarSubtab(tab) {
   if (tab === 'exactos')   _renderTablaExactos(wrap);
   if (tab === 'posibles')  _renderTablaPosibles(wrap);
   if (tab === 'sin_match') _renderTablaSinMatch(wrap);
+  if (tab === 'historial') _renderHistorial(wrap);
 }
 
 function _conOrdenar(tab, col) {
@@ -810,6 +870,7 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
     _con_resultados.posibles = _con_resultados.posibles.filter(i => i.mov.id !== movId);
     document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
   }
+  _conRefrescarPanel(); // actualizar panel de avance en tiempo real
 }
 
 // ── Rechazar match ────────────────────────────────────────────────
@@ -871,6 +932,7 @@ async function _aprobarEnLote() {
   document.getElementById('con-cnt-exactos').textContent = 0;
   _conActualizarBtnLote();
   _conActivarSubtab('exactos');
+  _conRefrescarPanel(); // actualizar panel de avance en tiempo real
 
   mostrarToast(`✅ ${ok} aprobados${errores ? ` · ${errores} con error` : ''}.`, ok ? 'exito' : 'error');
 }
@@ -903,6 +965,7 @@ async function _guardarClasificacion(movId, idx) {
   document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
   mostrarToast('✓ Clasificación guardada', 'exito');
   _conActivarSubtab('sin_match');
+  _conRefrescarPanel(); // actualizar panel de avance en tiempo real
 }
 
 // ── Panel lateral búsqueda manual ────────────────────────────────
@@ -1008,6 +1071,7 @@ async function _vincularManual(movId, docTipo, docId) {
   document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
   _conActualizarBtnLote();
   _conActivarSubtab(_con_tab_activo);
+  _conRefrescarPanel(); // actualizar avance en tiempo real
 }
 
 // ── Exportar aprobados ────────────────────────────────────────────
@@ -1046,4 +1110,344 @@ async function _conExportarAprobados() {
   XLSX.utils.book_append_sheet(wb, ws, 'APROBADOS');
   XLSX.writeFile(wb, `Conciliacion_${_con_periodo_actual}_${empresa_activa.ruc||''}.xlsx`);
   mostrarToast('✓ Exportación completada', 'exito');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// PANEL DE AVANCE — funciones de soporte
+// ══════════════════════════════════════════════════════════════════
+
+// ── Cambio de mes en el selector (actualiza panel sin re-conciliar) ─
+function _conPanelCambiarMes() {
+  const el = document.getElementById('con-periodo');
+  if (!el?.value) return;
+  _con_periodo_actual = el.value;
+  _conRefrescarPanel();
+}
+
+// ── Refrescar panel de avance en tiempo real ────────────────────────
+async function _conRefrescarPanel() {
+  const panel = document.getElementById('con-panel-avance');
+  if (!panel || !_con_periodo_actual) return;
+
+  const [yyyy, mm] = _con_periodo_actual.split('-');
+  const fin = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
+
+  const { data, error } = await _supabase
+    .from('tesoreria_mbd')
+    .select('entrega_doc, monto, nro_factura_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .gte('fecha_deposito', `${yyyy}-${mm}-01`)
+    .lte('fecha_deposito', fin);
+
+  if (error) return;
+
+  const rows = data || [];
+
+  // Agrupar por estado
+  const grupos = {};
+  let totalN = 0, totalS = 0;
+  for (const row of rows) {
+    const est = row.entrega_doc || 'PENDIENTE';
+    const mnt = Math.abs(parseFloat(row.monto) || 0);
+    if (!grupos[est]) grupos[est] = { n: 0, s: 0 };
+    grupos[est].n++;
+    grupos[est].s += mnt;
+    totalN++;
+    totalS += mnt;
+  }
+
+  const emitN = grupos.EMITIDO?.n   || 0;
+  const emitS = grupos.EMITIDO?.s   || 0;
+  const obsN  = grupos.OBSERVADO?.n || 0;
+  const obsS  = grupos.OBSERVADO?.s || 0;
+  const pendN = grupos.PENDIENTE?.n || 0;
+  const pendS = grupos.PENDIENTE?.s || 0;
+  const pct   = totalN > 0 ? Math.round((emitN / totalN) * 100) : 0;
+
+  // Mostrar panel
+  panel.style.display = 'block';
+
+  // Etiqueta mes
+  const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                 'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const lblMes = document.getElementById('pan-label-mes');
+  if (lblMes) lblMes.textContent = `${meses[parseInt(mm) - 1]} ${yyyy}`;
+
+  // Barra de progreso
+  const barra  = document.getElementById('pan-barra');
+  const pctEl  = document.getElementById('pan-pct');
+  const lblBar = document.getElementById('pan-barra-label');
+  if (barra)  barra.style.width = `${pct}%`;
+  if (pctEl)  pctEl.textContent = `${pct}%`;
+  if (lblBar) lblBar.textContent = `${emitN} de ${totalN} movimientos conciliados`;
+
+  // Indicador de mes completo
+  const completo = document.getElementById('pan-completo');
+  if (completo) completo.style.display =
+    (totalN > 0 && pendN === 0 && obsN === 0) ? 'block' : 'none';
+
+  // Stats por estado
+  const _s = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+  _s('pan-emit-n',  emitN);
+  _s('pan-emit-s',  formatearMoneda(emitS));
+  _s('pan-obs-n',   obsN);
+  _s('pan-obs-s',   formatearMoneda(obsS));
+  _s('pan-pend-n',  pendN);
+  _s('pan-pend-s',  formatearMoneda(pendS));
+  _s('pan-total-n', totalN);
+  _s('pan-total-s', formatearMoneda(totalS));
+
+  // Validaciones automáticas
+  await _conValidar(rows, { emitN, obsN, pendN, totalN });
+}
+
+// ── Validaciones automáticas ────────────────────────────────────────
+async function _conValidar(filas, { emitN, obsN, pendN, totalN }) {
+  const alertasEl = document.getElementById('pan-alertas');
+  if (!alertasEl) return;
+
+  const alertas = [];
+
+  // 1. Mes conciliado al 100%
+  if (totalN > 0 && pendN === 0 && obsN === 0) {
+    alertas.push({ tipo: 'exito', msg: '✅ Conciliación del mes al 100% — no quedan pendientes.' });
+  }
+
+  // 2. Observados sin resolver
+  if (obsN > 0) {
+    alertas.push({ tipo: 'atencion', msg: `⚠️ ${obsN} movimiento(s) en estado OBSERVADO sin resolver.` });
+  }
+
+  // 3. Más del 20% pendiente
+  if (totalN > 0 && pendN / totalN > 0.2) {
+    alertas.push({
+      tipo: 'atencion',
+      msg: `🔴 ${pendN} de ${totalN} movimientos aún PENDIENTES (${Math.round(pendN / totalN * 100)}%).`,
+    });
+  }
+
+  // 4. Comprobantes duplicados (mismo nro_factura_doc en ≥2 filas EMITIDO)
+  if (emitN >= 2) {
+    const conteo = {};
+    filas
+      .filter(r => r.entrega_doc === 'EMITIDO' && r.nro_factura_doc)
+      .forEach(r => { conteo[r.nro_factura_doc] = (conteo[r.nro_factura_doc] || 0) + 1; });
+    const dups = Object.entries(conteo).filter(([, c]) => c > 1).map(([n]) => n);
+    if (dups.length) {
+      alertas.push({
+        tipo: 'error',
+        msg: `❌ Comprobante(s) duplicado(s): ${dups.slice(0, 4).join(', ')}${dups.length > 4 ? '…' : ''}`,
+      });
+    }
+  }
+
+  if (!alertas.length) { alertasEl.innerHTML = ''; return; }
+
+  const col = {
+    exito:    { bg: 'rgba(34,197,94,.12)',  border: '#22c55e', text: '#166534' },
+    atencion: { bg: 'rgba(245,158,11,.12)', border: '#f59e0b', text: '#92400e' },
+    error:    { bg: 'rgba(239,68,68,.12)',  border: '#ef4444', text: '#991b1b' },
+  };
+  alertasEl.innerHTML = alertas.map(a => {
+    const c = col[a.tipo] || col.atencion;
+    return `<div style="padding:8px 12px;margin-bottom:6px;background:${c.bg};
+      border:1px solid ${c.border};border-radius:6px;color:${c.text};
+      font-size:12px;font-weight:500">${a.msg}</div>`;
+  }).join('');
+}
+
+// ── Exportar avance completo del mes a Excel ────────────────────────
+async function _conExportarAvance() {
+  if (!_con_periodo_actual) { mostrarToast('Ejecuta la conciliación primero', 'atencion'); return; }
+
+  const [yyyy, mm] = _con_periodo_actual.split('-');
+  const fin = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
+
+  const { data, error } = await _supabase
+    .from('tesoreria_mbd')
+    .select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .gte('fecha_deposito', `${yyyy}-${mm}-01`)
+    .lte('fecha_deposito', fin)
+    .order('fecha_deposito', { ascending: true });
+
+  if (error) { mostrarToast('Error al exportar: ' + error.message, 'error'); return; }
+  if (!data?.length) { mostrarToast('Sin datos para este periodo', 'atencion'); return; }
+
+  const cab = [
+    'N° Operación','Fecha Depósito','Descripción','Moneda','Monto',
+    'Proveedor / Empresa / Personal','RUC/DNI','Estado','N° Comprobante','Tipo DOC',
+  ];
+  const filas = data.map(m => [
+    m.nro_operacion_bancaria || '',
+    m.fecha_deposito         || '',
+    m.descripcion            || '',
+    m.moneda                 || 'PEN',
+    m.monto,
+    m.proveedor_empresa_personal || '',
+    m.ruc_dni                || '',
+    m.entrega_doc            || '',
+    m.nro_factura_doc        || '',
+    m.tipo_doc               || '',
+  ]);
+
+  // Resumen al final
+  const grupos = {};
+  data.forEach(m => { const e = m.entrega_doc || 'PENDIENTE'; grupos[e] = (grupos[e] || 0) + 1; });
+  filas.push([], ['RESUMEN']);
+  Object.entries(grupos).forEach(([k, v]) => filas.push([k, v]));
+  filas.push(['TOTAL', data.length]);
+
+  const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
+  ws['!cols'] = [14,14,30,8,14,30,14,12,16,12].map(w => ({ wch: w }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'AVANCE');
+  XLSX.writeFile(wb, `Avance_Conciliacion_${_con_periodo_actual}_${empresa_activa.ruc || ''}.xlsx`);
+  mostrarToast('✓ Reporte de avance exportado', 'exito');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HISTORIAL — log de conciliaciones aprobadas con opción a revertir
+// ══════════════════════════════════════════════════════════════════
+
+async function _renderHistorial(wrap) {
+  if (!_con_periodo_actual) {
+    wrap.innerHTML = `<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)">
+      <p>Selecciona un periodo e inicia la conciliación primero</p></div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<div class="cargando" style="padding:32px"><div class="spinner"></div><span>Cargando historial…</span></div>`;
+
+  const [yyyy, mm] = _con_periodo_actual.split('-');
+  const fin = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
+
+  // Movimientos EMITIDO del periodo (fuente de verdad)
+  const { data: movs, error: errMovs } = await _supabase
+    .from('tesoreria_mbd')
+    .select('id, nro_operacion_bancaria, fecha_deposito, descripcion, proveedor_empresa_personal, ruc_dni, monto, moneda, entrega_doc, nro_factura_doc, tipo_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .eq('entrega_doc', 'EMITIDO')
+    .gte('fecha_deposito', `${yyyy}-${mm}-01`)
+    .lte('fecha_deposito', fin)
+    .order('fecha_deposito', { ascending: false });
+
+  if (errMovs) {
+    wrap.innerHTML = `<div class="alerta-error">${escapar(errMovs.message)}</div>`;
+    return;
+  }
+
+  // Registros en tabla conciliaciones para obtener score y tipo_match
+  const { data: concils } = await _supabase
+    .from('conciliaciones')
+    .select('movimiento_id, score, tipo_match, created_at')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .gte('created_at', `${yyyy}-${mm}-01T00:00:00`)
+    .lte('created_at', `${yyyy}-${mm}-31T23:59:59`);
+
+  const concilMap = {};
+  (concils || []).forEach(c => { concilMap[c.movimiento_id] = c; });
+
+  if (!movs?.length) {
+    wrap.innerHTML = `<div class="card" style="text-align:center;padding:32px;color:var(--color-texto-suave)">
+      <p>No hay movimientos conciliados en este periodo</p></div>`;
+    return;
+  }
+
+  const _TD = 'padding:7px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;font-size:12px';
+
+  wrap.innerHTML = `
+    <div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span style="font-size:13px;color:var(--color-texto-suave)">
+        ${movs.length} movimiento(s) conciliados — ${_con_periodo_actual}
+      </span>
+      <button onclick="_conExportarAvance()" class="btn btn-sm btn-secundario">📥 Exportar avance</button>
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+      <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;background:var(--color-bg-card)">
+        <thead>
+          <tr style="background:var(--color-primario);color:#fff">
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Fecha</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">N° Operación</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Proveedor / Empresa</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Monto</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Estado</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">N° Comprobante</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Tipo DOC</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Score</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Tipo Match</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${movs.map(m => {
+            const c      = concilMap[m.id] || {};
+            const score  = c.score != null ? c.score : null;
+            const tMatch = c.tipo_match || 'MANUAL';
+            const chipMatch =
+              tMatch === 'EXACTO'  ? `<span style="background:#166534;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">EXACTO</span>`
+            : tMatch === 'POSIBLE' ? `<span style="background:#854d0e;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">POSIBLE</span>`
+                                   : `<span style="background:#2C5282;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">MANUAL</span>`;
+            return `<tr
+              onmouseover="this.style.background='var(--color-hover)'"
+              onmouseout="this.style.background=''">
+              <td style="${_TD};white-space:nowrap">${formatearFecha(m.fecha_deposito)}</td>
+              <td style="${_TD};font-family:monospace;font-size:11px;white-space:nowrap">${escapar(m.nro_operacion_bancaria || '—')}</td>
+              <td style="${_TD};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                title="${escapar(m.proveedor_empresa_personal || '')}">${escapar((m.proveedor_empresa_personal || '—').slice(0, 30))}</td>
+              <td style="${_TD};text-align:right;font-weight:700;white-space:nowrap;color:${Number(m.monto) < 0 ? 'var(--color-critico)' : 'var(--color-exito)'}">
+                ${formatearMoneda(m.monto, m.moneda === 'USD' ? 'USD' : 'PEN')}</td>
+              <td style="${_TD}">${_tdEstado(m.entrega_doc)}</td>
+              <td style="${_TD};font-weight:600;color:var(--color-secundario);white-space:nowrap">${escapar(m.nro_factura_doc || '—')}</td>
+              <td style="${_TD};text-align:center">
+                ${m.tipo_doc
+                  ? `<span style="background:#2C5282;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escapar(m.tipo_doc)}</span>`
+                  : '—'}
+              </td>
+              <td style="${_TD};text-align:center">
+                ${score != null ? _scoreChip(score) : '<span style="color:var(--color-texto-suave)">—</span>'}
+              </td>
+              <td style="${_TD};text-align:center">${chipMatch}</td>
+              <td style="${_TD}">
+                <button title="Revertir conciliación — vuelve a PENDIENTE"
+                  style="padding:4px 10px;background:rgba(197,48,48,.1);color:#C53030;
+                    border:1px solid rgba(197,48,48,.3);border-radius:4px;cursor:pointer;
+                    font-size:11px;font-family:var(--font)"
+                  onclick="_conRevertir('${m.id}')">↩ Revertir</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ── Revertir una conciliación individual ────────────────────────────
+async function _conRevertir(movId) {
+  if (!await confirmar(
+    '¿Revertir esta conciliación?\nEl movimiento volverá a estado PENDIENTE.',
+    { btnOk: 'Sí, revertir', btnColor: '#C53030' }
+  )) return;
+
+  // 1. Revertir en tesoreria_mbd
+  const { error: errMov } = await _supabase
+    .from('tesoreria_mbd')
+    .update({ entrega_doc: 'PENDIENTE', nro_factura_doc: null, tipo_doc: null })
+    .eq('id', movId);
+
+  if (errMov) { mostrarToast('Error al revertir: ' + errMov.message, 'error'); return; }
+
+  // 2. Eliminar el registro de auditoría en conciliaciones
+  await _supabase
+    .from('conciliaciones')
+    .delete()
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('movimiento_id', movId);
+
+  mostrarToast('↩ Conciliación revertida — movimiento vuelve a PENDIENTE', 'exito');
+
+  // 3. Refrescar panel + recargar historial
+  await _conRefrescarPanel();
+  const wrap = document.getElementById('con-tabla-wrap');
+  if (wrap && _con_tab_activo === 'historial') await _renderHistorial(wrap);
 }
