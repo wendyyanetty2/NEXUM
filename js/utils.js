@@ -6,7 +6,14 @@
 // ── Formato de fecha ───────────────────────────────────────────────────────────
 function formatearFecha(fecha) {
   if (!fecha) return '—';
-  const d = new Date(fecha);
+  // Fechas solo-date (YYYY-MM-DD, 10 chars) se interpretan como UTC en JS,
+  // causando desfase de un día en zonas UTC negativas (ej. Perú UTC-5).
+  // Al agregar T00:00:00 forzamos interpretación en hora local.
+  const str = (typeof fecha === 'string' && fecha.length === 10)
+    ? fecha + 'T00:00:00'
+    : fecha;
+  const d = new Date(str);
+  if (isNaN(d)) return '—';
   const dia = String(d.getDate()).padStart(2, '0');
   const mes = String(d.getMonth() + 1).padStart(2, '0');
   const anio = d.getFullYear();
