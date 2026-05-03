@@ -209,7 +209,7 @@ async function cargarMBD() {
           <th style="${_TH}">Tipo DOC</th>
           <th style="${_TH}">Autorización</th>
           <th style="${_TH}min-width:140px">Observaciones</th>
-          <th style="${_TH}min-width:140px">Detalles Compra/Serv..</th>
+          <th style="${_TH}min-width:140px">Detalles Compra/Serv.</th>
           <th style="${_TH}min-width:120px">Obs. 2</th>
           <th style="${_TH}text-align:center">Acc.</th>
         </tr>
@@ -282,8 +282,6 @@ function renderResumenMBD(filas) {
     </div>
   `;
 }
-
-let _mbdDatos = [];
 
 async function abrirModalMBD(id = null) {
   let item = null;
@@ -734,8 +732,6 @@ function procesarImportMBD(input) {
       );
       const inicio = esTieneEncabezado ? 1 : 0;
 
-      const formatoNuevo = cabeceras.some(h => h.includes('medio'));
-
       const toDate = v => {
         if (v === null || v === undefined || v === '') return null;
         if (typeof v === 'number') {
@@ -756,12 +752,6 @@ function procesarImportMBD(input) {
         const monto = toNum(r[4]);
         const ok    = !!fecha && monto !== null;
         
-        // Mapeo seguro basado en tu plantilla JSON
-        const medioPago     = r[16]?.toString()||null; 
-        const observaciones = r[17]?.toString()||null;
-        const detalles      = r[18]?.toString()||null;
-        const obs2          = r[19]?.toString()||null;
-
         return {
           _fila: i + inicio + 2,
           _ok: ok,
@@ -785,10 +775,10 @@ function procesarImportMBD(input) {
           nro_factura_doc:          r[13]?.toString()||null,
           tipo_doc:                 r[14]?.toString()||null,
           autorizacion:             r[15]?.toString()||null,
-          observaciones_3:          medioPago,
-          observaciones:            observaciones,
-          detalles_compra_servicio: detalles,
-          observaciones_2:          obs2,
+          observaciones_3:          r[16]?.toString()||null, // Medio de Pago
+          observaciones:            r[17]?.toString()||null,
+          detalles_compra_servicio: r[18]?.toString()||null,
+          observaciones_2:          r[19]?.toString()||null,
           creado_por:               perfil_usuario.id,
         };
       }).filter(r => r._fila > 0);
@@ -850,14 +840,8 @@ async function confirmarImportMBD() {
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
   // Filtramos los registros para que solo tengan las columnas que la base de datos acepta.
-  // IMPORTANTE: Quitamos campos internos (_fila, _ok, _error) 
-  // y también observaciones_3 si el servidor da error con ella.
-  const registros = validos.map(({ _fila, _ok, _error, ...r }) => {
-    // Si tus pruebas fallan por 'observaciones_3' o 'creado_por', puedes eliminarlos aquí:
-    // delete r.observaciones_3; 
-    // delete r.creado_por;
-    return r;
-  });
+  // IMPORTANTE: Quitamos campos internos (_fila, _ok, _error)
+  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
 
   const CHUNK = 50;
   let ok = 0, errCount = 0;
@@ -1129,7 +1113,7 @@ async function _vincularGrupoMBD(ids) {
 
   const patch = {
     nro_factura_doc:      nroDoc,
-    tipo_doc:             tipoDoc,
+    tipo_doc:              tipoDoc,
     entrega_doc:          'EMITIDO',
     fecha_actualizacion:  new Date().toISOString(),
   };
@@ -1152,4 +1136,3 @@ function estiloBtnPrimario() { return 'padding:8px 16px;background:var(--color-s
 function estiloBtnSecundario() { return 'padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px'; }
 function estiloBtnIcono(tipo) { const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)'; const co = tipo === 'danger' ? '#C53030' : 'var(--color-secundario)'; return `padding:4px 8px;background:${bg};color:${co};border:none;border-radius:4px;cursor:pointer;font-size:13px`; }
 function estiloCard(color) { return `background:${color};color:#fff;padding:12px 16px;border-radius:8px;min-width:140px`; }
-
