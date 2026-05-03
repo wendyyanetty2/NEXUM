@@ -863,8 +863,8 @@ async function confirmarImportMBD() {
   const btn = document.getElementById('btn-confirmar-mbd');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  // Excluir campos internos y observaciones_3 (Medio de Pago no existe en DB)
-  const registros = validos.map(({ _fila, _ok, _error, observaciones_3, ...r }) => r);
+  // Excluir campos internos, observaciones_3 y creado_por (no existen en tesoreria_mbd)
+  const registros = validos.map(({ _fila, _ok, _error, observaciones_3, creado_por, ...r }) => r);
   const CHUNK = 50;
   let ok = 0, errCount = 0;
   for (let i = 0; i < registros.length; i += CHUNK) {
