@@ -428,6 +428,26 @@ async function guardarCompra() {
     observaciones:          document.getElementById('c-obs').value.trim() || null,
     usuario_id:             perfil_usuario?.id || null,
   };
+  // Detección de duplicados (solo para nuevos registros)
+  if (!id) {
+    const serieVal  = document.getElementById('c-serie').value.trim();
+    const numeroVal = document.getElementById('c-numero').value.trim();
+    const rucVal    = document.getElementById('c-ruc-prov').value.trim();
+    if (serieVal && numeroVal && rucVal) {
+      const { data: dup } = await _supabase
+        .from('registro_compras').select('id,fecha_emision,nombre_proveedor')
+        .eq('empresa_operadora_id', empresa_activa.id)
+        .eq('serie', serieVal).eq('numero', numeroVal).eq('ruc_proveedor', rucVal)
+        .neq('estado', 'ANULADO').limit(1);
+      if (dup?.length) {
+        const continuar = await confirmar(
+          `⚠️ Posible duplicado detectado\n\nYa existe un comprobante con la misma Serie, Número y RUC del proveedor:\n📄 ${escapar(dup[0].nombre_proveedor||'')} — ${formatearFecha(dup[0].fecha_emision)}\n\n¿Deseas guardarlo de todas formas?`,
+          { btnOk: 'Guardar igualmente', btnColor: '#D69E2E' }
+        );
+        if (!continuar) { btn.disabled = false; btn.textContent = 'Guardar'; return; }
+      }
+    }
+  }
   const { error } = id
     ? await _supabase.from('registro_compras').update(payload).eq('id', id)
     : await _supabase.from('registro_compras').insert(payload);

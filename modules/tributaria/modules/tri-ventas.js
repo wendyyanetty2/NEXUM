@@ -387,6 +387,26 @@ async function guardarVenta() {
     observaciones:          document.getElementById('v-obs').value.trim() || null,
     usuario_id:             perfil_usuario?.id || null,
   };
+  // Detección de duplicados (solo para nuevos registros)
+  if (!id) {
+    const serieVal  = document.getElementById('v-serie').value.trim();
+    const numeroVal = document.getElementById('v-numero').value.trim();
+    const rucVal    = document.getElementById('v-ruc-cli').value.trim();
+    if (serieVal && numeroVal) {
+      const { data: dup } = await _supabase
+        .from('registro_ventas').select('id,fecha_emision,nombre_cliente')
+        .eq('empresa_operadora_id', empresa_activa.id)
+        .eq('serie', serieVal).eq('numero', numeroVal)
+        .neq('estado', 'ANULADO').limit(1);
+      if (dup?.length) {
+        const continuar = await confirmar(
+          `⚠️ Posible duplicado detectado\n\nYa existe un comprobante con la misma Serie y Número:\n📄 ${escapar(dup[0].nombre_cliente||'')} — ${formatearFecha(dup[0].fecha_emision)}\n\n¿Deseas guardarlo de todas formas?`,
+          { btnOk: 'Guardar igualmente', btnColor: '#D69E2E' }
+        );
+        if (!continuar) { btn.disabled = false; btn.textContent = 'Guardar'; return; }
+      }
+    }
+  }
   const { error } = id
     ? await _supabase.from('registro_ventas').update(payload).eq('id', id)
     : await _supabase.from('registro_ventas').insert(payload);

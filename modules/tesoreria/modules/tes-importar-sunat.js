@@ -1,5 +1,8 @@
 // ═══════════════════════════════════════════════════════════════
 // Tesorería — Importar Registros SUNAT (Compras / Ventas)
+// Propósito: verificar que cada comprobante importado tiene su
+// movimiento bancario correspondiente en tesoreria_mbd.
+// Usa sunat-parser.js como servicio compartido de parseo.
 // ═══════════════════════════════════════════════════════════════
 
 let sunat_preview_datos = [];
@@ -10,12 +13,13 @@ async function renderTabImportarSunat(area) {
     <div class="fadeIn">
 
       <div class="card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;
+                    flex-wrap:wrap;gap:8px;margin-bottom:16px">
           <div>
             <h3>📑 Importar Registros SUNAT</h3>
             <p class="text-muted text-sm" style="margin-top:4px">
-              Sube el Excel descargado de SUNAT (Registro de Ventas o Compras).
-              El tipo se detecta automáticamente desde los encabezados.
+              Sube el Excel del PLE SUNAT. Tras la importación se muestra si cada
+              comprobante ya tiene un movimiento bancario vinculado en MBD.
             </p>
           </div>
         </div>
@@ -43,7 +47,7 @@ async function renderTabImportarSunat(area) {
           style="border:2px dashed var(--color-borde);border-radius:var(--radio);
                  padding:40px 20px;text-align:center;cursor:pointer;
                  transition:border-color 0.2s,background 0.2s;margin-bottom:16px"
-          ondragover="event.preventDefault();this.style.borderColor='var(--color-primario)';this.style.background='var(--color-fondo-2)'"
+          ondragover="event.preventDefault();this.style.borderColor='var(--color-primario)';this.style.background='var(--color-fondo-2,#f7fafc)'"
           ondragleave="this.style.borderColor='var(--color-borde)';this.style.background=''"
           ondrop="_sunatHandleDrop(event)"
           onclick="document.getElementById('sunat-file-input').click()">
@@ -57,8 +61,10 @@ async function renderTabImportarSunat(area) {
         <div id="sunat-archivo-info" style="display:none" class="alerta-info"></div>
       </div>
 
+      <!-- Vista previa -->
       <div id="sunat-preview-wrap" style="display:none" class="card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    margin-bottom:12px;flex-wrap:wrap;gap:8px">
           <h3 style="display:flex;align-items:center;gap:8px">
             👁️ Vista previa —
             <span id="sunat-preview-count">0</span> registros
@@ -70,15 +76,12 @@ async function renderTabImportarSunat(area) {
           <table class="tabla" style="font-size:12px">
             <thead>
               <tr>
-                <th>Fecha</th>
-                <th>T.Doc</th>
-                <th>CDP (Serie-Número)</th>
+                <th>Fecha</th><th>T.Doc</th><th>CDP (Serie-Número)</th>
                 <th>Proveedor / Cliente</th>
-                <th>Base Impon.</th>
-                <th>IGV</th>
-                <th>Total</th>
-                <th>Mon.</th>
-                <th>Val.</th>
+                <th class="text-right">Base Imp.</th>
+                <th class="text-right">IGV</th>
+                <th class="text-right">Total</th>
+                <th>Mon.</th><th>Val.</th>
               </tr>
             </thead>
             <tbody id="sunat-tbody-preview"></tbody>
@@ -86,12 +89,14 @@ async function renderTabImportarSunat(area) {
         </div>
         <div style="display:flex;gap:8px;margin-top:16px">
           <button class="btn btn-secundario" onclick="_sunatCancelarPreview()">Cancelar</button>
-          <button class="btn btn-primario" id="sunat-btn-confirmar" onclick="_sunatConfirmarImportacion()">
+          <button class="btn btn-primario" id="sunat-btn-confirmar"
+                  onclick="_sunatConfirmarImportacion()">
             ✅ Confirmar importación
           </button>
         </div>
       </div>
 
+      <!-- Progreso -->
       <div id="sunat-progreso" style="display:none" class="card" style="margin-bottom:16px">
         <p id="sunat-progreso-texto" class="text-muted text-sm" style="margin-bottom:8px">Preparando...</p>
         <div style="height:6px;background:var(--color-borde);border-radius:3px;overflow:hidden">
@@ -100,6 +105,32 @@ async function renderTabImportarSunat(area) {
         </div>
       </div>
 
+      <!-- Estado de conciliación (aparece tras importar) -->
+      <div id="sunat-conciliacion-wrap" style="display:none" class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <h3>🔗 Estado de conciliación bancaria</h3>
+          <span class="text-muted text-sm" id="sunat-concil-resumen"></span>
+        </div>
+        <p class="text-muted text-sm" style="margin-bottom:12px">
+          Indica si cada comprobante importado tiene un movimiento bancario vinculado
+          en MBD (campo <em>N° Factura/Doc</em>).
+        </p>
+        <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+          <table class="tabla" style="font-size:12px">
+            <thead><tr>
+              <th>Fecha</th><th>CDP</th><th>Proveedor / Cliente</th><th>RUC</th>
+              <th class="text-right">Total</th><th>Mon.</th><th>Estado conciliación</th>
+            </tr></thead>
+            <tbody id="sunat-concil-body"></tbody>
+          </table>
+        </div>
+        <p class="text-muted text-sm" style="margin-top:10px;font-size:11px">
+          ⚠️ La coincidencia es automática por N° de documento. Verifica manualmente si hay dudas.
+        </p>
+      </div>
+
+      <!-- Historial -->
       <div class="card">
         <h3 style="margin-bottom:12px">📜 Historial de importaciones SUNAT</h3>
         <div id="sunat-historial">
@@ -112,15 +143,19 @@ async function renderTabImportarSunat(area) {
   await _sunatCargarHistorial();
 }
 
+// ── Control de tipo ───────────────────────────────────────────────
+
 function _sunatTipoChange() {
   const tipo = document.querySelector('input[name="sunat-tipo"]:checked')?.value;
   sunat_tipo_actual = tipo || null;
-  ['compras', 'ventas'].forEach(t => {
+  ['compras','ventas'].forEach(t => {
     const lbl = document.getElementById('lbl-sunat-' + t);
     if (lbl) lbl.style.borderColor = tipo === t.toUpperCase()
       ? 'var(--color-primario)' : 'var(--color-borde)';
   });
 }
+
+// ── Manejo de archivo ─────────────────────────────────────────────
 
 function _sunatHandleDrop(e) {
   e.preventDefault();
@@ -140,37 +175,32 @@ function _sunatHandleFile(file) {
   if (info) { info.style.display = 'block'; info.textContent = `📂 ${file.name} — leyendo…`; }
 
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = ev => {
     try {
-      const wb   = XLSX.read(e.target.result, { type: 'array', cellDates: false });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+      const resultado = sunat_parsear_buffer(ev.target.result, sunat_tipo_actual);
 
-      if (!rows.length) { mostrarToast('El archivo está vacío', 'atencion'); return; }
-
-      const headers = rows[0] || [];
-      let tipoDetectado = null;
-      if (headers.some(h => (h || '').toString().trim() === 'BI Gravado DG'))  tipoDetectado = 'COMPRAS';
-      else if (headers.some(h => (h || '').toString().trim() === 'BI Gravada')) tipoDetectado = 'VENTAS';
-
-      if (tipoDetectado) {
-        sunat_tipo_actual = tipoDetectado;
-        const radioEl = document.getElementById('sunat-tipo-' + tipoDetectado.toLowerCase());
-        if (radioEl) { radioEl.checked = true; _sunatTipoChange(); }
-        mostrarToast(`Formato detectado: ${tipoDetectado === 'COMPRAS' ? '🛒 Compras' : '🏷️ Ventas'}`, 'info');
-      } else if (!sunat_tipo_actual) {
-        mostrarToast('No se pudo detectar el tipo. Selecciona Compras o Ventas manualmente.', 'atencion');
+      if (!resultado.tipo) {
+        mostrarToast('No se detectó el tipo. Selecciona Compras o Ventas manualmente.', 'atencion');
         if (info) info.style.display = 'none';
         return;
       }
 
-      const tipo = sunat_tipo_actual;
-      sunat_preview_datos = rows.slice(1)
-        .map((r, i) => _sunatMapearFila(r, i, tipo))
-        .filter(Boolean);
+      sunat_tipo_actual = resultado.tipo;
 
-      if (info) info.textContent = `📂 ${file.name} — ${rows.length} filas leídas`;
-      _sunatMostrarPreview(tipo);
+      // Sincronizar radio
+      const radio = document.getElementById('sunat-tipo-' + resultado.tipo.toLowerCase());
+      if (radio) { radio.checked = true; _sunatTipoChange(); }
+
+      // Adaptar campos al formato de preview existente
+      sunat_preview_datos = resultado.filas.map(f => ({
+        ...f,
+        entidad: f.nombre_proveedor || f.nombre_cliente || '',
+        importe: f.total,
+      }));
+
+      if (info) info.textContent = `📂 ${file.name} — ${resultado.totalFilas} filas leídas`;
+      mostrarToast(`Formato detectado: ${resultado.tipo === 'COMPRAS' ? '🛒 Compras' : '🏷️ Ventas'}`, 'info');
+      _sunatMostrarPreview(resultado.tipo);
 
     } catch (err) {
       mostrarToast('Error al leer el archivo: ' + err.message, 'error');
@@ -180,90 +210,7 @@ function _sunatHandleFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
-function _parsearFechaExcel(val) {
-  if (val === null || val === undefined || val === '') return null;
-  if (typeof val === 'number') {
-    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
-    if (isNaN(d.getTime())) return null;
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-  }
-  if (val instanceof Date) {
-    if (isNaN(val.getTime())) return null;
-    return `${val.getUTCFullYear()}-${String(val.getUTCMonth()+1).padStart(2,'0')}-${String(val.getUTCDate()).padStart(2,'0')}`;
-  }
-  const s = val.toString().trim();
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const d2 = new Date(s);
-  return isNaN(d2.getTime()) ? null : d2.toISOString().slice(0, 10);
-}
-
-function _sunatMoneda(val) {
-  if (!val) return 'PEN';
-  const s = val.toString().trim().toUpperCase();
-  if (['USD', '2', 'US$', '$', 'DO'].includes(s)) return 'USD';
-  return 'PEN';
-}
-
-function _sunatTipoDocCodigo(val) {
-  if (val === null || val === undefined) return null;
-  const n = parseInt(val);
-  return isNaN(n) ? null : String(n).padStart(2, '0');
-}
-
-function _sunatConstruirCDP(serie, nroRaw) {
-  const s   = (serie || '').toString().trim();
-  const n   = parseInt(nroRaw) || 0;
-  return `${s}-${String(n).padStart(8, '0')}`;
-}
-
-function _sunatMapearFila(r, idx, tipo) {
-  const esCompras = tipo === 'COMPRAS';
-
-  // Sincronizado con plantilla_ventas.json y estructura SUNAT
-  const serie  = (r[7]  || '').toString().trim(); // Col H
-  const nroRaw = esCompras ? r[9] : r[8];         // Ventas: Col I
-
-  if (!serie && !nroRaw) return null;
-
-  const cdp     = _sunatConstruirCDP(serie, nroRaw);
-  const fecha   = _parsearFechaExcel(r[4]);
-  const total   = Math.abs(parseFloat(esCompras ? r[24] : r[25]) || 0);
-
-  const _ok    = !!fecha && total > 0;
-  const _error = !fecha ? 'Sin fecha' : total === 0 ? 'Total = 0' : null;
-
-  const moneda  = _sunatMoneda(esCompras ? r[25] : r[26]);
-  const tipoDoc = _sunatTipoDocCodigo(r[6]);
-  
-  // Compras: RUC=Col M(12), Nombre=Col N(13) | Ventas: RUC=Col L(11), Nombre=Col M(12)
-  const rucEntidad = esCompras ? r[12] : r[11];
-  const nombreEntidad = (r[esCompras ? 13 : 12] || '').toString().trim();
-
-  const base = parseFloat(r[14]) || 0;
-  const igv  = parseFloat(r[esCompras ? 15 : 16]) || 0;
-
-  const detraccion = esCompras ? (r[37] ? String(r[37]).trim() : null) : null;
-  const numero = nroRaw != null ? String(parseInt(nroRaw) || nroRaw) : null;
-  const periodoRaw = (r[2] || '').toString().trim();
-  const periodo = /^\d{6}$/.test(periodoRaw)
-    ? periodoRaw.slice(0,4) + '-' + periodoRaw.slice(4,6)
-    : (fecha ? fecha.slice(0,7) : null);
-
-  return {
-    _idx: idx + 2, _ok, _error,
-    cdp, entidad: nombreEntidad, fecha,
-    naturaleza: tipo === 'COMPRAS' ? 'CARGO' : 'ABONO',
-    importe: total, moneda, tipo_documento_codigo: tipoDoc,
-    base_imponible: base, igv: igv, tiene_igv: igv > 0,
-    tiene_detraccion: !!detraccion, codigo_detraccion: detraccion, tipo,
-    serie, numero, ruc: (rucEntidad || '').toString().trim() || null,
-    nombre: nombreEntidad, periodo,
-    tipo_cambio: parseFloat(r[esCompras ? 26 : 27]) || 1,
-    fecha_vencimiento: _parsearFechaExcel(r[5]),
-  };
-}
+// ── Vista previa ──────────────────────────────────────────────────
 
 function _sunatMostrarPreview(tipo) {
   const wrap  = document.getElementById('sunat-preview-wrap');
@@ -294,7 +241,10 @@ function _sunatMostrarPreview(tipo) {
       <td class="text-right">${f.igv ? formatearMoneda(f.igv, f.moneda) : '—'}</td>
       <td class="text-right" style="font-weight:600">${formatearMoneda(f.importe, f.moneda)}</td>
       <td>${escapar(f.moneda || '—')}</td>
-      <td>${f._ok ? '<span class="badge badge-activo">OK</span>' : '<span class="badge badge-inactivo">Error</span>'}</td>
+      <td>${f._ok
+        ? '<span class="badge badge-activo">OK</span>'
+        : `<span class="badge badge-inactivo" title="${escapar((f._errores||[]).join(', '))}">Error</span>`}
+      </td>
     </tr>`).join('');
 
   wrap.style.display = 'block';
@@ -304,8 +254,11 @@ function _sunatCancelarPreview() {
   sunat_preview_datos = [];
   document.getElementById('sunat-preview-wrap').style.display = 'none';
   document.getElementById('sunat-archivo-info').style.display = 'none';
+  document.getElementById('sunat-conciliacion-wrap').style.display = 'none';
   document.getElementById('sunat-file-input').value = '';
 }
+
+// ── Confirmar importación ─────────────────────────────────────────
 
 async function _sunatConfirmarImportacion() {
   const validos = sunat_preview_datos.filter(f => f._ok);
@@ -315,14 +268,12 @@ async function _sunatConfirmarImportacion() {
   btn.disabled = true; btn.textContent = 'Importando…';
   document.getElementById('sunat-progreso').style.display = 'block';
 
-  const tipo = sunat_tipo_actual;
+  const tipo      = sunat_tipo_actual;
   const esCompras = tipo === 'COMPRAS';
-  const tabla = esCompras ? 'registro_compras' : 'registro_ventas';
-  
-  // Sincronización con las restricciones de la base de datos
+  const tabla     = esCompras ? 'registro_compras' : 'registro_ventas';
   const onConflict = esCompras
-    ? 'empresa_operadora_id, tipo_documento_codigo, serie, numero, ruc_proveedor'
-    : 'empresa_operadora_id, serie, numero'; 
+    ? 'empresa_operadora_id,tipo_documento_codigo,serie,numero,ruc_proveedor'
+    : 'empresa_operadora_id,serie,numero';
 
   const { data: lote, error: errLote } = await _supabase
     .from('lotes_importacion').insert({
@@ -334,32 +285,64 @@ async function _sunatConfirmarImportacion() {
       usuario_id: perfil_usuario?.id || null,
     }).select().single();
 
-  if (errLote) { mostrarToast('Error al crear lote: ' + errLote.message, 'error'); btn.disabled = false; return; }
+  if (errLote) {
+    mostrarToast('Error al crear lote: ' + errLote.message, 'error');
+    btn.disabled = false; btn.textContent = '✅ Confirmar importación';
+    document.getElementById('sunat-progreso').style.display = 'none';
+    return;
+  }
 
   const filas = validos.map(f => esCompras ? {
     empresa_operadora_id:  empresa_activa.id,
     lote_importacion_id:   lote.id,
-    periodo: f.periodo, fecha_emision: f.fecha,
+    periodo:               f.periodo,
+    fecha_emision:         f.fecha,
+    fecha_vencimiento:     f.fecha_vencimiento,
     tipo_documento_codigo: f.tipo_documento_codigo,
-    serie: f.serie, numero: f.numero, ruc_proveedor: f.ruc,
-    nombre_proveedor: f.nombre, base_imponible: f.base_imponible || 0,
-    igv: f.igv || 0, total: f.importe, moneda: f.moneda,
-    tipo_cambio: f.tipo_cambio || 1, estado: 'EMITIDO', usuario_id: perfil_usuario?.id || null,
+    serie:                 f.serie,
+    numero:                f.numero,
+    ruc_proveedor:         f.ruc_proveedor,
+    nombre_proveedor:      f.nombre_proveedor,
+    base_imponible:        f.base_imponible || 0,
+    igv:                   f.igv || 0,
+    total:                 f.importe,
+    moneda:                f.moneda,
+    tipo_cambio:           f.tipo_cambio || 1,
+    tiene_detraccion:      f.tiene_detraccion,
+    codigo_detraccion:     f.codigo_detraccion,
+    estado:                'EMITIDO',
+    usuario_id:            perfil_usuario?.id || null,
   } : {
     empresa_operadora_id:  empresa_activa.id,
     lote_importacion_id:   lote.id,
-    periodo: f.periodo, fecha_emision: f.fecha,
+    periodo:               f.periodo,
+    fecha_emision:         f.fecha,
+    fecha_vencimiento:     f.fecha_vencimiento,
     tipo_documento_codigo: f.tipo_documento_codigo,
-    serie: f.serie, numero: f.numero, ruc_cliente: f.ruc,
-    nombre_cliente: f.nombre, base_imponible: f.base_imponible || 0,
-    igv: f.igv || 0, total: f.importe, moneda: f.moneda,
-    tipo_cambio: f.tipo_cambio || 1, estado: 'EMITIDO', usuario_id: perfil_usuario?.id || null,
+    serie:                 f.serie,
+    numero:                f.numero,
+    ruc_cliente:           f.ruc_cliente,
+    nombre_cliente:        f.nombre_cliente,
+    base_imponible:        f.base_imponible || 0,
+    igv:                   f.igv || 0,
+    total:                 f.importe,
+    moneda:                f.moneda,
+    tipo_cambio:           f.tipo_cambio || 1,
+    estado:                'EMITIDO',
+    usuario_id:            perfil_usuario?.id || null,
   });
 
-  let ok = 0; let duplicados = 0; let errCount = 0; let primerError = null;
+  let ok = 0, duplicados = 0, errCount = 0, primerError = null;
   const CHUNK = 50;
+  const progBar  = document.getElementById('sunat-progreso-barra');
+  const progTxt  = document.getElementById('sunat-progreso-texto');
+
   for (let i = 0; i < filas.length; i += CHUNK) {
     const chunk = filas.slice(i, i + CHUNK);
+    const pct   = Math.round(((i + chunk.length) / filas.length) * 100);
+    if (progTxt) progTxt.textContent = `Importando ${i + chunk.length} / ${filas.length}…`;
+    if (progBar) progBar.style.width = pct + '%';
+
     const { data: insertados, error } = await _supabase.from(tabla)
       .upsert(chunk, { onConflict, ignoreDuplicates: true }).select('id');
 
@@ -372,15 +355,90 @@ async function _sunatConfirmarImportacion() {
     registros_ok: ok, registros_error: errCount,
   }).eq('id', lote.id);
 
+  if (progBar) progBar.style.width = '100%';
+  setTimeout(() => { document.getElementById('sunat-progreso').style.display = 'none'; }, 600);
   btn.disabled = false; btn.textContent = '✅ Confirmar importación';
-  document.getElementById('sunat-progreso').style.display = 'none';
 
   if (primerError) mostrarToast(`Error: ${primerError}`, 'error');
   else mostrarToast(`✓ ${ok} importados · ${duplicados} duplicados`, duplicados ? 'atencion' : 'exito');
-  
+
   _sunatCancelarPreview();
   await _sunatCargarHistorial();
+
+  // Mostrar estado de conciliación
+  if (ok > 0) await _sunatMostrarConciliacion(lote.id, tipo);
 }
+
+// ── Estado de conciliación bancaria ──────────────────────────────
+
+function _normDocKey(s) {
+  return (s || '').toString().replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+async function _sunatMostrarConciliacion(loteId, tipo) {
+  const wrap = document.getElementById('sunat-conciliacion-wrap');
+  const body = document.getElementById('sunat-concil-body');
+  if (!wrap || !body) return;
+
+  const esCompras = tipo === 'COMPRAS';
+  const tabla = esCompras ? 'registro_compras' : 'registro_ventas';
+
+  // Obtener registros del lote
+  const { data: importados } = await _supabase
+    .from(tabla)
+    .select(esCompras
+      ? 'id,fecha_emision,nombre_proveedor,ruc_proveedor,serie,numero,total,moneda,tipo_documento_codigo'
+      : 'id,fecha_emision,nombre_cliente,ruc_cliente,serie,numero,total,moneda,tipo_documento_codigo')
+    .eq('lote_importacion_id', loteId)
+    .order('fecha_emision');
+
+  if (!importados?.length) return;
+
+  // Obtener registros MBD de la empresa para comparar
+  const { data: mbdRecs } = await _supabase
+    .from('tesoreria_mbd')
+    .select('nro_factura_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .not('nro_factura_doc', 'is', null);
+
+  const mbdKeys = new Set((mbdRecs || []).map(m => _normDocKey(m.nro_factura_doc)));
+
+  let vinculados = 0;
+  body.innerHTML = importados.map(r => {
+    const cdpNorm = _normDocKey(`${r.serie || ''}${r.numero || ''}`);
+    const vinculado = cdpNorm.length > 3 && mbdKeys.has(cdpNorm);
+    if (vinculado) vinculados++;
+
+    const entidad = esCompras
+      ? `${r.ruc_proveedor || ''} ${r.nombre_proveedor || ''}`.trim()
+      : `${r.ruc_cliente || ''} ${r.nombre_cliente || ''}`.trim();
+    const ruc = esCompras ? r.ruc_proveedor : r.ruc_cliente;
+    const cdp = `${r.serie || ''}${r.numero ? '-' + r.numero : ''}`;
+
+    const estadoBadge = vinculado
+      ? '<span class="badge badge-activo">✅ Vinculado</span>'
+      : '<span class="badge badge-warning">⏳ Pendiente</span>';
+
+    return `<tr>
+      <td style="white-space:nowrap">${formatearFecha(r.fecha_emision)}</td>
+      <td class="text-mono text-sm">${escapar(cdp)}</td>
+      <td class="text-sm">${escapar((entidad).slice(0, 32))}</td>
+      <td class="text-mono text-sm">${escapar(ruc || '—')}</td>
+      <td class="text-right" style="font-weight:600">${formatearMoneda(r.total, r.moneda)}</td>
+      <td>${escapar(r.moneda || 'PEN')}</td>
+      <td>${estadoBadge}</td>
+    </tr>`;
+  }).join('');
+
+  const pendientes = importados.length - vinculados;
+  document.getElementById('sunat-concil-resumen').textContent =
+    `✅ ${vinculados} vinculados · ⏳ ${pendientes} pendientes`;
+
+  wrap.style.display = 'block';
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Historial ─────────────────────────────────────────────────────
 
 async function _sunatCargarHistorial() {
   const cont = document.getElementById('sunat-historial');
@@ -396,29 +454,42 @@ async function _sunatCargarHistorial() {
   cont.innerHTML = `
     <div class="table-wrap">
       <table class="tabla" style="font-size:13px">
-        <thead><tr><th>Fecha</th><th>Tipo</th><th>Archivo</th><th>OK</th><th>Estado</th><th>Acc.</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Archivo</th><th>OK</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${lista.map(l => `
             <tr>
               <td>${formatearFecha(l.fecha_creacion?.slice(0, 10))}</td>
-              <td><span class="badge ${l.tipo_fuente === 'SUNAT_COMPRAS' ? 'badge-critico' : 'badge-activo'}">${l.tipo_fuente === 'SUNAT_COMPRAS' ? '🛒 Compras' : '🏷️ Ventas'}</span></td>
+              <td><span class="badge ${l.tipo_fuente === 'SUNAT_COMPRAS' ? 'badge-critico' : 'badge-activo'}">
+                ${l.tipo_fuente === 'SUNAT_COMPRAS' ? '🛒 Compras' : '🏷️ Ventas'}</span></td>
               <td>${escapar(l.nombre_archivo)}</td>
               <td class="text-center">${l.registros_ok}</td>
               <td><span class="badge">${l.estado}</span></td>
-              <td><button onclick="_sunatEliminarLote('${l.id}', ${l.registros_ok}, '${l.tipo_fuente}')" class="btn-rojo-mini">🗑️</button></td>
+              <td>
+                <button onclick="_sunatVerConciliacionLote('${l.id}','${l.tipo_fuente}')"
+                        class="btn-icono" title="Ver estado de conciliación">🔗</button>
+                <button onclick="_sunatEliminarLote('${l.id}',${l.registros_ok},'${l.tipo_fuente}')"
+                        class="btn-icono peligro">🗑️</button>
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
 }
 
+async function _sunatVerConciliacionLote(loteId, tipoFuente) {
+  const tipo = tipoFuente === 'SUNAT_COMPRAS' ? 'COMPRAS' : 'VENTAS';
+  await _sunatMostrarConciliacion(loteId, tipo);
+}
+
 async function _sunatEliminarLote(loteId, cantRegistros, tipoFuente) {
-  if (!await confirmar('¿Eliminar esta importación?')) return;
+  if (!await confirmar('¿Eliminar esta importación y sus registros?',
+    { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
   if (cantRegistros > 0) {
     const tabla = tipoFuente === 'SUNAT_COMPRAS' ? 'registro_compras' : 'registro_ventas';
     await _supabase.from(tabla).delete().eq('lote_importacion_id', loteId);
   }
   await _supabase.from('lotes_importacion').delete().eq('id', loteId);
   mostrarToast('Eliminado', 'exito');
+  document.getElementById('sunat-conciliacion-wrap').style.display = 'none';
   await _sunatCargarHistorial();
 }

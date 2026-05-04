@@ -1,242 +1,460 @@
 // ═══════════════════════════════════════════════════════════════
-// Tributaria — Importador SUNAT universal (Compras / Ventas / RH)
+// Tributaria — Importar SUNAT (Compras / Ventas)
+// Tab dedicado con vista previa completa y reporte fila por fila.
+// RH mantiene flujo modal separado.
+// Usa sunat-parser.js como servicio compartido de parseo.
 // ═══════════════════════════════════════════════════════════════
 
-let _sunat_preview_data  = [];
-let _sunat_preview_tipo  = null;
-let _sunat_preview_nombre = null;
+let _tri_import_datos = [];
+let _tri_import_tipo  = null; // 'COMPRAS' | 'VENTAS'
 
-// ── Parseo de fecha Excel serial o texto ──────────────────────────
-function _sunatFecha(val) {
-  if (val === null || val === undefined || val === '') return null;
-  if (typeof val === 'number') {
-    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
-    if (isNaN(d.getTime())) return null;
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-  }
-  if (val instanceof Date) {
-    if (isNaN(val.getTime())) return null;
-    return `${val.getUTCFullYear()}-${String(val.getUTCMonth()+1).padStart(2,'0')}-${String(val.getUTCDate()).padStart(2,'0')}`;
-  }
-  const s = val.toString().trim();
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const d2 = new Date(s);
-  return isNaN(d2.getTime()) ? null : d2.toISOString().slice(0,10);
+// ── Tab principal ─────────────────────────────────────────────────
+
+async function renderTabImportarSunat(area) {
+  _tri_import_datos = [];
+  _tri_import_tipo  = null;
+
+  area.innerHTML = `
+    <div class="fadeIn">
+
+      <!-- Selector de tipo + Drop zone -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+          <div>
+            <h3>📊 Importar desde SUNAT</h3>
+            <p class="text-muted text-sm" style="margin-top:4px">
+              Sube el Excel del PLE SUNAT. El tipo (Compras/Ventas) se detecta automáticamente
+              desde los encabezados usando la plantilla JSON como mapa de columnas.
+            </p>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+          <label class="tri-tipo-lbl" id="lbl-tri-compras">
+            <input type="radio" name="tri-tipo" value="COMPRAS" id="tri-tipo-compras"
+                   onchange="_triImportTipoChange()" style="accent-color:var(--color-primario)">
+            🛒 Registro de Compras
+          </label>
+          <label class="tri-tipo-lbl" id="lbl-tri-ventas">
+            <input type="radio" name="tri-tipo" value="VENTAS" id="tri-tipo-ventas"
+                   onchange="_triImportTipoChange()" style="accent-color:var(--color-primario)">
+            🏷️ Registro de Ventas
+          </label>
+        </div>
+
+        <div id="tri-drop-zone"
+          style="border:2px dashed var(--color-borde);border-radius:var(--radio);
+                 padding:40px 20px;text-align:center;cursor:pointer;
+                 transition:border-color 0.2s,background 0.2s"
+          ondragover="event.preventDefault();this.style.borderColor='var(--color-primario)';this.style.background='var(--color-fondo-2,#f7fafc)'"
+          ondragleave="this.style.borderColor='var(--color-borde)';this.style.background=''"
+          ondrop="_triImportDrop(event)"
+          onclick="document.getElementById('tri-file-input').click()">
+          <div style="font-size:36px;margin-bottom:8px">📊</div>
+          <p style="font-weight:500;margin-bottom:4px">Arrastra el Excel SUNAT aquí</p>
+          <p class="text-muted text-sm">o haz clic para seleccionar (.xlsx / .xls)</p>
+          <input type="file" id="tri-file-input" accept=".xlsx,.xls"
+                 style="display:none" onchange="_triImportHandleFile(this.files[0])">
+        </div>
+
+        <div id="tri-archivo-info" style="display:none;margin-top:12px" class="alerta-info"></div>
+      </div>
+
+      <!-- Vista previa (aparece tras cargar archivo) -->
+      <div id="tri-preview-section" style="display:none" class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <h3>👁️ Vista previa</h3>
+            <span id="tri-preview-tipo-badge" class="badge"></span>
+          </div>
+          <div id="tri-preview-resumen" class="text-sm text-muted"></div>
+        </div>
+
+        <div class="table-wrap" style="max-height:420px;overflow-y:auto">
+          <table class="tabla" style="font-size:12px">
+            <thead><tr id="tri-preview-head"></tr></thead>
+            <tbody id="tri-preview-body"></tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:16px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-secundario" onclick="_triImportCancelar()">✕ Cancelar</button>
+          <button class="btn btn-primario" id="tri-btn-confirmar" onclick="_triImportConfirmar()">
+            ✅ Confirmar importación
+          </button>
+          <span id="tri-preview-ok-count" class="text-sm text-muted"></span>
+        </div>
+      </div>
+
+      <!-- Barra de progreso -->
+      <div id="tri-progreso" style="display:none" class="card" style="margin-bottom:16px">
+        <p id="tri-progreso-texto" class="text-muted text-sm" style="margin-bottom:8px">Importando…</p>
+        <div style="height:6px;background:var(--color-borde);border-radius:3px;overflow:hidden">
+          <div id="tri-progreso-barra"
+               style="height:100%;background:var(--color-primario);width:0;transition:width 0.3s"></div>
+        </div>
+      </div>
+
+      <!-- Detalle de errores (aparece tras importar si hay filas inválidas) -->
+      <div id="tri-errores-section" style="display:none" class="card">
+        <h3 style="margin-bottom:12px">⚠️ Filas omitidas por errores</h3>
+        <div class="table-wrap">
+          <table class="tabla" style="font-size:12px">
+            <thead><tr>
+              <th>Fila</th><th>CDP (Serie-Número)</th>
+              <th>RUC / Nombre</th><th>Motivo del error</th>
+            </tr></thead>
+            <tbody id="tri-errores-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <style>
+    .tri-tipo-lbl {
+      display:flex; align-items:center; gap:8px; cursor:pointer;
+      padding:10px 16px; border:2px solid var(--color-borde);
+      border-radius:var(--radio); font-size:13px; transition:all 0.2s;
+    }
+    .tri-tipo-lbl.activo {
+      border-color:var(--color-primario);
+      background:var(--color-primario-suave,rgba(49,130,206,.08));
+    }
+    </style>`;
 }
 
-function _sunatNum(val) {
-  const n = parseFloat(val);
-  return isNaN(n) ? 0 : n;
+// ── Control del tipo seleccionado ─────────────────────────────────
+
+function _triImportTipoChange() {
+  const tipo = document.querySelector('input[name="tri-tipo"]:checked')?.value;
+  _tri_import_tipo = tipo || null;
+  ['compras','ventas'].forEach(t => {
+    document.getElementById('lbl-tri-' + t)?.classList.toggle('activo', tipo === t.toUpperCase());
+  });
 }
 
-// ── Abrir selector de archivo ─────────────────────────────────────
+// ── Manejo de archivo ─────────────────────────────────────────────
+
+function _triImportDrop(e) {
+  e.preventDefault();
+  const dz = document.getElementById('tri-drop-zone');
+  if (dz) { dz.style.borderColor = 'var(--color-borde)'; dz.style.background = ''; }
+  const file = e.dataTransfer?.files?.[0];
+  if (!file || !file.name.match(/\.(xlsx|xls)$/i)) {
+    mostrarToast('Solo se aceptan archivos .xlsx o .xls', 'atencion');
+    return;
+  }
+  _triImportHandleFile(file);
+}
+
+function _triImportHandleFile(file) {
+  if (!file) return;
+  const info = document.getElementById('tri-archivo-info');
+  if (info) { info.style.display = 'block'; info.textContent = `📂 ${file.name} — leyendo…`; }
+
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const resultado = sunat_parsear_buffer(ev.target.result, _tri_import_tipo);
+
+      if (!resultado.tipo) {
+        mostrarToast(
+          'No se detectó el tipo de archivo. Selecciona Compras o Ventas manualmente y vuelve a cargar.',
+          'atencion'
+        );
+        if (info) info.style.display = 'none';
+        return;
+      }
+
+      _tri_import_tipo  = resultado.tipo;
+      _tri_import_datos = resultado.filas;
+
+      // Sincronizar radio
+      const radio = document.getElementById('tri-tipo-' + resultado.tipo.toLowerCase());
+      if (radio) { radio.checked = true; _triImportTipoChange(); }
+
+      if (info) info.textContent = `📂 ${file.name} — ${resultado.totalFilas} filas leídas`;
+      mostrarToast(
+        `Detectado: ${resultado.tipo === 'COMPRAS' ? '🛒 Compras' : '🏷️ Ventas'}`,
+        'info'
+      );
+      _triImportMostrarPreview();
+
+    } catch (err) {
+      mostrarToast('Error al leer el archivo: ' + err.message, 'error');
+      if (info) info.style.display = 'none';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── Vista previa completa ─────────────────────────────────────────
+
+function _triImportMostrarPreview() {
+  const section = document.getElementById('tri-preview-section');
+  const thead   = document.getElementById('tri-preview-head');
+  const tbody   = document.getElementById('tri-preview-body');
+  if (!section || !thead || !tbody) return;
+
+  const esCompras = _tri_import_tipo === 'COMPRAS';
+  const validos   = _tri_import_datos.filter(f => f._ok).length;
+  const errores   = _tri_import_datos.length - validos;
+
+  document.getElementById('tri-preview-resumen').textContent =
+    `✅ ${validos} válidos · ⚠️ ${errores} con errores (serán omitidos)`;
+  document.getElementById('tri-preview-ok-count').textContent =
+    `Se importarán ${validos} registros`;
+
+  const badge = document.getElementById('tri-preview-tipo-badge');
+  if (badge) {
+    badge.textContent = esCompras ? '🛒 Compras' : '🏷️ Ventas';
+    badge.className   = `badge ${esCompras ? 'badge-critico' : 'badge-activo'}`;
+  }
+
+  thead.innerHTML = `
+    <th>Fila</th><th>Fecha</th><th>T.Doc</th><th>CDP</th><th>RUC</th>
+    <th>${esCompras ? 'Proveedor' : 'Cliente'}</th>
+    <th class="text-right">Base Imp.</th><th class="text-right">IGV</th>
+    <th class="text-right">Total</th><th>Estado</th>`;
+
+  tbody.innerHTML = _tri_import_datos.map(f => {
+    const entidad = esCompras ? f.nombre_proveedor : f.nombre_cliente;
+    const ruc     = esCompras ? f.ruc_proveedor    : f.ruc_cliente;
+    const estado  = f._ok
+      ? '<span class="badge badge-activo" style="font-size:10px">OK</span>'
+      : `<span class="badge badge-inactivo" style="font-size:10px"
+              title="${escapar(f._errores.join(' · '))}">Error</span>`;
+    return `<tr ${!f._ok ? 'style="background:rgba(197,48,48,.05)"' : ''}>
+      <td class="text-mono text-sm">${f._fila}</td>
+      <td style="white-space:nowrap">${f.fecha || '—'}</td>
+      <td class="text-mono text-sm">${escapar(f.tipo_documento_codigo || '—')}</td>
+      <td class="text-mono text-sm">${escapar(f.cdp || '—')}</td>
+      <td class="text-mono text-sm">${escapar(ruc || '—')}</td>
+      <td class="text-sm">${escapar((entidad || '—').slice(0, 28))}</td>
+      <td class="text-right">${f.base_imponible ? formatearMoneda(f.base_imponible, f.moneda) : '—'}</td>
+      <td class="text-right">${f.igv ? formatearMoneda(f.igv, f.moneda) : '—'}</td>
+      <td class="text-right" style="font-weight:600">${formatearMoneda(f.total, f.moneda)}</td>
+      <td>${estado}</td>
+    </tr>`;
+  }).join('');
+
+  const btn = document.getElementById('tri-btn-confirmar');
+  if (btn) btn.disabled = validos === 0;
+
+  section.style.display = 'block';
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function _triImportCancelar() {
+  _tri_import_datos = [];
+  _tri_import_tipo  = null;
+  ['tri-preview-section', 'tri-errores-section'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const info = document.getElementById('tri-archivo-info');
+  if (info) info.style.display = 'none';
+  const inp = document.getElementById('tri-file-input');
+  if (inp) inp.value = '';
+  document.querySelectorAll('input[name="tri-tipo"]').forEach(r => r.checked = false);
+  ['compras','ventas'].forEach(t => document.getElementById('lbl-tri-'+t)?.classList.remove('activo'));
+}
+
+// ── Confirmar importación ─────────────────────────────────────────
+
+async function _triImportConfirmar() {
+  const validos = _tri_import_datos.filter(f => f._ok);
+  if (!validos.length) return;
+
+  const btn = document.getElementById('tri-btn-confirmar');
+  btn.disabled = true; btn.textContent = 'Importando…';
+
+  const progreso = document.getElementById('tri-progreso');
+  const progTxt  = document.getElementById('tri-progreso-texto');
+  const progBar  = document.getElementById('tri-progreso-barra');
+  if (progreso) progreso.style.display = 'block';
+
+  const esCompras  = _tri_import_tipo === 'COMPRAS';
+  const tabla      = esCompras ? 'registro_compras' : 'registro_ventas';
+  const onConflict = esCompras
+    ? 'empresa_operadora_id,tipo_documento_codigo,serie,numero,ruc_proveedor'
+    : 'empresa_operadora_id,serie,numero';
+
+  const filas = validos.map(f => esCompras ? {
+    empresa_operadora_id:  empresa_activa.id,
+    periodo:               f.periodo,
+    fecha_emision:         f.fecha,
+    fecha_vencimiento:     f.fecha_vencimiento,
+    tipo_documento_codigo: f.tipo_documento_codigo,
+    serie:                 f.serie,
+    numero:                f.numero,
+    ruc_proveedor:         f.ruc_proveedor,
+    nombre_proveedor:      f.nombre_proveedor,
+    base_imponible:        f.base_imponible,
+    igv:                   f.igv,
+    total:                 f.total,
+    moneda:                f.moneda || 'PEN',
+    tipo_cambio:           f.tipo_cambio || 1,
+    codigo_detraccion:     f.codigo_detraccion,
+    tiene_detraccion:      f.tiene_detraccion,
+    estado:                'EMITIDO',
+    usuario_id:            perfil_usuario?.id || null,
+  } : {
+    empresa_operadora_id:  empresa_activa.id,
+    periodo:               f.periodo,
+    fecha_emision:         f.fecha,
+    fecha_vencimiento:     f.fecha_vencimiento,
+    tipo_documento_codigo: f.tipo_documento_codigo,
+    serie:                 f.serie,
+    numero:                f.numero,
+    ruc_cliente:           f.ruc_cliente,
+    nombre_cliente:        f.nombre_cliente,
+    base_imponible:        f.base_imponible,
+    igv:                   f.igv,
+    total:                 f.total,
+    moneda:                f.moneda || 'PEN',
+    tipo_cambio:           f.tipo_cambio || 1,
+    estado:                'EMITIDO',
+    usuario_id:            perfil_usuario?.id || null,
+  });
+
+  let ok = 0, duplicados = 0, errTecnico = 0;
+  const CHUNK = 50;
+
+  for (let i = 0; i < filas.length; i += CHUNK) {
+    const chunk = filas.slice(i, i + CHUNK);
+    const pct   = Math.round(((i + chunk.length) / filas.length) * 100);
+    if (progTxt) progTxt.textContent = `Importando ${i + chunk.length} / ${filas.length}…`;
+    if (progBar) progBar.style.width = pct + '%';
+
+    const { data: ins, error } = await _supabase
+      .from(tabla)
+      .upsert(chunk, { onConflict, ignoreDuplicates: true })
+      .select('id');
+
+    if (error) { errTecnico += chunk.length; }
+    else { const n = ins?.length ?? 0; ok += n; duplicados += chunk.length - n; }
+  }
+
+  if (progBar) progBar.style.width = '100%';
+  setTimeout(() => { if (progreso) progreso.style.display = 'none'; }, 700);
+  btn.disabled = false; btn.textContent = '✅ Confirmar importación';
+
+  // Mostrar tabla de filas con errores de validación
+  const errRows    = _tri_import_datos.filter(f => !f._ok);
+  const errSection = document.getElementById('tri-errores-section');
+  const errBody    = document.getElementById('tri-errores-body');
+  if (errSection && errBody && errRows.length) {
+    errBody.innerHTML = errRows.map(f => {
+      const entidad = _tri_import_tipo === 'COMPRAS' ? f.nombre_proveedor : f.nombre_cliente;
+      const ruc     = _tri_import_tipo === 'COMPRAS' ? f.ruc_proveedor    : f.ruc_cliente;
+      return `<tr>
+        <td class="text-mono text-sm">${f._fila}</td>
+        <td class="text-mono text-sm">${escapar(f.cdp || '—')}</td>
+        <td class="text-sm">${escapar(ruc || '')} ${escapar((entidad || '').slice(0, 30))}</td>
+        <td class="text-sm" style="color:#C53030">${f._errores.join(' · ')}</td>
+      </tr>`;
+    }).join('');
+    errSection.style.display = 'block';
+  }
+
+  // Toast con resumen
+  const partes = [`✓ ${ok} importados`];
+  if (duplicados > 0) partes.push(`${duplicados} ya existían (omitidos)`);
+  if (errTecnico > 0) partes.push(`${errTecnico} errores técnicos`);
+  mostrarToast(partes.join(' · '), errTecnico > 0 ? 'atencion' : 'exito');
+
+  // Refrescar tabla de destino en segundo plano
+  if (esCompras && typeof cargarCompras === 'function') cargarCompras();
+  if (!esCompras && typeof cargarVentas  === 'function') cargarVentas();
+
+  // Ocultar preview
+  const pre = document.getElementById('tri-preview-section');
+  if (pre) pre.style.display = 'none';
+}
+
+// ── Accesos directos desde botones de compras/ventas ─────────────
+// Los botones "📊 Importar SUNAT" en los tabs de compras y ventas
+// redirigen al tab dedicado de importación.
+
 function importarRegistroComprasSUNAT() {
-  const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = '.xlsx,.xls';
-  inp.onchange = (e) => { const f = e.target.files[0]; if (f) { const r = new FileReader(); r.onload = (ev) => _procesarComprasSUNAT(ev.target.result, f.name); r.readAsArrayBuffer(f); } };
-  inp.click();
+  activarTab('importar');
+  setTimeout(() => {
+    const radio = document.getElementById('tri-tipo-compras');
+    if (radio) { radio.checked = true; _triImportTipoChange(); }
+  }, 120);
 }
 
 function importarRegistroVentasSUNAT() {
-  const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = '.xlsx,.xls';
-  inp.onchange = (e) => { const f = e.target.files[0]; if (f) { const r = new FileReader(); r.onload = (ev) => _procesarVentasSUNAT(ev.target.result, f.name); r.readAsArrayBuffer(f); } };
-  inp.click();
+  activarTab('importar');
+  setTimeout(() => {
+    const radio = document.getElementById('tri-tipo-ventas');
+    if (radio) { radio.checked = true; _triImportTipoChange(); }
+  }, 120);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Registro de Honorarios (RH) — mantiene flujo modal separado
+// ═══════════════════════════════════════════════════════════════
+
+let _sunat_preview_data   = [];
+let _sunat_preview_tipo   = null;
+let _sunat_preview_nombre = null;
 
 function importarRegistroRHSUNAT() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.xlsx,.xls';
-  inp.onchange = (e) => { const f = e.target.files[0]; if (f) { const r = new FileReader(); r.onload = (ev) => _procesarRHSUNAT(ev.target.result, f.name); r.readAsArrayBuffer(f); } };
+  inp.onchange = e => {
+    const f = e.target.files[0];
+    if (f) {
+      const r = new FileReader();
+      r.onload = ev => _procesarRHSUNAT(ev.target.result, f.name);
+      r.readAsArrayBuffer(f);
+    }
+  };
   inp.click();
 }
 
-// ── Helpers columnas ──────────────────────────────────────────────
-function _sunatStr(val) {
-  if (val === null || val === undefined || val === '') return null;
-  return val.toString().trim().replace(/\s+/g, ' ') || null;
-}
+// Formato RH:
+//  [0]FecEmision [1]TipoDoc [2]NroDoc [3]EstadoDoc
+//  [4]TipoDocEmisor [5]NroDocEmisor(RUC/DNI) [6]ApellidosRazSoc
+//  [7]TipoRenta [8]Gratuito [9]Descripcion [10]Observacion
+//  [11]Moneda [12]RentaBruta [13]ImpRenta [14]RentaNeta [15]MontoPendPago
 
-// RUC/DNI puede llegar como número grande — convertir sin notación científica
-function _sunatRUC(val) {
-  if (val === null || val === undefined || val === '') return null;
-  if (typeof val === 'number') return Math.round(val).toString().trim();
-  return val.toString().trim() || null;
-}
-
-function _sunatTDoc(val) {
-  if (val === null || val === undefined || val === '') return null;
-  const n = parseInt(val);
-  return isNaN(n) ? val.toString().trim() : String(n).padStart(2, '0');
-}
-
-function _sunatNro(val) {
-  if (val === null || val === undefined || val === '') return null;
-  const n = parseInt(val);
-  return isNaN(n) ? val.toString().trim() : String(n).padStart(8, '0');
-}
-
-function _sunatMonedaTri(val) {
-  if (!val) return 'PEN';
-  const s = val.toString().trim().toUpperCase();
-  if (['USD','2','US$','$'].includes(s)) return 'USD';
-  if (['EUR','3'].includes(s)) return 'EUR';
-  return 'PEN';
-}
-
-// ── Parser Registro de Compras SUNAT ─────────────────────────────
-// Formato descarga SUNAT (col 0-indexed, fila 0 = encabezados):
-//  [0]RUC empresa  [1]RazSoc  [2]Periodo  [3]CAR  [4]Fecha emision
-//  [5]Fecha vcto   [6]TipoCP  [7]Serie    [8]Año(concat-skip)
-//  [9]NroCP        [10]NroFin [11]TipoIdProv [12]NroDocProv
-//  [13]NombreProv  [14]BIGravDG [15]IGV_DG
-//  ...             [24]TotalCP [25]Moneda  [26]TipoCambio
-//  ...             [37]Detraccion
-function _procesarComprasSUNAT(buffer, nombre) {
-  try {
-    const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
-    const ws   = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-
-    let inicio = 0;
-    for (let i = 0; i < Math.min(rows.length, 5); i++) {
-      if (_sunatFecha(rows[i][4])) { inicio = i; break; }
-    }
-    const data = rows.slice(inicio).filter(r => r[4] != null || r[24] != null);
-
-    const parsed = data.map((r, i) => {
-      const fecha   = _sunatFecha(r[4]);
-      const total   = _sunatNum(r[24]);
-      const serie   = _sunatStr(r[7]);
-      const nroRaw  = r[9] != null ? parseInt(r[9]) || _sunatStr(r[9]) : null;
-      const numero  = nroRaw != null ? String(nroRaw) : null;
-      const cdp     = serie && numero ? `${serie}-${numero}` : (serie || numero || null);
-      const periodoRaw = _sunatStr(r[2]);
-      const periodo = periodoRaw && /^\d{6}$/.test(periodoRaw)
-        ? periodoRaw.slice(0,4) + '-' + periodoRaw.slice(4,6)
-        : (fecha ? fecha.slice(0, 7) : null);
-      return {
-        _fila:                 inicio + i + 1,
-        fecha,
-        fecha_vencimiento:     _sunatFecha(r[5]),
-        periodo,
-        tipo_documento_codigo: _sunatTDoc(r[6]),
-        serie,
-        numero,
-        cdp,
-        ruc_proveedor:         _sunatRUC(r[12]),
-        nombre_proveedor:      _sunatStr(r[13]),
-        base_imponible:        _sunatNum(r[14]),
-        igv:                   _sunatNum(r[15]),
-        total,
-        moneda:                _sunatMonedaTri(r[25]),
-        tipo_cambio:           _sunatNum(r[26]) || 1,
-        codigo_detraccion:     _sunatStr(r[37]),
-        _ok:                   !!fecha && total !== 0 && !!serie,
-      };
-    });
-
-    _mostrarPreviewSUNAT(parsed, 'compras', nombre);
-  } catch (err) { mostrarToast('Error al leer archivo: ' + err.message, 'error'); }
-}
-
-// ── Parser Registro de Ventas SUNAT ──────────────────────────────
-// Plantilla / descarga SUNAT (plantilla_ventas.json, col 0-indexed):
-//  A(0)=RUC  B(1)=RazSoc  C(2)=Periodo  D(3)=CAR  E(4)=Fecha emision
-//  F(5)=FechaVcto  G(6)=TipoCP  H(7)=Serie  I(8)=NroCP  J(9)=NroFin
-//  K(10)=TipoIdCli  L(11)=NroDocCli  M(12)=NombreCli
-//  N(13)=ValFacExp  O(14)=BIGravada  P(15)=DsctoBi  Q(16)=IGV
-//  R(17)=DsctoIGV  S(18)=Exonerado  T(19)=Inafecto  U(20)=ISC
-//  V(21)=BIGravIVAP  W(22)=IVAP  X(23)=ICBPER  Y(24)=OtrosTrib
-//  Z(25)=TotalCP  AA(26)=Moneda  AB(27)=TipoCambio
-function _procesarVentasSUNAT(buffer, nombre) {
-  try {
-    const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
-    const ws   = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-
-    // Auto-detectar fila de inicio: primera fila donde E(4) tiene un valor con fecha válida
-    let inicio = 0;
-    for (let i = 0; i < Math.min(rows.length, 5); i++) {
-      if (_sunatFecha(rows[i][4])) { inicio = i; break; }
-    }
-
-    const data = rows.slice(inicio).filter(r => r[4] != null || r[25] != null);
-
-    const parsed = data.map((r, i) => {
-      const fecha  = _sunatFecha(r[4]);
-      const total  = _sunatNum(r[25]);
-      const serie  = _sunatStr(r[7]);
-      const nroRaw = r[8] != null ? parseInt(r[8]) || _sunatStr(r[8]) : null;
-      const numero = nroRaw != null ? String(nroRaw) : null;
-      const cdp    = serie && numero ? `${serie}-${numero}` : (serie || numero || null);
-      // Periodo: leer columna C si tiene formato YYYYMM, sino derivar de fecha
-      const periodoRaw = _sunatStr(r[2]);
-      const periodo = periodoRaw && /^\d{6}$/.test(periodoRaw)
-        ? periodoRaw.slice(0,4) + '-' + periodoRaw.slice(4,6)
-        : (fecha ? fecha.slice(0, 7) : null);
-      return {
-        _fila:                 inicio + i + 1,
-        fecha,
-        fecha_vencimiento:     _sunatFecha(r[5]),
-        periodo,
-        tipo_documento_codigo: _sunatTDoc(r[6]),
-        serie,
-        numero,
-        cdp,
-        ruc_cliente:           _sunatRUC(r[11]),
-        nombre_cliente:        _sunatStr(r[12]),
-        base_imponible:        _sunatNum(r[14]),
-        igv:                   _sunatNum(r[16]),
-        total,
-        moneda:                _sunatMonedaTri(r[26]),
-        tipo_cambio:           _sunatNum(r[27]) || 1,
-        _ok:                   !!fecha && total !== 0 && !!serie,
-      };
-    });
-
-    _mostrarPreviewSUNAT(parsed, 'ventas', nombre);
-  } catch (err) { mostrarToast('Error al leer archivo: ' + err.message, 'error'); }
-}
-
-// ── Parser Registro de RH ─────────────────────────────────────────
-// Formato: Fecha Emisión | Tipo Doc | Nro Doc | Estado Doc |
-//          Tipo Doc Emisor | Nro Doc Emisor (DNI/RUC) | Apellidos/Razón Social |
-//          Tipo Renta | Gratuito | Descripción | Observación |
-//          Moneda | Renta Bruta | Imp. a la Renta | Renta Neta | Monto Pend.Pago
 function _procesarRHSUNAT(buffer, nombre) {
   try {
-    const wb = XLSX.read(buffer, { type: 'array', cellDates: false });
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-    const data = rows.slice(1).filter(r => r[0] !== '' || r[12] !== '');
-
+    const data   = rows.slice(1).filter(r => r[0] !== '' || r[12] !== '');
     const parsed = data.map((r, i) => {
-      const fecha    = _sunatFecha(r[0]);
-      const estadoR  = (r[3] || '').toString().trim().toUpperCase();
-      const monedaR  = (r[11]|| '').toString().trim().toUpperCase();
-      const bruto    = _sunatNum(r[12]);
-      const reten    = _sunatNum(r[13]);
+      const fecha   = sunat_fecha(r[0]);
+      const estadoR = (r[3] || '').toString().trim().toUpperCase();
+      const monedaR = (r[11]|| '').toString().trim().toUpperCase();
+      const bruto   = sunat_num(r[12]);
+      const reten   = sunat_num(r[13]);
       return {
         _fila:             i + 2,
         fecha,
-        periodo:           fecha ? fecha.slice(0,7) : null,
+        periodo:           fecha ? fecha.slice(0, 7) : null,
         numero_rh:         (r[2] || '').toString().trim() || null,
         estado:            estadoR.includes('ANULADO') && !estadoR.startsWith('NO') ? 'ANULADO' : 'EMITIDO',
         ruc_dni_prestador: (r[5] || '').toString().trim() || null,
-        nombre_prestador:  (r[6] || '').toString().trim().replace(/\s+/g,' ') || null,
+        nombre_prestador:  (r[6] || '').toString().trim().replace(/\s+/g, ' ') || null,
         concepto:          (r[9] || '').toString().trim() || 'SERVICIO',
         observaciones:     (r[10]|| '').toString().trim() || null,
-        moneda:            monedaR === 'SOLES' || monedaR === 'PEN' ? 'PEN' : (monedaR === 'DOLARES' || monedaR === 'USD' ? 'USD' : 'PEN'),
+        moneda:            monedaR === 'SOLES' || monedaR === 'PEN' ? 'PEN'
+                         : monedaR === 'DOLARES' || monedaR === 'USD' ? 'USD' : 'PEN',
         monto_bruto:       bruto,
         monto_retencion:   reten,
-        monto_neto:        _sunatNum(r[14]),
+        monto_neto:        sunat_num(r[14]),
         tiene_retencion:   reten > 0,
         porcentaje_retencion: bruto > 0 ? Math.round(reten / bruto * 10000) / 100 : 0,
         _ok:               !!fecha && bruto > 0,
+        _errores:          (!fecha ? ['Sin fecha'] : []).concat(bruto === 0 ? ['Monto bruto = 0'] : []),
       };
     });
 
@@ -244,7 +462,6 @@ function _procesarRHSUNAT(buffer, nombre) {
   } catch (err) { mostrarToast('Error al leer archivo: ' + err.message, 'error'); }
 }
 
-// ── Modal Preview Universal ───────────────────────────────────────
 function _mostrarPreviewSUNAT(datos, tipo, nombre) {
   _sunat_preview_data   = datos;
   _sunat_preview_tipo   = tipo;
@@ -254,70 +471,29 @@ function _mostrarPreviewSUNAT(datos, tipo, nombre) {
   const errores = datos.length - validos;
   const muestra = datos.slice(0, 8);
 
-  const titulos = {
-    compras: '📥 Importar Registro de Compras (SUNAT)',
-    ventas:  '📤 Importar Registro de Ventas (SUNAT)',
-    rh:      '📋 Importar Registro de RH (SUNAT)',
-  };
-
-  let th = '', td = '';
-  if (tipo === 'compras') {
-    th = '<th>Fecha</th><th>T.</th><th>CDP (Serie-Número)</th><th>RUC Proveedor</th><th>Proveedor</th><th>Base Imp.</th><th>IGV</th><th>Total</th><th>Detrac.</th><th></th>';
-    td = muestra.map(r => `
-      <tr ${!r._ok ? 'style="background:var(--color-danger-bg,#fff5f5)"':''}>
-        <td style="white-space:nowrap">${r.fecha||'—'}</td>
-        <td class="text-mono text-sm">${escapar(r.tipo_documento_codigo||'—')}</td>
-        <td class="text-mono text-sm" style="white-space:nowrap">${escapar(r.cdp||'—')}</td>
-        <td class="text-mono text-sm">${escapar(r.ruc_proveedor||'—')}</td>
-        <td class="text-sm">${escapar((r.nombre_proveedor||'').slice(0,28))}</td>
-        <td class="text-right">${formatearMoneda(r.base_imponible)}</td>
-        <td class="text-right">${formatearMoneda(r.igv)}</td>
-        <td class="text-right" style="font-weight:600">${formatearMoneda(r.total)}</td>
-        <td class="text-mono text-sm">${escapar(r.codigo_detraccion||'—')}</td>
-        <td>${r._ok?'<span class="badge badge-activo" style="font-size:10px">OK</span>':'<span class="badge badge-inactivo" style="font-size:10px">Err</span>'}</td>
-      </tr>`).join('');
-  } else if (tipo === 'ventas') {
-    th = '<th>Fecha</th><th>T.</th><th>CDP (Serie-Número)</th><th>RUC Cliente</th><th>Cliente</th><th>Base Imp.</th><th>IGV</th><th>Total</th><th></th>';
-    td = muestra.map(r => `
-      <tr ${!r._ok ? 'style="background:var(--color-danger-bg,#fff5f5)"':''}>
-        <td style="white-space:nowrap">${r.fecha||'—'}</td>
-        <td class="text-mono text-sm">${escapar(r.tipo_documento_codigo||'—')}</td>
-        <td class="text-mono text-sm" style="white-space:nowrap">${escapar(r.cdp||'—')}</td>
-        <td class="text-mono text-sm">${escapar(r.ruc_cliente||'—')}</td>
-        <td class="text-sm">${escapar((r.nombre_cliente||'').slice(0,28))}</td>
-        <td class="text-right">${formatearMoneda(r.base_imponible)}</td>
-        <td class="text-right">${formatearMoneda(r.igv)}</td>
-        <td class="text-right" style="font-weight:600">${formatearMoneda(r.total)}</td>
-        <td>${r._ok?'<span class="badge badge-activo" style="font-size:10px">OK</span>':'<span class="badge badge-inactivo" style="font-size:10px">Err</span>'}</td>
-      </tr>`).join('');
-  } else {
-    th = '<th>Fecha</th><th>N° RH</th><th>RUC/DNI</th><th>Prestador</th><th>Bruto</th><th>Retención</th><th>Neto</th><th></th>';
-    td = muestra.map(r => `
-      <tr ${!r._ok ? 'style="background:var(--color-danger-bg,#fff5f5)"':''}>
-        <td>${r.fecha||'—'}</td>
-        <td class="text-mono text-sm">${escapar(r.numero_rh||'—')}</td>
-        <td class="text-mono text-sm">${escapar(r.ruc_dni_prestador||'—')}</td>
-        <td class="text-sm">${escapar((r.nombre_prestador||'').slice(0,30))}</td>
-        <td class="text-right">${formatearMoneda(r.monto_bruto)}</td>
-        <td class="text-right">${formatearMoneda(r.monto_retencion)}</td>
-        <td class="text-right" style="font-weight:600">${formatearMoneda(r.monto_neto)}</td>
-        <td>${r._ok?'<span class="badge badge-activo" style="font-size:10px">OK</span>':'<span class="badge badge-inactivo" style="font-size:10px">Err</span>'}</td>
-      </tr>`).join('');
-  }
-
-  if (datos.length > 8)
-    td += `<tr><td colspan="9" class="text-center text-muted text-sm" style="padding:8px">…y ${datos.length-8} filas más (no mostradas)</td></tr>`;
+  const th = '<th>Fecha</th><th>N° RH</th><th>RUC/DNI</th><th>Prestador</th><th>Bruto</th><th>Retención</th><th>Neto</th><th></th>';
+  const td = muestra.map(r => `
+    <tr ${!r._ok ? 'style="background:var(--color-danger-bg,#fff5f5)"' : ''}>
+      <td>${r.fecha || '—'}</td>
+      <td class="text-mono text-sm">${escapar(r.numero_rh || '—')}</td>
+      <td class="text-mono text-sm">${escapar(r.ruc_dni_prestador || '—')}</td>
+      <td class="text-sm">${escapar((r.nombre_prestador || '—').slice(0, 30))}</td>
+      <td class="text-right">${formatearMoneda(r.monto_bruto)}</td>
+      <td class="text-right">${formatearMoneda(r.monto_retencion)}</td>
+      <td class="text-right" style="font-weight:600">${formatearMoneda(r.monto_neto)}</td>
+      <td>${r._ok ? '<span class="badge badge-activo" style="font-size:10px">OK</span>'
+                  : '<span class="badge badge-inactivo" style="font-size:10px">Err</span>'}</td>
+    </tr>`).join('');
 
   document.getElementById('modal-sunat-import')?.remove();
-
   const m = document.createElement('div');
   m.className = 'modal-overlay';
   m.id = 'modal-sunat-import';
   m.style.display = 'flex';
   m.innerHTML = `
-    <div class="modal" style="max-width:900px;width:95vw">
+    <div class="modal" style="max-width:860px;width:95vw">
       <div class="modal-header">
-        <h3>${titulos[tipo]}</h3>
+        <h3>📋 Importar Registro de RH (SUNAT)</h3>
         <button class="modal-cerrar" onclick="document.getElementById('modal-sunat-import').remove()">✕</button>
       </div>
       <div class="modal-body">
@@ -325,20 +501,22 @@ function _mostrarPreviewSUNAT(datos, tipo, nombre) {
           📂 <strong>${escapar(nombre)}</strong> —
           ${datos.length} filas leídas &nbsp;·&nbsp;
           <span class="text-verde">✅ ${validos} válidas</span>
-          ${errores ? `&nbsp;·&nbsp; <span class="text-rojo">⚠️ ${errores} errores (se omitirán)</span>` : ''}
-          ${tipo === 'rh' ? '<br><span class="text-muted" style="font-size:12px">ℹ Los prestadores nuevos se crearán automáticamente en Prestadores de Servicios.</span>' : ''}
+          ${errores ? `&nbsp;·&nbsp;<span class="text-rojo">⚠️ ${errores} errores (se omitirán)</span>` : ''}
+          <br><span class="text-muted" style="font-size:12px">
+            ℹ Prestadores nuevos se crearán automáticamente en Prestadores de Servicios.
+          </span>
         </div>
         <div class="table-wrap" style="max-height:360px;overflow-y:auto">
           <table class="tabla" style="font-size:12px">
             <thead><tr>${th}</tr></thead>
-            <tbody>${td}</tbody>
+            <tbody>${td}${datos.length > 8 ? `<tr><td colspan="8" class="text-center text-muted text-sm" style="padding:8px">…y ${datos.length - 8} filas más</td></tr>` : ''}</tbody>
           </table>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secundario" onclick="document.getElementById('modal-sunat-import').remove()">Cancelar</button>
         <button class="btn btn-primario" id="btn-confirmar-sunat"
-                onclick="_confirmarImportSUNAT()" ${validos===0?'disabled':''}>
+                onclick="_confirmarImportSUNAT()" ${validos === 0 ? 'disabled' : ''}>
           ✅ Importar ${validos} registros
         </button>
       </div>
@@ -346,129 +524,56 @@ function _mostrarPreviewSUNAT(datos, tipo, nombre) {
   document.body.appendChild(m);
 }
 
-// ── Confirmar importación ─────────────────────────────────────────
 async function _confirmarImportSUNAT() {
   const validos = _sunat_preview_data.filter(d => d._ok);
   if (!validos.length) return;
-
   const btn = document.getElementById('btn-confirmar-sunat');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
   let ok = 0, errCount = 0;
 
-  if (_sunat_preview_tipo === 'compras') {
-    const rows = validos.map(r => ({
-      empresa_operadora_id:  empresa_activa.id,
-      periodo:               r.periodo,
-      fecha_emision:         r.fecha,
-      fecha_vencimiento:     r.fecha_vencimiento,
-      tipo_documento_codigo: r.tipo_documento_codigo,
-      serie:                 r.serie,
-      numero:                r.numero,
-      ruc_proveedor:         r.ruc_proveedor,
-      nombre_proveedor:      r.nombre_proveedor,
-      base_imponible:        r.base_imponible,
-      igv:                   r.igv,
-      total:                 r.total,
-      moneda:                r.moneda || 'PEN',
-      tipo_cambio:           r.tipo_cambio || 1,
-      codigo_detraccion:     r.codigo_detraccion,
-      estado:                'EMITIDO',
-      usuario_id:            perfil_usuario?.id || null,
-    }));
-    for (let i = 0; i < rows.length; i += 50) {
-      const chunk = rows.slice(i, i + 50);
-      const { data: ins, error } = await _supabase.from('registro_compras')
-        .upsert(chunk, { onConflict: 'empresa_operadora_id,tipo_documento_codigo,serie,numero,ruc_proveedor', ignoreDuplicates: true })
-        .select('id');
-      if (error) errCount += chunk.length;
-      else { ok += ins?.length ?? 0; errCount += chunk.length - (ins?.length ?? 0); }
+  for (const r of validos) {
+    if (!r.ruc_dni_prestador) { errCount++; continue; }
+    let { data: ps } = await _supabase
+      .from('prestadores_servicios').select('id')
+      .eq('dni', r.ruc_dni_prestador).maybeSingle();
+
+    if (!ps) {
+      const { data: nuevo, error: errPS } = await _supabase
+        .from('prestadores_servicios').insert({
+          dni:    r.ruc_dni_prestador,
+          nombre: r.nombre_prestador || r.ruc_dni_prestador,
+          ruc:    r.ruc_dni_prestador.length === 11 ? r.ruc_dni_prestador : null,
+          activo: true,
+        }).select().single();
+      if (errPS) { errCount++; continue; }
+      ps = nuevo;
     }
 
-  } else if (_sunat_preview_tipo === 'ventas') {
-    const rows = validos.map(r => ({
-      empresa_operadora_id:  empresa_activa.id,
-      periodo:               r.periodo,
-      fecha_emision:         r.fecha,
-      fecha_vencimiento:     r.fecha_vencimiento,
-      tipo_documento_codigo: r.tipo_documento_codigo,
-      serie:                 r.serie,
-      numero:                r.numero,
-      ruc_cliente:           r.ruc_cliente,
-      nombre_cliente:        r.nombre_cliente,
-      base_imponible:        r.base_imponible,
-      igv:                   r.igv,
-      total:                 r.total,
-      moneda:                r.moneda || 'PEN',
-      tipo_cambio:           r.tipo_cambio || 1,
-      estado:                'EMITIDO',
-      usuario_id:            perfil_usuario?.id || null,
-    }));
-    for (let i = 0; i < rows.length; i += 50) {
-      const chunk = rows.slice(i, i + 50);
-      const { data: ins, error } = await _supabase.from('registro_ventas')
-        .upsert(chunk, { onConflict: 'empresa_operadora_id,serie,numero', ignoreDuplicates: true })
-        .select('id');
-      if (error) errCount += chunk.length;
-      else { ok += ins?.length ?? 0; errCount += chunk.length - (ins?.length ?? 0); }
-    }
-
-  } else if (_sunat_preview_tipo === 'rh') {
-    for (const r of validos) {
-      if (!r.ruc_dni_prestador) { errCount++; continue; }
-
-      // Buscar o crear prestador
-      let { data: ps } = await _supabase
-        .from('prestadores_servicios')
-        .select('id')
-        .eq('dni', r.ruc_dni_prestador)
-        .maybeSingle();
-
-      if (!ps) {
-        const { data: nuevo, error: errPS } = await _supabase
-          .from('prestadores_servicios')
-          .insert({
-            dni:    r.ruc_dni_prestador,
-            nombre: r.nombre_prestador || r.ruc_dni_prestador,
-            ruc:    r.ruc_dni_prestador.length === 11 ? r.ruc_dni_prestador : null,
-            activo: true,
-          })
-          .select()
-          .single();
-        if (errPS) { errCount++; continue; }
-        ps = nuevo;
-      }
-
-      const { error } = await _supabase.from('rh_registros').insert({
-        empresa_operadora_id:  empresa_activa.id,
-        prestador_id:          ps.id,
-        periodo:               r.periodo,
-        fecha_emision:         r.fecha,
-        numero_rh:             r.numero_rh,
-        concepto:              r.concepto || 'SERVICIO',
-        monto_bruto:           r.monto_bruto,
-        tiene_retencion:       r.tiene_retencion,
-        porcentaje_retencion:  r.porcentaje_retencion,
-        monto_retencion:       r.monto_retencion,
-        monto_neto:            r.monto_neto,
-        estado:                r.estado,
-        observaciones:         r.observaciones,
-        usuario_id:            perfil_usuario?.id || null,
-      });
-
-      if (error) errCount++; else ok++;
-    }
+    const { error } = await _supabase.from('rh_registros').insert({
+      empresa_operadora_id: empresa_activa.id,
+      prestador_id:         ps.id,
+      periodo:              r.periodo,
+      fecha_emision:        r.fecha,
+      numero_rh:            r.numero_rh,
+      concepto:             r.concepto || 'SERVICIO',
+      monto_bruto:          r.monto_bruto,
+      tiene_retencion:      r.tiene_retencion,
+      porcentaje_retencion: r.porcentaje_retencion,
+      monto_retencion:      r.monto_retencion,
+      monto_neto:           r.monto_neto,
+      estado:               r.estado,
+      observaciones:        r.observaciones,
+      usuario_id:           perfil_usuario?.id || null,
+    });
+    if (error) errCount++; else ok++;
   }
 
   document.getElementById('modal-sunat-import')?.remove();
-  const totalValidos = validos.length;
-  const duplicados = totalValidos - ok - errCount;
-  const msg = `✓ ${ok} importados` +
-    (duplicados > 0 ? ` · ${duplicados} ya existían (omitidos)` : '') +
-    (errCount   > 0 ? ` · ${errCount} errores`                   : '');
+  const duplicados = validos.length - ok - errCount;
+  const msg = `✓ ${ok} importados`
+    + (duplicados > 0 ? ` · ${duplicados} ya existían` : '')
+    + (errCount   > 0 ? ` · ${errCount} errores`       : '');
   mostrarToast(msg, errCount > 0 ? 'atencion' : 'exito');
-
-  if (_sunat_preview_tipo === 'compras' && typeof cargarCompras === 'function') await cargarCompras();
-  if (_sunat_preview_tipo === 'ventas'  && typeof cargarVentas  === 'function') await cargarVentas();
-  if (_sunat_preview_tipo === 'rh'      && typeof cargarRH      === 'function') await cargarRH();
+  if (typeof cargarRH === 'function') await cargarRH();
 }
