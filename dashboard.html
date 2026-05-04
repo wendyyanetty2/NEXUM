@@ -272,6 +272,18 @@ function renderDashboard(area) {
         <div class="stat-card"><div class="stat-icono azul">⏳</div><div class="stat-info"><div class="numero">…</div><div class="etiqueta">Cargando</div></div></div>
       </div>
 
+      <!-- Progreso de cierre del mes -->
+      <div id="dashboard-progreso-mes" class="card" style="margin-bottom:20px;display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="font-size:15px">📊 Progreso de cierre del mes</h3>
+          <span id="dash-prog-pct" style="font-size:20px;font-weight:700;color:var(--color-primario)">—</span>
+        </div>
+        <div style="height:12px;background:var(--color-borde);border-radius:6px;overflow:hidden;margin-bottom:8px">
+          <div id="dash-prog-barra" style="height:100%;background:var(--color-primario);width:0;transition:width 0.8s ease;border-radius:6px"></div>
+        </div>
+        <div id="dash-prog-detalle" class="text-muted text-sm"></div>
+      </div>
+
       <!-- Inversión por proyecto -->
       <div class="grid-2" style="gap:16px;margin-bottom:20px">
         <div class="card">
@@ -435,10 +447,44 @@ async function cargarDashboard() {
       </div>`;
     }
   }
+
+  await _dashCargarProgreso();
 }
 
 function _fmt(n) {
   return Number(n).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function _dashCargarProgreso() {
+  const mes  = document.getElementById('dash-mes')?.value;
+  const anio = document.getElementById('dash-anio')?.value;
+  if (!mes || !anio || !empresa_activa) return;
+
+  const periodo = `${anio}-${mes}`;
+
+  const { data: filas } = await _supabase
+    .from('tesoreria_mbd')
+    .select('entrega_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .like('fecha_deposito', `${periodo}%`);
+
+  const card    = document.getElementById('dashboard-progreso-mes');
+  const pctEl   = document.getElementById('dash-prog-pct');
+  const barraEl = document.getElementById('dash-prog-barra');
+  const detEl   = document.getElementById('dash-prog-detalle');
+  if (!card || !pctEl || !barraEl || !detEl) return;
+
+  const total    = (filas || []).length;
+  const emitidos = (filas || []).filter(r => r.entrega_doc === 'EMITIDO').length;
+  const pct      = total > 0 ? Math.round(emitidos / total * 100) : 0;
+
+  pctEl.textContent   = `${pct}%`;
+  barraEl.style.width = `${pct}%`;
+  detEl.textContent   = total > 0
+    ? `${emitidos} de ${total} movimientos con comprobante emitido`
+    : 'Sin movimientos en este periodo';
+
+  card.style.display = 'block';
 }
 
 // ── Módulo "En construcción" ──────────────────────────────────────

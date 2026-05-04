@@ -64,9 +64,11 @@ function sunat_periodo(raw, fecha) {
 // ── Detectar tipo de registro desde encabezados ───────────────────
 
 function sunat_detectar_tipo(headers) {
-  const hdrs = (headers || []).map(h => (h || '').toString().trim());
-  if (hdrs.some(h => h === 'BI Gravado DG')) return 'COMPRAS';
-  if (hdrs.some(h => h === 'BI Gravada'))    return 'VENTAS';
+  const hdrs = (headers || []).map(h => (h || '').toString().trim().toUpperCase());
+  // Compras → busca "BI GRAVADO DG" (coincidencia exacta en mayúsculas o parcial)
+  if (hdrs.some(h => h === 'BI GRAVADO DG' || h.includes('GRAVADO DG'))) return 'COMPRAS';
+  // Ventas → busca "BI GRAVADA" pero NO "BI GRAVADO" para evitar falso positivo
+  if (hdrs.some(h => (h === 'BI GRAVADA' || h.includes('BI GRAVADA')) && !h.includes('GRAVADO'))) return 'VENTAS';
   return null;
 }
 
@@ -166,32 +168,46 @@ function sunat_parsear_ventas_row(r, fila) {
 // Retorna: { tipo, filas, totalFilas }
 
 function sunat_parsear_buffer(buffer, tipoForzado) {
-  const wb   = XLSX.read(buffer, { type: 'array', cellDates: false });
+  // Asegurar Uint8Array para compatibilidad total con xlsx.js en el navegador
+  const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const wb   = XLSX.read(data, { type: 'array', cellDates: false });
   const ws   = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
   if (!rows.length) throw new Error('El archivo está vacío');
 
-  // Detectar tipo desde encabezados (primeras 5 filas)
-  let tipo = null;
-  for (let i = 0; i < Math.min(rows.length, 5); i++) {
-    tipo = sunat_detectar_tipo(rows[i]);
-    if (tipo) break;
+  // Si el usuario seleccionó el tipo manualmente, usarlo directamente (máxima prioridad)
+  // De lo contrario, auto-detectar desde encabezados de las primeras 8 filas
+  let tipo = tipoForzado || null;
+  if (!tipo) {
+    for (let i = 0; i < Math.min(rows.length, 8); i++) {
+      tipo = sunat_detectar_tipo(rows[i]);
+      if (tipo) break;
+    }
   }
-  if (!tipo) tipo = tipoForzado || null;
   if (!tipo) return { tipo: null, filas: [], totalFilas: rows.length };
 
-  // Localizar primera fila de datos (col[4] con fecha válida)
+  // Localizar primera fila de datos: primera fila donde col[4] tiene fecha numérica
+  // o col[4] parece una fecha (número > 40000 = después del año 2009 en Excel)
   let inicioData = 0;
-  for (let i = 0; i < Math.min(rows.length, 12); i++) {
-    if (rows[i] && rows[i][4] != null && sunat_fecha(rows[i][4])) {
-      inicioData = i;
-      break;
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const c4 = rows[i] ? rows[i][4] : null;
+    if (c4 != null) {
+      const fechaOk = sunat_fecha(c4);
+      if (fechaOk) { inicioData = i; break; }
     }
   }
 
-  const colTotal  = tipo === 'VENTAS' ? 25 : 24;
-  const dataRows  = rows.slice(inicioData).filter(r => r && (r[4] != null || r[colTotal] != null));
+  // Columna de total según tipo (Y=24 Compras, Z=25 Ventas)
+  const colTotal = tipo === 'VENTAS' ? 25 : 24;
+
+  // Filtrar filas con al menos fecha o total (excluye filas vacías y la cabecera)
+  const dataRows = rows.slice(inicioData).filter(r => {
+    if (!r) return false;
+    const tieneFecha = r[4] != null && typeof r[4] === 'number' && r[4] > 40000;
+    const tieneTotal = r[colTotal] != null && typeof r[colTotal] === 'number' && r[colTotal] !== 0;
+    return tieneFecha || tieneTotal;
+  });
 
   const filas = dataRows.map((r, i) =>
     tipo === 'VENTAS'
