@@ -230,10 +230,118 @@ async function guardarCuenta() {
 }
 
 async function eliminarCuenta(id, nombre) {
-  if (!await confirmar(`¿Eliminar cuenta "${nombre}"? Se eliminarán todos sus movimientos.`)) return;
-  const { error } = await _supabase.from('cuentas_bancarias').delete().eq('id', id);
+  // Contar movimientos vinculados antes de mostrar opciones
+  const { count } = await _supabase
+    .from('movimientos')
+    .select('id', { count: 'exact', head: true })
+    .eq('cuenta_bancaria_id', id);
+
+  if (!count || count === 0) {
+    // Sin movimientos: confirmación simple
+    if (!await confirmar(
+      `¿Eliminar la cuenta "${nombre}"?\nEsta acción no se puede deshacer.`,
+      { btnOk: 'Eliminar', btnColor: '#C53030' }
+    )) return;
+    const { error } = await _supabase.from('cuentas_bancarias').delete().eq('id', id);
+    if (error) { mostrarToast('No se pudo eliminar: ' + error.message, 'error'); return; }
+    mostrarToast('Cuenta eliminada', 'exito');
+    await cargarCuentas();
+  } else {
+    // Con movimientos: modal con 3 opciones
+    _mostrarModalEliminarCuenta(id, nombre, count);
+  }
+}
+
+function _mostrarModalEliminarCuenta(id, nombre, cantMovimientos) {
+  document.getElementById('modal-del-cuenta')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay';
+  m.id = 'modal-del-cuenta';
+  m.style.display = 'flex';
+  m.innerHTML = `
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3>⚠️ Cuenta con movimientos</h3>
+        <button class="modal-cerrar"
+                onclick="document.getElementById('modal-del-cuenta').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:18px">
+          La cuenta <strong>"${escapar(nombre)}"</strong> tiene
+          <strong>${cantMovimientos} movimiento(s)</strong> registrado(s).
+          ¿Qué deseas hacer?
+        </p>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+
+          <!-- Opción 1: Desactivar -->
+          <button onclick="_eliminarCuentaDesactivar('${id}')"
+                  style="text-align:left;padding:12px 16px;border:1px solid var(--color-borde);
+                         border-radius:var(--radio);background:var(--color-fondo);cursor:pointer;
+                         font-family:var(--font);transition:background 0.15s"
+                  onmouseover="this.style.background='var(--color-fondo-2)'"
+                  onmouseout="this.style.background='var(--color-fondo)'">
+            <div style="font-weight:600;margin-bottom:2px">⏸ Desactivar cuenta (recomendado)</div>
+            <div style="font-size:12px;color:var(--color-texto-suave)">
+              La cuenta queda inactiva y oculta en filtros. El historial de movimientos se conserva.
+            </div>
+          </button>
+
+          <!-- Opción 2: Eliminar todo -->
+          <div style="border:1px solid #FC8181;border-radius:var(--radio);padding:12px 16px">
+            <div style="font-weight:600;color:#C53030;margin-bottom:4px">
+              🗑️ Eliminar cuenta y sus ${cantMovimientos} movimiento(s)
+            </div>
+            <div style="font-size:12px;color:var(--color-texto-suave);margin-bottom:10px">
+              Esta acción no se puede deshacer. Escribe <strong>CONFIRMAR</strong> para proceder:
+            </div>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="del-cuenta-palabra"
+                     placeholder="Escribe CONFIRMAR"
+                     style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);
+                            border-radius:var(--radio);font-family:var(--font);font-size:13px">
+              <button onclick="_eliminarCuentaTotal('${id}')"
+                      style="background:#C53030;color:white;border:none;border-radius:var(--radio);
+                             padding:0 14px;cursor:pointer;font-family:var(--font);font-size:13px;
+                             font-weight:500">
+                Eliminar todo
+              </button>
+            </div>
+          </div>
+
+          <!-- Opción 3: Cancelar -->
+          <button class="btn btn-secundario"
+                  onclick="document.getElementById('modal-del-cuenta').remove()">
+            Cancelar
+          </button>
+
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+}
+
+async function _eliminarCuentaDesactivar(id) {
+  document.getElementById('modal-del-cuenta')?.remove();
+  const { error } = await _supabase
+    .from('cuentas_bancarias').update({ activo: false }).eq('id', id);
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
-  mostrarToast('Cuenta eliminada', 'exito');
+  mostrarToast('Cuenta desactivada. El historial de movimientos se conserva.', 'exito');
+  await cargarCuentas();
+}
+
+async function _eliminarCuentaTotal(id) {
+  const palabra = (document.getElementById('del-cuenta-palabra')?.value || '').trim().toUpperCase();
+  if (palabra !== 'CONFIRMAR') {
+    mostrarToast('Debes escribir CONFIRMAR para proceder', 'atencion');
+    return;
+  }
+  document.getElementById('modal-del-cuenta')?.remove();
+  // Primero eliminar movimientos (FK), luego la cuenta
+  await _supabase.from('movimientos').delete().eq('cuenta_bancaria_id', id);
+  const { error } = await _supabase.from('cuentas_bancarias').delete().eq('id', id);
+  if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
+  mostrarToast('Cuenta y todos sus movimientos han sido eliminados.', 'exito');
   await cargarCuentas();
 }
 
