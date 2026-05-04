@@ -5,8 +5,9 @@
 // Usa sunat-parser.js como servicio compartido de parseo.
 // ═══════════════════════════════════════════════════════════════
 
-let _tri_import_datos = [];
-let _tri_import_tipo  = null; // 'COMPRAS' | 'VENTAS'
+let _tri_import_datos  = [];
+let _tri_import_tipo   = null; // 'COMPRAS' | 'VENTAS'
+let _tri_import_estado = new Map(); // fila# → 'NUEVO'|'ACTUALIZAR'|'SIN_CAMBIO'
 
 // ── Tab principal ─────────────────────────────────────────────────
 
@@ -155,31 +156,36 @@ function _triImportHandleFile(file) {
   if (info) { info.style.display = 'block'; info.textContent = `📂 ${file.name} — leyendo…`; }
 
   const reader = new FileReader();
-  reader.onload = ev => {
+  reader.onload = async ev => {
     try {
       const resultado = sunat_parsear_buffer(ev.target.result, _tri_import_tipo);
 
       if (!resultado.tipo) {
         mostrarToast(
-          'No se detectó el tipo de archivo. Selecciona Compras o Ventas manualmente y vuelve a cargar.',
+          'No se detectó el tipo. Selecciona Compras o Ventas manualmente y vuelve a cargar.',
           'atencion'
         );
         if (info) info.style.display = 'none';
         return;
       }
 
-      _tri_import_tipo  = resultado.tipo;
-      _tri_import_datos = resultado.filas;
+      _tri_import_tipo   = resultado.tipo;
+      _tri_import_datos  = resultado.filas;
+      _tri_import_estado = new Map();
 
       // Sincronizar radio
       const radio = document.getElementById('tri-tipo-' + resultado.tipo.toLowerCase());
       if (radio) { radio.checked = true; _triImportTipoChange(); }
 
-      if (info) info.textContent = `📂 ${file.name} — ${resultado.totalFilas} filas leídas`;
+      if (info) info.textContent = `📂 ${file.name} — verificando duplicados…`;
       mostrarToast(
         `Detectado: ${resultado.tipo === 'COMPRAS' ? '🛒 Compras' : '🏷️ Ventas'}`,
         'info'
       );
+
+      // Clasificar vs BD antes de mostrar preview (igual que Contabilidad)
+      await _triImportClasificar();
+      if (info) info.textContent = `📂 ${file.name} — ${resultado.totalFilas} filas leídas`;
       _triImportMostrarPreview();
 
     } catch (err) {
@@ -188,6 +194,40 @@ function _triImportHandleFile(file) {
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ── Clasificar filas vs BD (patrón Contabilidad) ──────────────────
+
+async function _triImportClasificar() {
+  const validos = _tri_import_datos.filter(f => f._ok);
+  if (!validos.length) return;
+
+  const esCompras = _tri_import_tipo === 'COMPRAS';
+  const tabla     = esCompras ? 'registro_compras' : 'registro_ventas';
+  const periodos  = [...new Set(validos.map(f => f.periodo).filter(Boolean))];
+
+  // Consultar registros existentes para los mismos períodos
+  let query = _supabase.from(tabla)
+    .select('serie,numero,total')
+    .eq('empresa_operadora_id', empresa_activa.id);
+  if (periodos.length) query = query.in('periodo', periodos);
+  const { data: ex } = await query;
+
+  const mapExist = new Map((ex || []).map(r => [
+    `${r.serie}-${r.numero}`, Number(r.total || 0)
+  ]));
+
+  // Clasificar cada fila válida
+  _tri_import_estado = new Map();
+  validos.forEach(f => {
+    const clave = `${f.serie}-${f.numero}`;
+    const exT   = mapExist.get(clave);
+    let estado;
+    if (exT === undefined) estado = 'NUEVO';
+    else if (Math.abs(exT - (f.total || 0)) > 0.01) estado = 'ACTUALIZAR';
+    else estado = 'SIN_CAMBIO';
+    _tri_import_estado.set(f._fila, estado);
+  });
 }
 
 // ── Vista previa completa ─────────────────────────────────────────
@@ -203,9 +243,9 @@ function _triImportMostrarPreview() {
   const errores   = _tri_import_datos.length - validos;
 
   document.getElementById('tri-preview-resumen').textContent =
-    `✅ ${validos} válidos · ⚠️ ${errores} con errores (serán omitidos)`;
+    `🟢 ${nuevos} nuevos · 🔵 ${actualizar} a actualizar · ⚪ ${sinCambios} sin cambios · ⚠️ ${errores} errores`;
   document.getElementById('tri-preview-ok-count').textContent =
-    `Se importarán ${validos} registros`;
+    `Se importarán ${nuevos + actualizar} registros (${sinCambios} ya existen sin cambios)`;
 
   const badge = document.getElementById('tri-preview-tipo-badge');
   if (badge) {
@@ -213,19 +253,31 @@ function _triImportMostrarPreview() {
     badge.className   = `badge ${esCompras ? 'badge-critico' : 'badge-activo'}`;
   }
 
+  const nuevos      = [..._tri_import_estado.values()].filter(v => v === 'NUEVO').length;
+  const actualizar  = [..._tri_import_estado.values()].filter(v => v === 'ACTUALIZAR').length;
+  const sinCambios  = [..._tri_import_estado.values()].filter(v => v === 'SIN_CAMBIO').length;
+
   thead.innerHTML = `
     <th>Fila</th><th>Fecha</th><th>T.Doc</th><th>CDP</th><th>RUC</th>
     <th>${esCompras ? 'Proveedor' : 'Cliente'}</th>
     <th class="text-right">Base Imp.</th><th class="text-right">IGV</th>
-    <th class="text-right">Total</th><th>Estado</th>`;
+    <th class="text-right">Total</th><th>Estado BD</th>`;
 
   tbody.innerHTML = _tri_import_datos.map(f => {
     const entidad = esCompras ? f.nombre_proveedor : f.nombre_cliente;
     const ruc     = esCompras ? f.ruc_proveedor    : f.ruc_cliente;
-    const estado  = f._ok
-      ? '<span class="badge badge-activo" style="font-size:10px">OK</span>'
-      : `<span class="badge badge-inactivo" style="font-size:10px"
-              title="${escapar(f._errores.join(' · '))}">Error</span>`;
+    const bdEstado = _tri_import_estado.get(f._fila);
+    let estadoBadge;
+    if (!f._ok) {
+      estadoBadge = `<span class="badge badge-inactivo" style="font-size:10px"
+        title="${escapar((f._errores||[]).join(' · '))}">Error</span>`;
+    } else if (bdEstado === 'NUEVO') {
+      estadoBadge = '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">NUEVO</span>';
+    } else if (bdEstado === 'ACTUALIZAR') {
+      estadoBadge = '<span style="font-size:10px;background:#2C5282;color:#fff;padding:2px 6px;border-radius:8px">ACTUALIZAR</span>';
+    } else {
+      estadoBadge = '<span style="font-size:10px;background:#4A5568;color:#fff;padding:2px 6px;border-radius:8px">SIN CAMBIO</span>';
+    }
     return `<tr ${!f._ok ? 'style="background:rgba(197,48,48,.05)"' : ''}>
       <td class="text-mono text-sm">${f._fila}</td>
       <td style="white-space:nowrap">${f.fecha || '—'}</td>
@@ -236,7 +288,7 @@ function _triImportMostrarPreview() {
       <td class="text-right">${f.base_imponible ? formatearMoneda(f.base_imponible, f.moneda) : '—'}</td>
       <td class="text-right">${f.igv ? formatearMoneda(f.igv, f.moneda) : '—'}</td>
       <td class="text-right" style="font-weight:600">${formatearMoneda(f.total, f.moneda)}</td>
-      <td>${estado}</td>
+      <td>${estadoBadge}</td>
     </tr>`;
   }).join('');
 
@@ -248,8 +300,9 @@ function _triImportMostrarPreview() {
 }
 
 function _triImportCancelar() {
-  _tri_import_datos = [];
-  _tri_import_tipo  = null;
+  _tri_import_datos  = [];
+  _tri_import_tipo   = null;
+  _tri_import_estado = new Map();
   ['tri-preview-section', 'tri-errores-section'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
@@ -262,7 +315,7 @@ function _triImportCancelar() {
   ['compras','ventas'].forEach(t => document.getElementById('lbl-tri-'+t)?.classList.remove('activo'));
 }
 
-// ── Confirmar importación ─────────────────────────────────────────
+// ── Confirmar importación (patrón Contabilidad: SELECT→INSERT+UPDATE) ──
 
 async function _triImportConfirmar() {
   const validos = _tri_import_datos.filter(f => f._ok);
@@ -276,13 +329,18 @@ async function _triImportConfirmar() {
   const progBar  = document.getElementById('tri-progreso-barra');
   if (progreso) progreso.style.display = 'block';
 
-  const esCompras  = _tri_import_tipo === 'COMPRAS';
-  const tabla      = esCompras ? 'registro_compras' : 'registro_ventas';
-  const onConflict = esCompras
-    ? 'empresa_operadora_id,tipo_documento_codigo,serie,numero,ruc_proveedor'
-    : 'empresa_operadora_id,serie,numero';
+  const esCompras = _tri_import_tipo === 'COMPRAS';
+  const tabla     = esCompras ? 'registro_compras' : 'registro_ventas';
 
-  const filas = validos.map(f => esCompras ? {
+  // ── 1. Usar clasificación ya calculada (o recalcular si no existe) ──
+  if (_tri_import_estado.size === 0) await _triImportClasificar();
+
+  const aNuevos     = validos.filter(f => _tri_import_estado.get(f._fila) === 'NUEVO');
+  const aActualizar = validos.filter(f => _tri_import_estado.get(f._fila) === 'ACTUALIZAR');
+  const aSinCambio  = validos.filter(f => _tri_import_estado.get(f._fila) === 'SIN_CAMBIO');
+
+  // ── 2. Construir payload por tipo ─────────────────────────────────
+  const buildRow = f => esCompras ? {
     empresa_operadora_id:  empresa_activa.id,
     periodo:               f.periodo,
     fecha_emision:         f.fecha,
@@ -292,8 +350,8 @@ async function _triImportConfirmar() {
     numero:                f.numero,
     ruc_proveedor:         f.ruc_proveedor,
     nombre_proveedor:      f.nombre_proveedor,
-    base_imponible:        f.base_imponible,
-    igv:                   f.igv,
+    base_imponible:        f.base_imponible || 0,
+    igv:                   f.igv || 0,
     total:                 f.total,
     moneda:                f.moneda || 'PEN',
     tipo_cambio:           f.tipo_cambio || 1,
@@ -311,38 +369,50 @@ async function _triImportConfirmar() {
     numero:                f.numero,
     ruc_cliente:           f.ruc_cliente,
     nombre_cliente:        f.nombre_cliente,
-    base_imponible:        f.base_imponible,
-    igv:                   f.igv,
+    base_imponible:        f.base_imponible || 0,
+    igv:                   f.igv || 0,
     total:                 f.total,
     moneda:                f.moneda || 'PEN',
     tipo_cambio:           f.tipo_cambio || 1,
     estado:                'EMITIDO',
     usuario_id:            perfil_usuario?.id || null,
-  });
+  };
 
-  let ok = 0, duplicados = 0, errTecnico = 0;
+  let ok = 0, actualizados = 0, errTecnico = 0;
   const CHUNK = 50;
 
-  for (let i = 0; i < filas.length; i += CHUNK) {
-    const chunk = filas.slice(i, i + CHUNK);
-    const pct   = Math.round(((i + chunk.length) / filas.length) * 100);
-    if (progTxt) progTxt.textContent = `Importando ${i + chunk.length} / ${filas.length}…`;
-    if (progBar) progBar.style.width = pct + '%';
+  // ── 3. Insertar nuevos en lotes ────────────────────────────────────
+  if (aNuevos.length) {
+    if (progTxt) progTxt.textContent = `Insertando ${aNuevos.length} nuevos…`;
+    if (progBar) progBar.style.width = '30%';
+    for (let i = 0; i < aNuevos.length; i += CHUNK) {
+      const chunk = aNuevos.slice(i, i + CHUNK).map(buildRow);
+      const { error } = await _supabase.from(tabla).insert(chunk);
+      if (error) { errTecnico += chunk.length; }
+      else { ok += chunk.length; }
+    }
+  }
 
-    const { data: ins, error } = await _supabase
-      .from(tabla)
-      .upsert(chunk, { onConflict, ignoreDuplicates: true })
-      .select('id');
-
-    if (error) { errTecnico += chunk.length; }
-    else { const n = ins?.length ?? 0; ok += n; duplicados += chunk.length - n; }
+  // ── 4. Actualizar registros cambiados ─────────────────────────────
+  if (aActualizar.length) {
+    if (progTxt) progTxt.textContent = `Actualizando ${aActualizar.length} cambiados…`;
+    if (progBar) progBar.style.width = '70%';
+    for (const f of aActualizar) {
+      const { error } = await _supabase.from(tabla)
+        .update(buildRow(f))
+        .eq('empresa_operadora_id', empresa_activa.id)
+        .eq('serie', f.serie)
+        .eq('numero', f.numero);
+      if (error) errTecnico++;
+      else actualizados++;
+    }
   }
 
   if (progBar) progBar.style.width = '100%';
   setTimeout(() => { if (progreso) progreso.style.display = 'none'; }, 700);
   btn.disabled = false; btn.textContent = '✅ Confirmar importación';
 
-  // Mostrar tabla de filas con errores de validación
+  // ── Tabla de filas con errores de validación ──────────────────────
   const errRows    = _tri_import_datos.filter(f => !f._ok);
   const errSection = document.getElementById('tri-errores-section');
   const errBody    = document.getElementById('tri-errores-body');
@@ -360,19 +430,21 @@ async function _triImportConfirmar() {
     errSection.style.display = 'block';
   }
 
-  // Toast con resumen
-  const partes = [`✓ ${ok} importados`];
-  if (duplicados > 0) partes.push(`${duplicados} ya existían (omitidos)`);
-  if (errTecnico > 0) partes.push(`${errTecnico} errores técnicos`);
-  mostrarToast(partes.join(' · '), errTecnico > 0 ? 'atencion' : 'exito');
+  // ── Toast con resumen ─────────────────────────────────────────────
+  const partes = [];
+  if (ok > 0)          partes.push(`✓ ${ok} nuevos`);
+  if (actualizados > 0) partes.push(`${actualizados} actualizados`);
+  if (aSinCambio.length > 0) partes.push(`${aSinCambio.length} sin cambios`);
+  if (errTecnico > 0)  partes.push(`${errTecnico} errores`);
+  mostrarToast(partes.join(' · ') || 'Sin cambios', errTecnico > 0 ? 'atencion' : 'exito');
 
-  // Refrescar tabla de destino en segundo plano
+  // Refrescar tabla destino
   if (esCompras && typeof cargarCompras === 'function') cargarCompras();
   if (!esCompras && typeof cargarVentas  === 'function') cargarVentas();
 
-  // Ocultar preview
   const pre = document.getElementById('tri-preview-section');
   if (pre) pre.style.display = 'none';
+  _tri_import_estado = new Map();
 }
 
 // ── Accesos directos desde botones de compras/ventas ─────────────

@@ -271,9 +271,6 @@ async function _sunatConfirmarImportacion() {
   const tipo      = sunat_tipo_actual;
   const esCompras = tipo === 'COMPRAS';
   const tabla     = esCompras ? 'registro_compras' : 'registro_ventas';
-  const onConflict = esCompras
-    ? 'empresa_operadora_id,tipo_documento_codigo,serie,numero,ruc_proveedor'
-    : 'empresa_operadora_id,serie,numero';
 
   const { data: lote, error: errLote } = await _supabase
     .from('lotes_importacion').insert({
@@ -292,7 +289,36 @@ async function _sunatConfirmarImportacion() {
     return;
   }
 
-  const filas = validos.map(f => esCompras ? {
+  // ── Patrón Contabilidad: SELECT existentes → INSERT nuevos + UPDATE cambiados ──
+  const progBar = document.getElementById('sunat-progreso-barra');
+  const progTxt = document.getElementById('sunat-progreso-texto');
+
+  // 1. Consultar existentes para deduplicar
+  if (progTxt) progTxt.textContent = 'Verificando duplicados…';
+  if (progBar) progBar.style.width = '15%';
+  const periodos = [...new Set(validos.map(f => f.periodo).filter(Boolean))];
+  let mapExist = new Map();
+  if (periodos.length) {
+    let qEx = _supabase.from(tabla)
+      .select('serie,numero,total')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .in('periodo', periodos);
+    const { data: ex } = await qEx;
+    mapExist = new Map((ex || []).map(r => [`${r.serie}-${r.numero}`, Number(r.total || 0)]));
+  }
+
+  // 2. Clasificar (igual que Contabilidad)
+  const aNuevos = [], aActualizar = [], aSinCambio = [];
+  validos.forEach(f => {
+    const clave = `${f.serie}-${f.numero}`;
+    const exT   = mapExist.get(clave);
+    if (exT === undefined) aNuevos.push(f);
+    else if (Math.abs(exT - (f.importe || 0)) > 0.01) aActualizar.push(f);
+    else aSinCambio.push(f);
+  });
+
+  // 3. Construir payload
+  const buildRow = f => esCompras ? {
     empresa_operadora_id:  empresa_activa.id,
     lote_importacion_id:   lote.id,
     periodo:               f.periodo,
@@ -330,43 +356,59 @@ async function _sunatConfirmarImportacion() {
     tipo_cambio:           f.tipo_cambio || 1,
     estado:                'EMITIDO',
     usuario_id:            perfil_usuario?.id || null,
-  });
+  };
 
-  let ok = 0, duplicados = 0, errCount = 0, primerError = null;
+  let ok = 0, actualizados = 0, errCount = 0;
   const CHUNK = 50;
-  const progBar  = document.getElementById('sunat-progreso-barra');
-  const progTxt  = document.getElementById('sunat-progreso-texto');
 
-  for (let i = 0; i < filas.length; i += CHUNK) {
-    const chunk = filas.slice(i, i + CHUNK);
-    const pct   = Math.round(((i + chunk.length) / filas.length) * 100);
-    if (progTxt) progTxt.textContent = `Importando ${i + chunk.length} / ${filas.length}…`;
-    if (progBar) progBar.style.width = pct + '%';
+  // 4. Insertar nuevos
+  if (aNuevos.length) {
+    if (progTxt) progTxt.textContent = `Insertando ${aNuevos.length} nuevos…`;
+    if (progBar) progBar.style.width = '45%';
+    for (let i = 0; i < aNuevos.length; i += CHUNK) {
+      const chunk = aNuevos.slice(i, i + CHUNK).map(buildRow);
+      const { error } = await _supabase.from(tabla).insert(chunk);
+      if (error) errCount += chunk.length;
+      else ok += chunk.length;
+    }
+  }
 
-    const { data: insertados, error } = await _supabase.from(tabla)
-      .upsert(chunk, { onConflict, ignoreDuplicates: true }).select('id');
-
-    if (error) { errCount += chunk.length; if (!primerError) primerError = error.message; }
-    else { const ins = insertados?.length ?? 0; ok += ins; duplicados += chunk.length - ins; }
+  // 5. Actualizar cambiados
+  if (aActualizar.length) {
+    if (progTxt) progTxt.textContent = `Actualizando ${aActualizar.length} cambiados…`;
+    if (progBar) progBar.style.width = '75%';
+    for (const f of aActualizar) {
+      const { error } = await _supabase.from(tabla)
+        .update(buildRow(f))
+        .eq('empresa_operadora_id', empresa_activa.id)
+        .eq('serie', f.serie)
+        .eq('numero', f.numero);
+      if (error) errCount++;
+      else actualizados++;
+    }
   }
 
   await _supabase.from('lotes_importacion').update({
     estado: errCount === 0 ? 'COMPLETADO' : 'ERROR',
-    registros_ok: ok, registros_error: errCount,
+    registros_ok: ok + actualizados, registros_error: errCount,
   }).eq('id', lote.id);
 
   if (progBar) progBar.style.width = '100%';
   setTimeout(() => { document.getElementById('sunat-progreso').style.display = 'none'; }, 600);
   btn.disabled = false; btn.textContent = '✅ Confirmar importación';
 
-  if (primerError) mostrarToast(`Error: ${primerError}`, 'error');
-  else mostrarToast(`✓ ${ok} importados · ${duplicados} duplicados`, duplicados ? 'atencion' : 'exito');
+  const partes = [];
+  if (ok > 0)          partes.push(`✓ ${ok} nuevos`);
+  if (actualizados > 0) partes.push(`${actualizados} actualizados`);
+  if (aSinCambio.length > 0) partes.push(`${aSinCambio.length} sin cambios`);
+  if (errCount > 0)    partes.push(`${errCount} errores`);
+  mostrarToast(partes.join(' · ') || 'Sin cambios', errCount > 0 ? 'atencion' : 'exito');
 
   _sunatCancelarPreview();
   await _sunatCargarHistorial();
 
   // Mostrar estado de conciliación
-  if (ok > 0) await _sunatMostrarConciliacion(lote.id, tipo);
+  if ((ok + actualizados) > 0) await _sunatMostrarConciliacion(lote.id, tipo);
 }
 
 // ── Estado de conciliación bancaria ──────────────────────────────
