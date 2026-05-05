@@ -14,6 +14,7 @@
   <script src="../../js/utils.js"></script>
   <script src="../../js/auth.js"></script>
   <script src="../../js/tema.js"></script>
+  <script src="../../js/notas.js"></script>
   <script src="../../js/layout.js"></script>
 </head>
 <body>
@@ -276,26 +277,216 @@ async function exportarReporteIGV() {
 }
 
 async function exportarReporteGlobal() {
-  mostrarToast('Generando reporte completo…', 'info');
+  mostrarToast('Generando reporte completo (9 hojas)…', 'info');
   const { empId, desde, hasta, empNom } = _getParams();
 
-  const [resV, resC, resMov] = await Promise.all([
-    _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id', empId).order('fecha_emision'),
-    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empId).order('fecha_emision'),
-    _supabase.from('movimientos').select('*, cuentas_bancarias(nombre_alias)').eq('empresa_operadora_id', empId).order('fecha'),
+  const filtroDesde = desde ? desde + '-01' : '2020-01-01';
+  const filtroHasta = hasta ? hasta + '-31' : '2099-12-31';
+  const periodoDesde = desde || '2020-01';
+  const periodoHasta = hasta || '2099-12';
+
+  const [resV, resC, resMov, resPla, resRH, resLinks, resAlertas, resNotas] = await Promise.all([
+    _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id', empId).gte('periodo', periodoDesde).lte('periodo', periodoHasta).order('fecha_emision'),
+    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empId).gte('periodo', periodoDesde).lte('periodo', periodoHasta).order('fecha_emision'),
+    _supabase.from('movimientos').select('*, cuentas_bancarias(nombre_alias)').eq('empresa_operadora_id', empId).gte('fecha', filtroDesde).lte('fecha', filtroHasta).order('fecha'),
+    _supabase.from('planilla_detalle').select('*, planilla_periodos(anio,mes,tipo), trabajadores(nombre,apellido_paterno,apellido_materno,dni)').eq('empresa_operadora_id', empId),
+    _supabase.from('rh_registros').select('*, prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId).gte('fecha_emision', filtroDesde).lte('fecha_emision', filtroHasta).order('fecha_emision'),
+    _supabase.from('rh_movimiento_links').select('*, rh_registros(numero_rh,nombre_emisor,monto_bruto), movimientos(fecha,importe,numero_operacion)').eq('empresa_id', empId),
+    _supabase.from('alertas_sistema').select('*').eq('empresa_id', empId).order('created_at', { ascending: false }).limit(200),
+    _supabase.from('notas_operativas').select('*').eq('empresa_id', empId).order('created_at', { ascending: false }).limit(200),
   ]);
 
-  const hojasVentas  = (resV.data||[]).map(v => ({ Periodo: v.periodo, 'F. Emisión': v.fecha_emision, Serie: v.serie||'', Número: v.numero||'', Cliente: v.nombre_cliente||'', 'Base Imp.': v.base_imponible||0, IGV: v.igv||0, Total: v.total||0, Estado: v.estado }));
-  const hojasCompras = (resC.data||[]).map(c => ({ Periodo: c.periodo, 'F. Emisión': c.fecha_emision, Serie: c.serie||'', Número: c.numero||'', Proveedor: c.nombre_proveedor||'', 'Base Imp.': c.base_imponible||0, IGV: c.igv||0, Total: c.total||0, Estado: c.estado }));
-  const hojasMov     = (resMov.data||[]).map(m => ({ Fecha: m.fecha, Cuenta: m.cuentas_bancarias?.nombre_alias||'', Naturaleza: m.naturaleza, Importe: m.importe, Moneda: m.moneda, Descripción: m.descripcion||'', Estado: m.estado }));
+  // ── HOJA 1: RESUMEN EJECUTIVO ─────────────────────────────────
+  const movs      = resMov.data || [];
+  const ventas    = resV.data   || [];
+  const compras   = resC.data   || [];
+  const rhList    = resRH.data  || [];
+  const links     = resLinks.data || [];
 
-  _descargarExcel([
-    { nombre: 'Ventas',      datos: hojasVentas },
-    { nombre: 'Compras',     datos: hojasCompras },
-    { nombre: 'Movimientos', datos: hojasMov },
-  ], `reporte_global_${empNom}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  const totalVentas   = ventas.filter(v=>v.estado!=='ANULADO').reduce((s,v)=>s+parseFloat(v.total||0),0);
+  const totalCompras  = compras.filter(c=>c.estado!=='ANULADO').reduce((s,c)=>s+parseFloat(c.total||0),0);
+  const totalAbonos   = movs.filter(m=>m.naturaleza==='ABONO').reduce((s,m)=>s+parseFloat(m.importe||0),0);
+  const totalCargos   = movs.filter(m=>m.naturaleza==='CARGO').reduce((s,m)=>s+parseFloat(m.importe||0),0);
+  const rhAplicados   = rhList.filter(r=>links.some(l=>l.rh_id===r.id&&l.confirmado_en)).length;
+  const rhTotal       = rhList.filter(r=>r.estado!=='ANULADO').length;
+  const movConComp    = movs.filter(m=>m.estado==='EMITIDO').length;
+  const pctRH         = rhTotal > 0 ? Math.round(rhAplicados/rhTotal*100) : 0;
+  const pctComp       = movs.length > 0 ? Math.round(movConComp/movs.length*100) : 0;
 
-  mostrarToast('Reporte global exportado', 'exito');
+  const resumenRows = [
+    ['KPI', 'Valor', 'Semáforo'],
+    ['Total Ventas (S/)', totalVentas, ''],
+    ['Total Compras (S/)', totalCompras, ''],
+    ['Total Abonos Bancarios (S/)', totalAbonos, ''],
+    ['Total Cargos Bancarios (S/)', totalCargos, ''],
+    ['Saldo Neto Tesorería (S/)', totalAbonos - totalCargos, ''],
+    ['RH Aplicados', `${rhAplicados}/${rhTotal} (${pctRH}%)`, pctRH >= 90 ? '🟢' : pctRH >= 70 ? '🟡' : '🔴'],
+    ['Movimientos con comprobante', `${movConComp}/${movs.length} (${pctComp}%)`, pctComp >= 95 ? '🟢' : pctComp >= 80 ? '🟡' : '🔴'],
+    ['Empresa', empNom, ''],
+    ['Período', `${desde||'Inicio'} a ${hasta||'Fin'}`, ''],
+    ['Generado', new Date().toLocaleString('es-PE'), ''],
+  ];
+
+  // ── HOJA 2: TESORERÍA ────────────────────────────────────────
+  const hojaTes = movs.map(m => ({
+    Fecha: m.fecha,
+    Cuenta: m.cuentas_bancarias?.nombre_alias || '',
+    Naturaleza: m.naturaleza,
+    Importe: m.importe,
+    Moneda: m.moneda,
+    'N° Operación': m.numero_operacion || '',
+    Descripción: m.descripcion || '',
+    'Tipo Operación': m.tipo_operacion_codigo || '',
+    Estado: m.estado,
+    'Tiene IGV': m.tiene_igv ? 'Sí' : 'No',
+    'Base Imponible': m.base_imponible || 0,
+    IGV: m.igv || 0,
+    'Tiene Detracción': m.tiene_detraccion ? 'Sí' : 'No',
+    'Monto Detracción': m.monto_detraccion || 0,
+    Observaciones: m.observaciones || '',
+  }));
+
+  // ── HOJA 3: CONCILIACIÓN RH ───────────────────────────────────
+  const hojaConcil = links.map(l => ({
+    'N° RH': l.rh_registros?.numero_rh || '',
+    'Emisor RH': l.rh_registros?.nombre_emisor || '',
+    'Monto RH (S/)': l.rh_registros?.monto_bruto || 0,
+    'Fecha Movimiento': l.movimientos?.fecha || '',
+    'N° Operación Mov.': l.movimientos?.numero_operacion || '',
+    'Monto Pagado (S/)': l.monto_parcial ?? l.movimientos?.importe ?? 0,
+    'Nivel Confianza': l.nivel_confianza || '',
+    'Es Parcial': l.es_parcial ? 'Sí' : 'No',
+    Confirmado: l.confirmado_en ? 'Sí' : 'No',
+    'Fecha Confirmación': l.confirmado_en ? l.confirmado_en.slice(0,10) : '',
+  }));
+
+  // ── HOJA 4: RH RECIBIDOS ─────────────────────────────────────
+  const hojaRH = rhList.map(r => {
+    const rhLinks     = links.filter(l => l.rh_id === r.id);
+    const confirmados = rhLinks.filter(l => l.confirmado_en);
+    const montoPagado = confirmados.reduce((s,l)=>s+parseFloat(l.monto_parcial??l.movimientos?.importe??0),0);
+    const montoRH     = parseFloat(r.monto_bruto||0);
+    let estado = 'PENDIENTE';
+    if (r.estado === 'ANULADO') estado = 'CANCELADO';
+    else if (confirmados.length && Math.abs(montoPagado - montoRH) < 0.01) estado = 'APLICADO';
+    else if (confirmados.length && montoPagado > 0) estado = 'PARCIAL';
+    else if (rhLinks.some(l => !l.confirmado_en)) estado = 'POSIBLE MATCH';
+    return {
+      Fecha: r.fecha_emision,
+      'N° RH': r.numero_rh || '',
+      DNI: r.prestadores_servicios?.dni || r.nro_doc_emisor || '',
+      Emisor: r.prestadores_servicios?.nombre || r.nombre_emisor || '',
+      Concepto: r.concepto || '',
+      Moneda: r.moneda || 'PEN',
+      'Renta Bruta': r.monto_bruto,
+      'Retención': r.monto_retencion,
+      'Renta Neta': r.monto_neto,
+      Estado: estado,
+      'Monto Pagado': montoPagado || '',
+      Observaciones: r.observaciones || '',
+    };
+  });
+
+  // ── HOJA 5: REG. COMPRAS ─────────────────────────────────────
+  const hojaCompras = compras.map(c => ({
+    Periodo: c.periodo, 'F. Emisión': c.fecha_emision, 'F. Vencimiento': c.fecha_vencimiento||'',
+    'Tipo Doc': c.tipo_documento_codigo||'', Serie: c.serie||'', Número: c.numero||'',
+    'RUC Proveedor': c.ruc_proveedor||'', Proveedor: c.nombre_proveedor||'',
+    'Base Imponible': c.base_imponible||0, IGV: c.igv||0, Total: c.total||0,
+    'Tiene Detracción': c.tiene_detraccion?'Sí':'No', 'Monto Detracción': c.monto_detraccion||0,
+    Estado: c.estado,
+  }));
+
+  // ── HOJA 6: REG. VENTAS ──────────────────────────────────────
+  const hojaVentas = ventas.map(v => ({
+    Periodo: v.periodo, 'F. Emisión': v.fecha_emision,
+    'Tipo Doc': v.tipo_documento_codigo||'', Serie: v.serie||'', Número: v.numero||'',
+    'RUC Cliente': v.ruc_cliente||'', Cliente: v.nombre_cliente||'',
+    'Base Imponible': v.base_imponible||0, IGV: v.igv||0, Total: v.total||0,
+    Moneda: v.moneda, Estado: v.estado,
+  }));
+
+  // ── HOJA 7: PLANILLA ─────────────────────────────────────────
+  const hojaPla = (resPla.data||[]).map(d => ({
+    Año: d.planilla_periodos?.anio||'', Mes: d.planilla_periodos?.mes||'', Tipo: d.planilla_periodos?.tipo||'',
+    DNI: d.trabajadores?.dni||'',
+    Trabajador: [d.trabajadores?.apellido_paterno,d.trabajadores?.apellido_materno,d.trabajadores?.nombre].filter(Boolean).join(' '),
+    'Días Trabajados': d.dias_trabajados, 'Sueldo Base': d.sueldo_base, 'Rem. Bruta': d.remuneracion_bruta,
+    'Desc. AFP': d.descuento_afp, 'Desc. ONP': d.descuento_onp, 'Desc. Renta 5ta': d.descuento_renta5ta,
+    'Otros Desc.': d.otros_descuentos, 'Rem. Neta': d.remuneracion_neta,
+    'Aporte EsSalud': d.aporte_essalud, Pagado: d.pagado?'Sí':'No', 'Fecha Pago': d.fecha_pago||'',
+  }));
+
+  // ── HOJA 8: ALERTAS Y NOTAS ──────────────────────────────────
+  const hojaAlNot = [
+    ...(resAlertas.data||[]).map(a => ({
+      Tipo: 'ALERTA', Categoría: a.tipo, Prioridad: a.prioridad,
+      Título: a.titulo, Descripción: a.descripcion||'', Monto: a.monto||'',
+      'Fecha Vencimiento': a.fecha_vencimiento||'', Estado: a.estado,
+      'Fecha Creación': a.created_at?.slice(0,10)||'',
+    })),
+    ...(resNotas.data||[]).map(n => ({
+      Tipo: 'NOTA', Categoría: n.tipo, Prioridad: n.prioridad,
+      Título: n.titulo, Descripción: n.descripcion||'', Monto: n.monto_referencia||'',
+      'Fecha Vencimiento': n.fecha_vencimiento||'', Estado: n.estado,
+      'Fecha Creación': n.created_at?.slice(0,10)||'',
+    })),
+  ];
+
+  // ── HOJA 9: DATOS PIVOT (plana para Power BI) ────────────────
+  const hojaPivot = movs.map(m => ({
+    tipo_registro: 'MOVIMIENTO',
+    fecha: m.fecha,
+    periodo: m.fecha?.slice(0,7)||'',
+    naturaleza: m.naturaleza,
+    importe: m.importe,
+    moneda: m.moneda,
+    descripcion: m.descripcion||'',
+    numero_operacion: m.numero_operacion||'',
+    estado: m.estado,
+    cuenta: m.cuentas_bancarias?.nombre_alias||'',
+    tipo_operacion: m.tipo_operacion_codigo||'',
+    tiene_igv: m.tiene_igv?1:0,
+    base_imponible: m.base_imponible||0,
+    igv: m.igv||0,
+    tiene_detraccion: m.tiene_detraccion?1:0,
+    monto_detraccion: m.monto_detraccion||0,
+  }));
+
+  const nombre = `NEXUM_${empNom.replace(/\s+/g,'_')}_${desde||'todo'}_ReporteGlobal.xlsx`;
+
+  _descargarExcelConFormato([
+    { nombre: '📊 RESUMEN_EJECUTIVO', datos: resumenRows, esAOA: true },
+    { nombre: '💰 TESORERIA',         datos: hojaTes },
+    { nombre: '🔗 CONCILIACION',      datos: hojaConcil },
+    { nombre: '📄 RH_RECIBIDOS',      datos: hojaRH },
+    { nombre: '🛒 REG_COMPRAS',       datos: hojaCompras },
+    { nombre: '💼 REG_VENTAS',        datos: hojaVentas },
+    { nombre: '👥 PLANILLA',          datos: hojaPla },
+    { nombre: '🔔 ALERTAS_Y_NOTAS',   datos: hojaAlNot },
+    { nombre: '📋 DATOS_PIVOT',       datos: hojaPivot },
+  ], nombre);
+
+  mostrarToast(`Reporte global exportado (9 hojas)`, 'exito');
+}
+
+function _descargarExcelConFormato(hojas, nombre) {
+  const wb = XLSX.utils.book_new();
+  hojas.forEach(h => {
+    let ws;
+    if (h.esAOA) {
+      ws = XLSX.utils.aoa_to_sheet(h.datos);
+    } else if (h.datos?.length) {
+      ws = XLSX.utils.json_to_sheet(h.datos);
+    } else {
+      ws = XLSX.utils.json_to_sheet([]);
+    }
+    // Nombre máximo 31 chars (límite Excel)
+    const nombreHoja = (h.nombre || 'Hoja').replace(/[:\\\/\?\*\[\]]/g,'').slice(0,31);
+    XLSX.utils.book_append_sheet(wb, ws, nombreHoja);
+  });
+  if (wb.SheetNames.length === 0) { mostrarToast('Sin datos para exportar', 'atencion'); return; }
+  XLSX.writeFile(wb, nombre);
 }
 
 async function cargarResumenPeriodo() {

@@ -1,0 +1,67 @@
+name: Backup Mensual NEXUM
+
+on:
+  schedule:
+    - cron: '0 3 1 * *'   # Día 1 de cada mes a las 3:00 AM UTC
+  workflow_dispatch:        # Ejecución manual desde GitHub Actions
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configurar fecha del backup
+        id: fecha
+        run: |
+          echo "anio=$(date +%Y)" >> $GITHUB_OUTPUT
+          echo "mes=$(date +%m)" >> $GITHUB_OUTPUT
+          echo "periodo=$(date +%Y-%m)" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Crear directorio de backup
+        run: |
+          mkdir -p "backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}"
+
+      - name: Exportar datos de Supabase vía API NEXUM
+        run: |
+          curl -s -f -X POST "${{ secrets.NEXUM_API_URL }}/api/backup/mensual" \
+            -H "Authorization: Bearer ${{ secrets.NEXUM_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"periodo":"${{ steps.fecha.outputs.periodo }}"}' \
+            -o "backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}/backup_${{ steps.fecha.outputs.periodo }}.json" \
+            --max-time 300 \
+            || echo '{"status":"sin_datos","periodo":"${{ steps.fecha.outputs.periodo }}","timestamp":"${{ steps.fecha.outputs.timestamp }}"}' \
+               > "backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}/backup_${{ steps.fecha.outputs.periodo }}.json"
+
+      - name: Verificar backup generado
+        run: |
+          ARCHIVO="backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}/backup_${{ steps.fecha.outputs.periodo }}.json"
+          BYTES=$(wc -c < "$ARCHIVO")
+          echo "Archivo generado: $ARCHIVO ($BYTES bytes)"
+          if [ "$BYTES" -lt 10 ]; then
+            echo "⚠️ Advertencia: backup vacío o muy pequeño"
+          fi
+
+      - name: Commit y push del backup
+        run: |
+          git config user.email "backup-bot@nexum.app"
+          git config user.name "NEXUM Backup Bot"
+          git add "backups/"
+          git diff --staged --quiet && echo "Sin cambios para commit" || \
+            git commit -m "Backup automático ${{ steps.fecha.outputs.periodo }} — $(date +%Y-%m-%d)"
+          git push origin HEAD
+
+      - name: Resumen del backup
+        if: always()
+        run: |
+          echo "============================================"
+          echo "NEXUM — Backup mensual ${{ steps.fecha.outputs.periodo }}"
+          echo "Ejecutado: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Estado: ${{ job.status }}"
+          echo "============================================"
