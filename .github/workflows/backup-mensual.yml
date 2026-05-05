@@ -28,24 +28,67 @@ jobs:
         run: |
           mkdir -p "backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}"
 
-      - name: Exportar datos de Supabase vía API NEXUM
+      - name: Exportar tablas desde Supabase REST API
+        env:
+          SUPA_URL: ${{ secrets.NEXUM_SUPABASE_URL }}
+          SUPA_KEY: ${{ secrets.NEXUM_SUPABASE_KEY }}
+          PERIODO:  ${{ steps.fecha.outputs.periodo }}
         run: |
-          curl -s -f -X POST "${{ secrets.NEXUM_API_URL }}/api/backup/mensual" \
-            -H "Authorization: Bearer ${{ secrets.NEXUM_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d '{"periodo":"${{ steps.fecha.outputs.periodo }}"}' \
-            -o "backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}/backup_${{ steps.fecha.outputs.periodo }}.json" \
-            --max-time 300 \
-            || echo '{"status":"sin_datos","periodo":"${{ steps.fecha.outputs.periodo }}","timestamp":"${{ steps.fecha.outputs.timestamp }}"}' \
-               > "backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}/backup_${{ steps.fecha.outputs.periodo }}.json"
+          DIR="backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}"
+          HEADERS='-H "apikey: '"$SUPA_KEY"'" -H "Authorization: Bearer '"$SUPA_KEY"'" -H "Accept: application/json"'
+
+          exportar() {
+            local tabla=$1
+            local filtro=$2
+            curl -s --max-time 60 \
+              -H "apikey: $SUPA_KEY" \
+              -H "Authorization: Bearer $SUPA_KEY" \
+              -H "Accept: application/json" \
+              -H "Prefer: count=none" \
+              "$SUPA_URL/rest/v1/$tabla?select=*${filtro:+&$filtro}" \
+              -o "$DIR/${tabla}.json" || echo "[]" > "$DIR/${tabla}.json"
+            echo "  ✓ $tabla: $(wc -c < "$DIR/${tabla}.json") bytes"
+          }
+
+          echo "Exportando tablas para periodo $PERIODO..."
+          exportar "movimientos"       "periodo=eq.$PERIODO"
+          exportar "tesoreria_mbd"     "periodo=eq.$PERIODO"
+          exportar "rh_registros"      ""
+          exportar "rh_movimiento_links" ""
+          exportar "notas_operativas"  ""
+          exportar "alertas_sistema"   "estado=eq.activa"
+          exportar "empresas"          ""
+
+          # Unir todo en un solo JSON de backup
+          python3 - <<'PYEOF'
+          import json, os, glob
+          directorio = os.environ.get("DIR", ".")
+          periodo    = os.environ.get("PERIODO", "")
+          backup = {"periodo": periodo, "generado_en": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')", "tablas": {}}
+          for f in glob.glob(f"{directorio}/*.json"):
+            tabla = os.path.basename(f).replace(".json", "")
+            if tabla == "backup": continue
+            try:
+              with open(f) as fp:
+                backup["tablas"][tabla] = json.load(fp)
+              os.remove(f)
+            except:
+              backup["tablas"][tabla] = []
+          salida = f"{directorio}/backup_{periodo}.json"
+          with open(salida, "w", encoding="utf-8") as fp:
+            json.dump(backup, fp, ensure_ascii=False, indent=2)
+          print(f"Backup generado: {salida}")
+          PYEOF
+        shell: bash
 
       - name: Verificar backup generado
         run: |
           ARCHIVO="backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}/backup_${{ steps.fecha.outputs.periodo }}.json"
           BYTES=$(wc -c < "$ARCHIVO")
-          echo "Archivo generado: $ARCHIVO ($BYTES bytes)"
-          if [ "$BYTES" -lt 10 ]; then
+          echo "Archivo: $ARCHIVO ($BYTES bytes)"
+          if [ "$BYTES" -lt 50 ]; then
             echo "⚠️ Advertencia: backup vacío o muy pequeño"
+            exit 1
           fi
 
       - name: Commit y push del backup
