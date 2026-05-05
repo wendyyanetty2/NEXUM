@@ -65,7 +65,135 @@
 <script src="../../modules/tributaria/modules/tri-compras.js"></script>
 <script src="../../modules/tributaria/modules/tri-resumen.js"></script>
 <script src="../../modules/tributaria/modules/tri-rh.js"></script>
-<script src="../../modules/tributaria/modules/tri-importar-sunat.js"></script>
+<script src="../../modules/tributaria/modules/tri-importar-sunat.js?v=6&t=20260504"></script>
+<script>
+// fix-import-v5: insert + sesión + panel de error completo
+async function _confirmarImportSUNAT() {
+  const validos = _sunat_preview_data.filter(d => d._ok);
+  if (!validos.length) return;
+  const btn = document.getElementById('btn-confirmar-sunat');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
+
+  // Verificar sesión activa antes de intentar insertar
+  const { data: { session } } = await _supabase.auth.getSession();
+  if (!session) {
+    mostrarToast('Sesión expirada. Recarga la página e inicia sesión nuevamente.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar'; }
+    return;
+  }
+  if (!empresa_activa?.id) {
+    mostrarToast('No hay empresa activa. Vuelve al selector de empresa.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar'; }
+    return;
+  }
+  console.log('[NEXUM-IMPORT] Sesión OK. User:', session.user.id, '| Empresa:', empresa_activa.id);
+
+  let ok = 0, errCount = 0, _dbError = null, _primerRow = null;
+
+  if (_sunat_preview_tipo === 'compras') {
+    const rows = validos.map(r => ({
+      empresa_operadora_id: empresa_activa.id, periodo: r.periodo,
+      fecha_emision: r.fecha, fecha_vencimiento: r.fecha_vencimiento,
+      tipo_documento_codigo: r.tipo_documento_codigo, serie: r.serie, numero: r.numero,
+      ruc_proveedor: r.ruc_proveedor, nombre_proveedor: r.nombre_proveedor,
+      base_imponible: r.base_imponible, igv: r.igv, total: r.total,
+      moneda: r.moneda || 'PEN', tipo_cambio: r.tipo_cambio || 1,
+      codigo_detraccion: r.codigo_detraccion, estado: 'EMITIDO',
+      usuario_id: perfil_usuario?.id || null,
+    }));
+    _primerRow = rows[0];
+    console.log('[NEXUM-IMPORT] empresa_activa.id =', empresa_activa?.id);
+    console.log('[NEXUM-IMPORT] Primer registro a insertar =', JSON.stringify(rows[0]));
+    for (let i = 0; i < rows.length; i += 50) {
+      const chunk = rows.slice(i, i + 50);
+      const { data: ins, error } = await _supabase.from('registro_compras').insert(chunk).select('id');
+      if (!error) { ok += ins?.length ?? 0; }
+      else if (error.code === '23505') {
+        for (const row of chunk) {
+          const { data: r2, error: e2 } = await _supabase.from('registro_compras').insert(row).select('id').maybeSingle();
+          if (!e2) ok++;
+          else if (e2.code !== '23505') { errCount++; if (!_dbError) _dbError = e2; console.error('[compras-row]', e2); }
+        }
+      } else { errCount += chunk.length; if (!_dbError) _dbError = error; console.error('[compras-chunk]', error); }
+    }
+
+  } else if (_sunat_preview_tipo === 'ventas') {
+    const rows = validos.map(r => ({
+      empresa_operadora_id: empresa_activa.id, periodo: r.periodo,
+      fecha_emision: r.fecha, fecha_vencimiento: r.fecha_vencimiento,
+      tipo_documento_codigo: r.tipo_documento_codigo, serie: r.serie, numero: r.numero,
+      ruc_cliente: r.ruc_cliente, nombre_cliente: r.nombre_cliente,
+      base_imponible: r.base_imponible, igv: r.igv, total: r.total,
+      moneda: r.moneda || 'PEN', tipo_cambio: r.tipo_cambio || 1,
+      estado: 'EMITIDO', usuario_id: perfil_usuario?.id || null,
+    }));
+    _primerRow = rows[0];
+    console.log('[NEXUM-IMPORT] empresa_activa.id =', empresa_activa?.id);
+    console.log('[NEXUM-IMPORT] Primer registro ventas =', JSON.stringify(rows[0]));
+    for (let i = 0; i < rows.length; i += 50) {
+      const chunk = rows.slice(i, i + 50);
+      const { data: ins, error } = await _supabase.from('registro_ventas').insert(chunk).select('id');
+      if (!error) { ok += ins?.length ?? 0; }
+      else if (error.code === '23505') {
+        for (const row of chunk) {
+          const { data: r2, error: e2 } = await _supabase.from('registro_ventas').insert(row).select('id').maybeSingle();
+          if (!e2) ok++;
+          else if (e2.code !== '23505') { errCount++; if (!_dbError) _dbError = e2; console.error('[ventas-row]', e2); }
+        }
+      } else { errCount += chunk.length; if (!_dbError) _dbError = error; console.error('[ventas-chunk]', error); }
+    }
+
+  } else if (_sunat_preview_tipo === 'rh') {
+    for (const r of validos) {
+      if (!r.ruc_dni_prestador) { errCount++; continue; }
+      let { data: ps } = await _supabase.from('prestadores_servicios').select('id').eq('dni', r.ruc_dni_prestador).maybeSingle();
+      if (!ps) {
+        const { data: nuevo, error: errPS } = await _supabase.from('prestadores_servicios').insert({ dni: r.ruc_dni_prestador, nombre: r.nombre_prestador || r.ruc_dni_prestador, ruc: r.ruc_dni_prestador.length === 11 ? r.ruc_dni_prestador : null, activo: true }).select().single();
+        if (errPS) { errCount++; continue; }
+        ps = nuevo;
+      }
+      const { error } = await _supabase.from('rh_registros').insert({ empresa_operadora_id: empresa_activa.id, prestador_id: ps.id, periodo: r.periodo, fecha_emision: r.fecha, numero_rh: r.numero_rh, concepto: r.concepto || 'SERVICIO', monto_bruto: r.monto_bruto, tiene_retencion: r.tiene_retencion, porcentaje_retencion: r.porcentaje_retencion, monto_retencion: r.monto_retencion, monto_neto: r.monto_neto, estado: r.estado, observaciones: r.observaciones, usuario_id: perfil_usuario?.id || null });
+      if (error) { errCount++; if (!_dbError) _dbError = error; } else ok++;
+    }
+  }
+
+  document.getElementById('modal-sunat-import')?.remove();
+  const totalValidos = validos.length;
+  const duplicados = totalValidos - ok - errCount;
+  let msg = `✓ ${ok} importados` +
+    (duplicados > 0 ? ` · ${duplicados} ya existían (omitidos)` : '') +
+    (errCount   > 0 ? ` · ${errCount} errores` : '');
+  mostrarToast(msg, errCount > 0 ? 'atencion' : 'exito');
+
+  // Panel de error completo visible en pantalla (no se corta como el toast)
+  if (errCount > 0) {
+    document.getElementById('nexum-import-err-panel')?.remove();
+    const panel = document.createElement('div');
+    panel.id = 'nexum-import-err-panel';
+    panel.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center';
+    const errInfo = _dbError
+      ? `Code:    ${_dbError.code    || '(vacío)'}\nMessage: ${_dbError.message || '(vacío)'}\nDetails: ${_dbError.details || '(vacío)'}\nHint:    ${_dbError.hint    || '(vacío)'}`
+      : '(sin objeto de error — revisar consola)';
+    const rowInfo = _primerRow ? JSON.stringify(_primerRow, null, 2) : '(ninguno capturado)';
+    panel.innerHTML = `<div style="background:#1a202c;padding:24px 28px;border-radius:12px;font-family:monospace;font-size:12px;max-width:660px;width:92vw;max-height:88vh;overflow:auto;white-space:pre-wrap;line-height:1.6;color:#fc8181">
+<span style="color:#fff;font-size:15px;font-weight:bold">❌ Error al importar — ${errCount} de ${totalValidos} filas fallaron</span>
+
+<span style="color:#f6e05e">━━━ Error de base de datos ━━━</span>
+${errInfo}
+
+<span style="color:#68d391">━━━ Primer registro enviado a la BD ━━━</span>
+${rowInfo}
+
+<span style="color:#a0aec0;font-size:11px">Toca o haz clic en cualquier lugar para cerrar este panel.</span></div>`;
+    panel.onclick = () => panel.remove();
+    document.body.appendChild(panel);
+  }
+
+  if (_sunat_preview_tipo === 'compras' && typeof cargarCompras === 'function') await cargarCompras();
+  if (_sunat_preview_tipo === 'ventas'  && typeof cargarVentas  === 'function') await cargarVentas();
+  if (_sunat_preview_tipo === 'rh'      && typeof cargarRH      === 'function') await cargarRH();
+}
+</script>
 
 <script>
 let perfil_usuario = null;

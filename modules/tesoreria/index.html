@@ -62,11 +62,199 @@
 .tab-btn.activo { color:var(--color-secundario); border-bottom-color:var(--color-secundario); }
 </style>
 
-<script src="../../modules/tesoreria/modules/tes-cuentas.js"></script>
-<script src="../../modules/tesoreria/modules/tes-movimientos.js"></script>
-<script src="../../modules/tesoreria/modules/tes-importar.js"></script>
-<script src="../../modules/tesoreria/modules/tes-importar-mbd.js"></script>
-<script src="../../modules/tesoreria/modules/tes-importar-sunat.js"></script>
+<script src="../../modules/tesoreria/modules/tes-cuentas.js?v=2&t=20260504"></script>
+<script src="../../modules/tesoreria/modules/tes-movimientos.js?v=1&t=20260504"></script>
+<script src="../../modules/tesoreria/modules/tes-importar.js?v=1&t=20260504"></script>
+<script src="../../modules/tesoreria/modules/tes-importar-mbd.js?v=1&t=20260504"></script>
+<script src="../../modules/tesoreria/modules/tes-importar-sunat.js?v=2&t=20260504"></script>
+
+<script>
+// fix-tes-cuentas-v1: eliminarCuenta con manejo de FK y opciones para el usuario
+async function eliminarCuenta(id, nombre) {
+  const { count } = await _supabase
+    .from('movimientos')
+    .select('id', { count: 'exact', head: true })
+    .eq('cuenta_bancaria_id', id);
+
+  if (count > 0) {
+    const opcion = await _preguntarEliminarCuentaConMov(nombre, count);
+    if (!opcion) return;
+
+    if (opcion === 'desactivar') {
+      const { error } = await _supabase.from('cuentas_bancarias').update({ activo: false }).eq('id', id);
+      if (error) { mostrarToast('Error al desactivar: ' + error.message, 'error'); return; }
+      mostrarToast(`Cuenta "${nombre}" desactivada`, 'exito');
+      await cargarCuentas();
+      return;
+    }
+
+    if (opcion === 'eliminar-todo') {
+      if (!await confirmar(`⚠️ Última confirmación: ¿eliminar la cuenta "${nombre}" y sus ${count} movimiento${count !== 1 ? 's' : ''}? Esta acción no se puede deshacer.`)) return;
+      const { error: errMov } = await _supabase.from('movimientos').delete().eq('cuenta_bancaria_id', id);
+      if (errMov) { mostrarToast('Error al eliminar movimientos: ' + errMov.message, 'error'); return; }
+    }
+  } else {
+    if (!await confirmar(`¿Eliminar la cuenta "${nombre}"?`)) return;
+  }
+
+  const { error } = await _supabase.from('cuentas_bancarias').delete().eq('id', id);
+  if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
+  mostrarToast(`Cuenta "${nombre}" eliminada`, 'exito');
+  await cargarCuentas();
+}
+
+function _preguntarEliminarCuentaConMov(nombre, count) {
+  return new Promise(resolve => {
+    document.getElementById('modal-elim-cuenta')?.remove();
+    const m = document.createElement('div');
+    m.className = 'modal-overlay';
+    m.id = 'modal-elim-cuenta';
+    m.style.display = 'flex';
+    m.innerHTML = `<div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <h3>🗑️ Eliminar cuenta bancaria</h3>
+        <button class="modal-cerrar" onclick="_respElimCuenta(null)">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>La cuenta <strong>${escapar(nombre)}</strong> tiene <strong>${count} movimiento${count !== 1 ? 's' : ''}</strong> registrado${count !== 1 ? 's' : ''}.</p>
+        <p style="margin-top:10px;color:var(--color-texto-suave);font-size:13px">No se puede eliminar directamente mientras tenga movimientos. ¿Qué deseas hacer?</p>
+      </div>
+      <div class="modal-footer" style="flex-direction:column;gap:8px;align-items:stretch">
+        <button class="btn btn-secundario" onclick="_respElimCuenta('desactivar')">🔕 Desactivar cuenta (conservar movimientos)</button>
+        <button class="btn" style="background:var(--color-critico,#C53030);color:#fff" onclick="_respElimCuenta('eliminar-todo')">🗑️ Eliminar cuenta y sus ${count} movimiento${count !== 1 ? 's' : ''}</button>
+        <button class="btn btn-secundario" onclick="_respElimCuenta(null)">Cancelar</button>
+      </div>
+    </div>`;
+    document.body.appendChild(m);
+    window._resolverElimCuenta = resolve;
+  });
+}
+
+function _respElimCuenta(resultado) {
+  document.getElementById('modal-elim-cuenta')?.remove();
+  if (window._resolverElimCuenta) { window._resolverElimCuenta(resultado); delete window._resolverElimCuenta; }
+}
+</script>
+
+<script>
+// fix-tes-import-v1: reemplaza _sunatConfirmarImportacion para usar insert (no upsert)
+// Soluciona "there is no unique or exclusion constraint matching the ON CONFLICT specification"
+async function _sunatConfirmarImportacion() {
+  const validos = sunat_preview_datos.filter(f => f._ok);
+  if (!validos.length) return;
+
+  const btn = document.getElementById('sunat-btn-confirmar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
+  document.getElementById('sunat-progreso').style.display = 'block';
+
+  const tipo = sunat_tipo_actual;
+  const esCompras = tipo === 'COMPRAS';
+  const tabla = esCompras ? 'registro_compras' : 'registro_ventas';
+
+  const nombreArchivo = document.getElementById('sunat-file-input')?.files[0]?.name || 'sunat.xlsx';
+  const { data: lote, error: errLote } = await _supabase
+    .from('lotes_importacion').insert({
+      empresa_operadora_id: empresa_activa.id,
+      nombre_archivo: nombreArchivo,
+      tipo_fuente: esCompras ? 'SUNAT_COMPRAS' : 'SUNAT_VENTAS',
+      total_registros: validos.length,
+      estado: 'PROCESANDO',
+      usuario_id: perfil_usuario?.id || null,
+    }).select().single();
+
+  if (errLote) {
+    mostrarToast('Error al crear lote: ' + errLote.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar importación'; }
+    document.getElementById('sunat-progreso').style.display = 'none';
+    return;
+  }
+
+  const filas = validos.map(f => esCompras ? {
+    empresa_operadora_id:  empresa_activa.id,
+    lote_importacion_id:   lote.id,
+    periodo: f.periodo, fecha_emision: f.fecha,
+    tipo_documento_codigo: f.tipo_documento_codigo,
+    serie: f.serie, numero: f.numero, ruc_proveedor: f.ruc,
+    nombre_proveedor: f.nombre, base_imponible: f.base_imponible || 0,
+    igv: f.igv || 0, total: f.importe, moneda: f.moneda,
+    tipo_cambio: f.tipo_cambio || 1, estado: 'EMITIDO', usuario_id: perfil_usuario?.id || null,
+  } : {
+    empresa_operadora_id:  empresa_activa.id,
+    lote_importacion_id:   lote.id,
+    periodo: f.periodo, fecha_emision: f.fecha,
+    tipo_documento_codigo: f.tipo_documento_codigo,
+    serie: f.serie, numero: f.numero, ruc_cliente: f.ruc,
+    nombre_cliente: f.nombre, base_imponible: f.base_imponible || 0,
+    igv: f.igv || 0, total: f.importe, moneda: f.moneda,
+    tipo_cambio: f.tipo_cambio || 1, estado: 'EMITIDO', usuario_id: perfil_usuario?.id || null,
+  });
+
+  let ok = 0, duplicados = 0, errCount = 0, _dbError = null;
+  const CHUNK = 50;
+  const progText  = document.getElementById('sunat-progreso-texto');
+  const progBarra = document.getElementById('sunat-progreso-barra');
+
+  for (let i = 0; i < filas.length; i += CHUNK) {
+    const chunk = filas.slice(i, i + CHUNK);
+    const procesados = Math.min(i + CHUNK, filas.length);
+    if (progText)  progText.textContent  = `Importando ${procesados} de ${filas.length}…`;
+    if (progBarra) progBarra.style.width = `${Math.round(procesados / filas.length * 100)}%`;
+
+    const { data: insertados, error } = await _supabase.from(tabla).insert(chunk).select('id');
+    if (!error) {
+      ok += insertados?.length ?? 0;
+    } else if (error.code === '23505') {
+      for (const row of chunk) {
+        const { data: r2, error: e2 } = await _supabase.from(tabla).insert(row).select('id').maybeSingle();
+        if (!e2) ok++;
+        else if (e2.code === '23505') duplicados++;
+        else { errCount++; if (!_dbError) _dbError = e2; console.error('[tes-import]', e2); }
+      }
+    } else {
+      errCount += chunk.length;
+      if (!_dbError) _dbError = error;
+      console.error('[tes-import-chunk]', error);
+    }
+  }
+
+  await _supabase.from('lotes_importacion').update({
+    estado: errCount === 0 ? 'COMPLETADO' : 'ERROR',
+    registros_ok: ok, registros_error: errCount,
+  }).eq('id', lote.id);
+
+  if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar importación'; }
+  document.getElementById('sunat-progreso').style.display = 'none';
+
+  let resMsg = `✓ ${ok} importados`;
+  if (duplicados > 0) resMsg += ` · ${duplicados} ya existían (omitidos)`;
+  if (errCount   > 0) resMsg += ` · ${errCount} errores`;
+  if (_dbError)       resMsg += `: ${_dbError.message}`;
+  mostrarToast(resMsg, errCount > 0 ? 'error' : (duplicados > 0 ? 'atencion' : 'exito'));
+
+  // Panel visible con el error completo si hay fallos
+  if (errCount > 0 && _dbError) {
+    document.getElementById('nexum-tes-err-panel')?.remove();
+    const panel = document.createElement('div');
+    panel.id = 'nexum-tes-err-panel';
+    panel.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center';
+    panel.innerHTML = `<div style="background:#1a202c;padding:24px 28px;border-radius:12px;font-family:monospace;font-size:12px;max-width:580px;width:90vw;max-height:80vh;overflow:auto;white-space:pre-wrap;line-height:1.6;color:#fc8181">
+<span style="color:#fff;font-size:15px;font-weight:bold">❌ Error Tesorería SUNAT — ${errCount} filas fallaron</span>
+
+Code:    ${_dbError.code    || '—'}
+Message: ${_dbError.message || '—'}
+Details: ${_dbError.details || '—'}
+Hint:    ${_dbError.hint    || '—'}
+
+<span style="color:#a0aec0;font-size:11px">Clic para cerrar</span></div>`;
+    panel.onclick = () => panel.remove();
+    document.body.appendChild(panel);
+  }
+
+  // Cancelar preview y recargar historial
+  if (typeof _sunatCancelarPreview === 'function') _sunatCancelarPreview();
+  if (typeof _sunatCargarHistorial === 'function') await _sunatCargarHistorial();
+}
+</script>
 
 <script>
 let perfil_usuario = null;

@@ -1,9 +1,11 @@
 /**
  * NEXUM v3.0 — Service Worker (PWA)
- * Cachea recursos estáticos para uso offline básico
+ * v3.9.0 — HTML de módulos siempre desde red, JS versionado
  */
 
-const CACHE_VERSION = 'nexum-v3.3.0';
+const CACHE_VERSION = 'nexum-v3.9.0';
+
+// Solo cachear recursos que NO cambian frecuentemente (sin HTML de módulos)
 const RECURSOS_ESTATICOS = [
   '/',
   '/login.html',
@@ -19,47 +21,16 @@ const RECURSOS_ESTATICOS = [
   '/js/tema.js',
   '/js/layout.js',
   '/manifest.json',
-  // Módulos
-  '/modules/admin/index.html',
-  '/modules/admin/modules/admin-empresas.js',
-  '/modules/admin/modules/admin-usuarios.js',
-  '/modules/admin/modules/admin-asignaciones.js',
-  '/modules/admin/modules/admin-catalogos.js',
-  '/modules/catalogos/index.html',
-  '/modules/catalogos/modules/cat-clientes.js',
-  '/modules/catalogos/modules/cat-conceptos.js',
-  '/modules/catalogos/modules/cat-autorizaciones.js',
-  '/modules/catalogos/modules/cat-proyectos.js',
-  '/modules/catalogos/modules/cat-mediospago.js',
-  '/modules/catalogos/modules/cat-trabajadores.js',
-  '/modules/tesoreria/index.html',
-  '/modules/tesoreria/modules/tes-cuentas.js',
-  '/modules/tesoreria/modules/tes-movimientos.js',
-  '/modules/tesoreria/modules/tes-importar.js',
-  '/modules/tesoreria/modules/tes-importar-mbd.js',
-  '/modules/conciliacion/index.html',
-  '/modules/conciliacion/modules/con-conciliar.js',
-  '/modules/conciliacion/modules/con-historial.js',
-  '/modules/planilla/index.html',
-  '/modules/planilla/modules/pla-periodos.js',
-  '/modules/planilla/modules/pla-detalle.js',
-  '/modules/tributaria/index.html',
-  '/modules/tributaria/modules/tri-ventas.js',
-  '/modules/tributaria/modules/tri-compras.js',
-  '/modules/tributaria/modules/tri-resumen.js',
-  '/modules/ocr/index.html',
-  '/modules/reportes/index.html',
-  '/modules/contabilidad/index.html',
-  '/modules/contabilidad/modules/con-plan-cuentas.js',
-  '/modules/contabilidad/modules/con-asientos.js',
-  '/modules/contabilidad/modules/con-mayor.js',
-  '/modules/contabilidad/modules/con-estados.js',
 ];
 
-// Instalación: pre-cachear recursos estáticos
+// Instalación: pre-cachear solo recursos base (bypass HTTP cache)
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then(cache => cache.addAll(RECURSOS_ESTATICOS))
+    caches.open(CACHE_VERSION).then(cache =>
+      Promise.all(RECURSOS_ESTATICOS.map(url =>
+        cache.add(new Request(url, { cache: 'reload' }))
+      ))
+    )
   );
   self.skipWaiting();
 });
@@ -74,17 +45,25 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch: network-first para API, cache-first para estáticos
+// Fetch: network-first para todo
 self.addEventListener('fetch', event => {
   const url = event.request.url;
 
-  // Siempre ir a red para las llamadas a Supabase
+  // Siempre ir a red para Supabase
   if (url.includes('supabase.co')) return;
+
+  // Los archivos HTML de módulos SIEMPRE van a la red (nunca desde caché)
+  if (url.includes('/modules/') && url.includes('.html')) return;
+
+  // JS con parámetros de versión van siempre a la red
+  if (url.includes('?v=') || url.includes('?t=')) return;
 
   event.respondWith(
     fetch(event.request)
       .then(resp => {
-        if (resp && resp.status === 200 && event.request.method === 'GET') {
+        // No cachear respuestas HTML (siempre deben estar frescas)
+        const isHtml = resp.headers.get('content-type')?.includes('text/html');
+        if (resp && resp.status === 200 && event.request.method === 'GET' && !isHtml) {
           const copia = resp.clone();
           caches.open(CACHE_VERSION).then(cache => cache.put(event.request, copia));
         }
