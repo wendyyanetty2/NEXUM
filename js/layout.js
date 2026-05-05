@@ -36,6 +36,11 @@ async function inicializarModulo(moduloActual) {
   _renderHeader(perfil, empresa, misEmpresas);
   _renderModalPassword();
 
+  // Inicializar sistema de notas si está disponible
+  if (window.NEXUM_NOTAS) {
+    window.NEXUM_NOTAS.init(empresa.id, perfil.id);
+  }
+
   return { perfil, empresa };
 }
 

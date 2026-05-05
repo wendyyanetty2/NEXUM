@@ -1,5 +1,7 @@
 /* ============================================================
-   NEXUM — Contabilidad: RH Recibidas (al nombre de la empresa)
+   NEXUM — Contabilidad: RH Recibidas
+   Incluye: estados calculados (APLICADO/PARCIAL/POSIBLE/PENDIENTE)
+            matching automático RH ↔ Movimientos
    ============================================================ */
 
 function renderTabRHRecibidas(area) {
@@ -23,19 +25,32 @@ function renderTabRHRecibidas(area) {
           </select>
           <select id="rhr-estado" style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
             <option value="">Todos los estados</option>
+            <option value="APLICADO">Aplicado</option>
+            <option value="PARCIAL">Parcial</option>
+            <option value="POSIBLE">Posible match</option>
             <option value="PENDIENTE">Pendiente</option>
-            <option value="PAGADO">Pagado</option>
             <option value="CANCELADO">Cancelado</option>
           </select>
           <button onclick="cargarRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="rhConciliarAutomatico()" id="btn-rhr-auto" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">⚡ Conciliar automáticamente</button>
           <button onclick="exportarExcelRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar Excel</button>
           <button onclick="document.getElementById('rhr-file-input').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📂 Importar Excel</button>
           <input type="file" id="rhr-file-input" accept=".xlsx,.xls" style="display:none" onchange="procesarImportRHR(this)">
           <button onclick="abrirModalRHR()" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">+ Nuevo RH</button>
         </div>
       </div>
+
+      <!-- Leyenda de estados -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:11px">
+        <span style="padding:2px 8px;border-radius:10px;background:#2F855A;color:#fff">✅ APLICADO</span>
+        <span style="padding:2px 8px;border-radius:10px;background:#DD6B20;color:#fff">🔶 PARCIAL</span>
+        <span style="padding:2px 8px;border-radius:10px;background:#D69E2E;color:#fff">⚠️ POSIBLE</span>
+        <span style="padding:2px 8px;border-radius:10px;background:#C53030;color:#fff">🔴 PENDIENTE</span>
+        <span style="color:var(--color-texto-suave);font-style:italic">— Ventana de búsqueda: ±9 meses</span>
+      </div>
+
       <div id="rhr-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
       <div id="rhr-tabla-wrap" style="overflow-x:auto;">
         <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
@@ -46,10 +61,42 @@ function renderTabRHRecibidas(area) {
   cargarRHRecibidas();
 }
 
+// ── Estado calculado desde rh_movimiento_links ────────────────────
+async function _estadoCalculado(rh) {
+  const { data: links } = await _supabase
+    .from('rh_movimiento_links')
+    .select('id, nivel_confianza, es_parcial, monto_parcial, confirmado_en, movimiento_id, movimientos(fecha, importe, descripcion, numero_operacion)')
+    .eq('rh_id', rh.id);
+
+  if (!links?.length) {
+    return { estado: 'PENDIENTE', color: '#C53030', etiqueta: '🔴 PENDIENTE', links: [] };
+  }
+
+  const confirmados = links.filter(l => l.confirmado_en);
+  const posibles    = links.filter(l => !l.confirmado_en);
+
+  if (!confirmados.length && posibles.length) {
+    return { estado: 'POSIBLE', color: '#D69E2E', etiqueta: '⚠️ POSIBLE', links, posibles };
+  }
+
+  const montoPagado = confirmados.reduce((s, l) => {
+    return s + parseFloat(l.monto_parcial ?? l.movimientos?.importe ?? 0);
+  }, 0);
+  const montoRH = parseFloat(rh.monto_bruto || 0);
+
+  if (Math.abs(montoPagado - montoRH) < 0.01) {
+    return { estado: 'APLICADO', color: '#2F855A', etiqueta: '✅ APLICADO', links, confirmados };
+  }
+  if (montoPagado > 0 && montoPagado < montoRH) {
+    return { estado: 'PARCIAL', color: '#DD6B20', etiqueta: `🔶 PARCIAL (${formatearMoneda(montoPagado)})`, links, confirmados, montoPagado };
+  }
+  return { estado: 'PENDIENTE', color: '#C53030', etiqueta: '🔴 PENDIENTE', links: [] };
+}
+
 async function cargarRHRecibidas() {
   const mes    = document.getElementById('rhr-mes')?.value;
   const anio   = document.getElementById('rhr-anio')?.value;
-  const estado = document.getElementById('rhr-estado')?.value;
+  const filtroEstado = document.getElementById('rhr-estado')?.value;
   const wrap   = document.getElementById('rhr-tabla-wrap');
   if (!wrap) return;
   wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>';
@@ -57,24 +104,35 @@ async function cargarRHRecibidas() {
   const desde = `${anio}-${mes}-01`;
   const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
-  let q = _supabase.from('rh_registros')
+  const { data, error } = await _supabase.from('rh_registros')
     .select('*, prestadores_servicios(nombre, dni)')
     .eq('empresa_operadora_id', empresa_activa.id)
     .gte('fecha_emision', desde).lte('fecha_emision', hasta)
     .order('fecha_emision', { ascending: false });
 
-  if (estado === 'PENDIENTE')  q = q.eq('conciliado', false).eq('estado', 'EMITIDO');
-  else if (estado === 'PAGADO')    q = q.eq('conciliado', true);
-  else if (estado === 'CANCELADO') q = q.eq('estado', 'ANULADO');
-
-  const { data, error } = await q;
   if (error) { wrap.innerHTML = `<p class="error-texto">Error: ${escapar(error.message)}</p>`; return; }
 
+  // Calcular estados para todos los RH en paralelo
   const filas = data || [];
-  const totalBruto = filas.reduce((s,r) => s + Number(r.monto_bruto||0), 0);
-  const totalRet   = filas.reduce((s,r) => s + Number(r.monto_retencion||0), 0);
-  const totalNeto  = filas.reduce((s,r) => s + Number(r.monto_neto||0), 0);
-  const pendientes = filas.filter(r => !r.conciliado && r.estado === 'EMITIDO').length;
+  const estadosMap = {};
+  await Promise.all(filas.map(async r => {
+    if (r.estado === 'ANULADO') {
+      estadosMap[r.id] = { estado: 'CANCELADO', color: '#4A5568', etiqueta: 'CANCELADO', links: [] };
+    } else {
+      estadosMap[r.id] = await _estadoCalculado(r);
+    }
+  }));
+
+  // Filtrar por estado si aplica
+  const filasFiltradas = filtroEstado
+    ? filas.filter(r => estadosMap[r.id]?.estado === filtroEstado)
+    : filas;
+
+  const totalBruto  = filasFiltradas.reduce((s,r) => s + Number(r.monto_bruto||0), 0);
+  const totalRet    = filasFiltradas.reduce((s,r) => s + Number(r.monto_retencion||0), 0);
+  const totalNeto   = filasFiltradas.reduce((s,r) => s + Number(r.monto_neto||0), 0);
+  const pendientes  = filasFiltradas.filter(r => estadosMap[r.id]?.estado === 'PENDIENTE').length;
+  const posibles    = filasFiltradas.filter(r => estadosMap[r.id]?.estado === 'POSIBLE').length;
 
   const resumen = document.getElementById('rhr-resumen');
   if (resumen) resumen.innerHTML = `
@@ -94,13 +152,16 @@ async function cargarRHRecibidas() {
       <div style="font-size:11px;opacity:.8">PENDIENTES</div>
       <div style="font-size:18px;font-weight:700">${pendientes}</div>
     </div>
+    ${posibles>0?`<div style="background:#D69E2E;color:#fff;padding:12px 16px;border-radius:8px;min-width:120px">
+      <div style="font-size:11px;opacity:.8">POSIBLES MATCH</div>
+      <div style="font-size:18px;font-weight:700">${posibles}</div>
+    </div>`:''}
   `;
 
-  if (!filas.length) {
-    wrap.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin RH recibidas en este período.</p>';
+  if (!filasFiltradas.length) {
+    wrap.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin RH en este período.</p>';
     return;
   }
-   
 
   wrap.innerHTML = `
     <table class="tabla-nexum">
@@ -113,12 +174,13 @@ async function cargarRHRecibidas() {
         <th>Estado</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filas.map(r => {
-          const estPago  = r.estado === 'ANULADO' ? 'CANCELADO' : r.conciliado ? 'PAGADO' : 'PENDIENTE';
-          const estColor = estPago==='PAGADO'?'#2F855A':estPago==='CANCELADO'?'#4A5568':'#D69E2E';
-          const mon      = r.moneda === 'USD' ? 'USD' : 'PEN';
-          const nombre   = r.prestadores_servicios?.nombre || r.nombre_emisor || '—';
-          const docNum   = r.prestadores_servicios?.dni    || r.nro_doc_emisor || '—';
+        ${filasFiltradas.map(r => {
+          const estInfo = estadosMap[r.id];
+          const mon     = r.moneda === 'USD' ? 'USD' : 'PEN';
+          const nombre  = r.prestadores_servicios?.nombre || r.nombre_emisor || '—';
+          const docNum  = r.prestadores_servicios?.dni    || r.nro_doc_emisor || '—';
+          const tienePosible = estInfo?.posibles?.length > 0;
+          const tieneLinks   = estInfo?.links?.length > 0;
           return `
           <tr>
             <td style="white-space:nowrap">${formatearFecha(r.fecha_emision)}</td>
@@ -130,17 +192,237 @@ async function cargarRHRecibidas() {
             <td style="text-align:right">${formatearMoneda(r.monto_bruto, mon)}</td>
             <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.monto_retencion, mon)}</td>
             <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.monto_neto, mon)}</td>
-            <td><span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${estColor};color:#fff">${estPago}</span></td>
+            <td>
+              <span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${estInfo.color};color:#fff;white-space:nowrap">${estInfo.etiqueta}</span>
+            </td>
             <td style="text-align:center;white-space:nowrap">
+              ${tienePosible ? `<button onclick="rhConfirmarPosible('${r.id}')" title="Confirmar match posible" style="padding:4px 8px;background:rgba(214,158,46,.2);color:#D69E2E;border:1px solid #D69E2E;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">✓</button>` : ''}
+              ${tieneLinks ? `<button onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Ver movimientos vinculados" style="padding:4px 8px;background:rgba(44,82,130,.1);color:#3182CE;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">🔗</button>` : ''}
+              <button onclick="rhVincularManual('${r.id}','${escapar(nombre)}')" title="Vincular manualmente" style="padding:4px 8px;background:rgba(44,82,130,.05);color:var(--color-texto-suave);border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">🔍</button>
               <button onclick="abrirModalRHR('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
               <button onclick="eliminarRHR('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
             </td>
-          </tr>`; }).join('')}
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>
   `;
 }
 
+// ── Conciliación automática ───────────────────────────────────────
+async function rhConciliarAutomatico() {
+  const mes  = document.getElementById('rhr-mes')?.value;
+  const anio = document.getElementById('rhr-anio')?.value;
+  const btn  = document.getElementById('btn-rhr-auto');
+  if (!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Conciliando…';
+
+  try {
+    const resultado = await ejecutarMatchingAutomatico(
+      empresa_activa.id, Number(mes), Number(anio), perfil_usuario?.id
+    );
+    mostrarToast(
+      `✅ Conciliación completa: ${resultado.ok} aplicados, ${resultado.posibles} posibles, ${resultado.sinMatch} sin match (de ${resultado.total} RH)`,
+      resultado.ok > 0 ? 'exito' : 'atencion',
+      6000
+    );
+    cargarRHRecibidas();
+  } catch (e) {
+    mostrarToast('Error en la conciliación: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Conciliar automáticamente';
+  }
+}
+
+// ── Ver links de un RH ────────────────────────────────────────────
+async function rhVerLinks(rhId, nombre) {
+  const { data: links } = await _supabase
+    .from('rh_movimiento_links')
+    .select('*, movimientos(fecha, importe, descripcion, numero_operacion, naturaleza)')
+    .eq('rh_id', rhId);
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:640px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>🔗 Movimientos vinculados — ${escapar(nombre)}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          ${!links?.length ? '<p style="color:var(--color-texto-suave)">Sin movimientos vinculados.</p>' : `
+          <table class="tabla-nexum" style="font-size:13px">
+            <thead><tr>
+              <th>Fecha mov.</th><th>N° Op.</th><th>Descripción</th>
+              <th style="text-align:right">Monto</th><th>Confianza</th><th>Estado</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${(links||[]).map(l => {
+                const mov = l.movimientos;
+                const conf = l.nivel_confianza === 'alto' ? '🟢 Alta' : l.nivel_confianza === 'medio' ? '🟡 Media' : '🔸 Posible';
+                const confirmado = l.confirmado_en ? '✅ Confirmado' : '⚠️ Sin confirmar';
+                return `<tr>
+                  <td>${formatearFecha(mov?.fecha)}</td>
+                  <td style="font-size:11px">${escapar(mov?.numero_operacion||'—')}</td>
+                  <td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${escapar(truncar(mov?.descripcion||'—',35))}</td>
+                  <td style="text-align:right;font-weight:600">${formatearMoneda(l.monto_parcial ?? mov?.importe)}</td>
+                  <td style="font-size:11px">${conf}</td>
+                  <td style="font-size:11px">${confirmado}</td>
+                  <td>
+                    ${!l.confirmado_en ? `<button onclick="rhConfirmarLink('${rhId}','${l.movimiento_id}')" style="padding:3px 8px;background:#2F855A;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">✓ Confirmar</button>` : ''}
+                    <button onclick="rhEliminarLink('${rhId}','${l.movimiento_id}')" style="padding:3px 8px;background:rgba(197,48,48,.15);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px;margin-left:4px">✕</button>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>`}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Confirmar posibles matches de un RH ──────────────────────────
+async function rhConfirmarPosible(rhId) {
+  const { data: links } = await _supabase
+    .from('rh_movimiento_links')
+    .select('*, movimientos(fecha, importe, descripcion)')
+    .eq('rh_id', rhId)
+    .is('confirmado_en', null);
+
+  if (!links?.length) { mostrarToast('No hay matches posibles para confirmar.', 'atencion'); return; }
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:580px;width:95%">
+        <div class="modal-header">
+          <h3>⚠️ Confirmar match posible</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin-bottom:12px;font-size:13px;color:var(--color-texto-suave)">Los siguientes movimientos coinciden por monto. Confirma si corresponden a este RH:</p>
+          ${links.map(l => `
+            <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-weight:600">${formatearFecha(l.movimientos?.fecha)} — ${formatearMoneda(l.monto_parcial ?? l.movimientos?.importe)}</div>
+                <div style="font-size:12px;color:var(--color-texto-suave)">${escapar(truncar(l.movimientos?.descripcion||'—',50))}</div>
+              </div>
+              <button onclick="rhConfirmarLink('${rhId}','${l.movimiento_id}',true)" style="padding:6px 14px;background:#2F855A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">✓ Sí, confirmar</button>
+            </div>`).join('')}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function rhConfirmarLink(rhId, movId, recargar = false) {
+  const ok = await confirmarLinkRH(rhId, movId, perfil_usuario?.id);
+  if (ok) {
+    mostrarToast('Vinculación confirmada.', 'exito');
+    if (recargar) { document.querySelector('.modal-overlay')?.remove(); cargarRHRecibidas(); }
+    else cargarRHRecibidas();
+  } else {
+    mostrarToast('Error al confirmar vinculación.', 'error');
+  }
+}
+
+async function rhEliminarLink(rhId, movId) {
+  const ok = await confirmar('¿Eliminar esta vinculación?', { btnOk: 'Eliminar', btnColor: '#C53030' });
+  if (!ok) return;
+  const eliminado = await eliminarLinkRH(rhId, movId);
+  if (eliminado) {
+    mostrarToast('Vinculación eliminada.', 'exito');
+    document.querySelector('.modal-overlay')?.remove();
+    cargarRHRecibidas();
+  } else {
+    mostrarToast('Error al eliminar vinculación.', 'error');
+  }
+}
+
+// ── Búsqueda manual de movimientos para vincular ─────────────────
+async function rhVincularManual(rhId, nombre) {
+  const { data: rh } = await _supabase
+    .from('rh_registros')
+    .select('*, prestadores_servicios(nombre, dni)')
+    .eq('id', rhId).single();
+
+  if (!rh) return;
+  const mes  = document.getElementById('rhr-mes')?.value;
+  const anio = document.getElementById('rhr-anio')?.value;
+
+  const movs = await _cargarMovimientosVentana(empresa_activa.id, Number(mes), Number(anio));
+  const matches = [];
+  for (const mov of movs) {
+    const n = _nivelMatch(rh, mov);
+    if (n > 0) matches.push({ mov, nivel: n });
+    else if (Math.abs(parseFloat(mov.importe) - parseFloat(rh.monto_bruto)) < 1.00) {
+      matches.push({ mov, nivel: 99 });
+    }
+  }
+  matches.sort((a,b) => a.nivel - b.nivel);
+  const lista = matches.length ? matches : movs.slice(0,20).map(m => ({ mov: m, nivel: 99 }));
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:700px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>🔍 Vincular manualmente — ${escapar(nombre)}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin-bottom:8px;font-size:12px;color:var(--color-texto-suave)">RH por conciliar: <strong>${formatearMoneda(rh.monto_bruto)}</strong> | Emisor: ${escapar(nombre)}</p>
+          <div style="overflow-x:auto">
+          <table class="tabla-nexum" style="font-size:12px">
+            <thead><tr><th>Fecha</th><th>N° Op.</th><th>Descripción</th><th style="text-align:right">Monto</th><th>Match</th><th></th></tr></thead>
+            <tbody>
+              ${lista.map(({mov, nivel}) => {
+                const matchLabel = nivel === 1 ? '🟢 DNI+Monto' : nivel === 2 ? '🟢 Nombre+Monto' : nivel === 3 ? '🟡 Monto+Keyword' : nivel === 4 ? '🟡 Monto' : '⚪ Manual';
+                return `<tr>
+                  <td>${formatearFecha(mov.fecha)}</td>
+                  <td style="font-size:11px">${escapar(mov.numero_operacion||'—')}</td>
+                  <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${escapar(truncar(mov.descripcion||'—',40))}</td>
+                  <td style="text-align:right;font-weight:600">${formatearMoneda(mov.importe)}</td>
+                  <td style="font-size:11px">${matchLabel}</td>
+                  <td><button onclick="rhVincularConfirmar('${rhId}','${mov.id}','${nivel <= 2 ? 'alto' : nivel <= 4 ? 'medio' : 'posible'}')" style="padding:4px 10px;background:var(--color-secundario);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">Vincular</button></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function rhVincularConfirmar(rhId, movId, confianza) {
+  const { error } = await _supabase.from('rh_movimiento_links').upsert({
+    empresa_id:      empresa_activa.id,
+    rh_id:           rhId,
+    movimiento_id:   movId,
+    nivel_confianza: confianza,
+    confirmado_por:  perfil_usuario?.id,
+    confirmado_en:   new Date().toISOString(),
+  }, { onConflict: 'rh_id,movimiento_id' });
+
+  if (error) { mostrarToast('Error al vincular: ' + error.message, 'error'); return; }
+  mostrarToast('Movimiento vinculado correctamente.', 'exito');
+  document.querySelector('.modal-overlay')?.remove();
+  cargarRHRecibidas();
+}
+
+// ── Modal nuevo/editar RH ─────────────────────────────────────────
 async function abrirModalRHR(id = null) {
   let item = null;
   if (id) {
@@ -180,12 +462,11 @@ async function abrirModalRHR(id = null) {
                 <option value="PEN" ${monedaVal==='PEN'?'selected':''}>Soles (PEN)</option>
                 <option value="USD" ${monedaVal==='USD'?'selected':''}>Dólares (USD)</option>
               </select></div>
-            <div class="campo"><label>Estado</label>
-              <select id="rhr-estado" ${item?.conciliado?'disabled':''}>
+            <div class="campo"><label>Estado doc.</label>
+              <select id="rhr-estado-doc">
                 <option value="EMITIDO" ${(item?.estado||'EMITIDO')==='EMITIDO'?'selected':''}>Emitido</option>
                 <option value="ANULADO" ${item?.estado==='ANULADO'?'selected':''}>Anulado</option>
-              </select>
-              ${item?.conciliado?'<small style="color:#2F855A">✓ Pagado vía conciliación</small>':''}</div>
+              </select></div>
             <div class="campo"><label>Renta Bruta <span class="req">*</span></label>
               <input type="number" id="rhr-bruta" step="0.01" value="${item?.monto_bruto||''}" onchange="calcRHR()"></div>
             <div class="campo"><label>Retención</label>
@@ -223,13 +504,13 @@ async function guardarRHR(id) {
   const alerta = document.getElementById('rhr-alerta');
   alerta.classList.remove('visible');
 
-  const fecha   = document.getElementById('rhr-fecha').value;
-  const nroRH   = document.getElementById('rhr-nro').value.trim();
-  let nroDoc    = document.getElementById('rhr-nro-doc').value.trim();
-  const nombre  = document.getElementById('rhr-nombre').value.trim();
+  const fecha    = document.getElementById('rhr-fecha').value;
+  const nroRH    = document.getElementById('rhr-nro').value.trim();
+  let nroDoc     = document.getElementById('rhr-nro-doc').value.trim();
+  const nombre   = document.getElementById('rhr-nombre').value.trim();
   const concepto = document.getElementById('rhr-desc').value.trim();
-  const bruta   = parseFloat(document.getElementById('rhr-bruta').value);
-  const neta    = parseFloat(document.getElementById('rhr-neta').value);
+  const bruta    = parseFloat(document.getElementById('rhr-bruta').value);
+  const neta     = parseFloat(document.getElementById('rhr-neta').value);
 
   if (!fecha||!nroRH||!nroDoc||!nombre||!concepto||isNaN(bruta)||isNaN(neta)) {
     alerta.textContent = 'Complete todos los campos requeridos (*)';
@@ -252,7 +533,7 @@ async function guardarRHR(id) {
 
   const ret    = parseFloat(document.getElementById('rhr-retencion').value) || 0;
   const moneda = document.getElementById('rhr-moneda').value;
-  const estado = document.getElementById('rhr-estado')?.value || 'EMITIDO';
+  const estado = document.getElementById('rhr-estado-doc')?.value || 'EMITIDO';
 
   const payload = {
     empresa_operadora_id: empresa_activa.id,
@@ -287,12 +568,15 @@ async function guardarRHR(id) {
 async function eliminarRHR(id) {
   const ok = await confirmar('¿Eliminar este RH? Esta acción no se puede deshacer.', { btnOk: 'Eliminar', btnColor: '#C53030' });
   if (!ok) return;
+  // Eliminar links primero
+  await _supabase.from('rh_movimiento_links').delete().eq('rh_id', id);
   const { error } = await _supabase.from('rh_registros').delete().eq('id', id);
   if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
   mostrarToast('Registro eliminado.', 'exito');
   cargarRHRecibidas();
 }
 
+// ── Importar Excel ────────────────────────────────────────────────
 let _rhrDatosPreview = [];
 
 function procesarImportRHR(input) {
@@ -332,7 +616,6 @@ function procesarImportRHR(input) {
         return {
           _fila: i + 2, _ok: ok,
           _error: !fecha ? 'Sin fecha' : !nroRH ? 'Sin N° RH' : bruta <= 0 ? 'Sin monto' : null,
-          empresa_id:      empresa_activa.id,
           fecha_emision:   fecha,
           nro_rh:          nroRH,
           tipo_doc_emisor: r[4]?.toString().trim() || 'DNI',
@@ -361,7 +644,7 @@ function procesarImportRHR(input) {
             </div>
             <div class="modal-body">
               <p style="margin-bottom:12px;font-size:13px;color:var(--color-texto-suave)">
-                ✅ <strong>${validos}</strong> válidos  ⚠️ <strong>${errores}</strong> con error (se omitirán)
+                ✅ <strong>${validos}</strong> válidos &nbsp; ⚠️ <strong>${errores}</strong> con error (se omitirán)
               </p>
               <div style="overflow-x:auto;max-height:320px;overflow-y:auto">
                 <table class="tabla-nexum" style="font-size:12px">
@@ -379,9 +662,9 @@ function procesarImportRHR(input) {
                         <td style="font-size:11px">${escapar((r.nombre_emisor||'—').slice(0,20))}</td>
                         <td style="font-size:11px">${escapar((r.descripcion||'—').slice(0,20))}</td>
                         <td>${escapar(r.moneda||'—')}</td>
-                        <td style="text-align:right">${formatearMoneda(r.renta_bruta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
-                        <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.retencion, r.moneda==='DOLARES'?'USD':'PEN')}</td>
-                        <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.renta_neta, r.moneda==='DOLARES'?'USD':'PEN')}</td>
+                        <td style="text-align:right">${formatearMoneda(r.renta_bruta)}</td>
+                        <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.retencion)}</td>
+                        <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.renta_neta)}</td>
                         <td>${r._ok ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">OK</span>' : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px">${escapar(r._error)}</span>`}</td>
                       </tr>`).join('')}
                   </tbody>
@@ -414,7 +697,7 @@ async function _confirmarImportRHR() {
   const btn = document.getElementById('btn-conf-rhr');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
-  let ok = 0; let errCount = 0; let sinDni = 0;
+  let ok = 0, errCount = 0;
 
   for (const r of validos) {
     let dni = (r.nro_doc_emisor || '').toString().trim();
@@ -422,24 +705,22 @@ async function _confirmarImportRHR() {
       if (dni.length < 8) dni = dni.padStart(8, '0');
       else if (dni.length > 8 && dni.length < 11) dni = dni.padStart(11, '0');
     }
-    if (!dni) { sinDni++; errCount++; continue; }
+    if (!dni) { errCount++; continue; }
 
     let { data: ps } = await _supabase
       .from('prestadores_servicios').select('id').eq('dni', dni).maybeSingle();
-    
     if (!ps) {
       const { data: nuevo, error: errPS } = await _supabase
         .from('prestadores_servicios')
-        .insert({ dni: dni, nombre: r.nombre_emisor || dni, ruc: dni.length === 11 ? dni : null, activo: true })
+        .insert({ dni, nombre: r.nombre_emisor || dni, ruc: dni.length === 11 ? dni : null, activo: true })
         .select('id').single();
       if (errPS) { errCount++; continue; }
       ps = nuevo;
     }
 
-    const monedaNorm = (r.moneda || '').toUpperCase() === 'DOLARES' || (r.moneda || '').toUpperCase() === 'USD' ? 'USD' : 'PEN';
+    const monedaNorm = ['DOLARES','USD'].includes((r.moneda||'').toUpperCase()) ? 'USD' : 'PEN';
     const estadoDoc  = r.estado_pago === 'CANCELADO' ? 'ANULADO' : 'EMITIDO';
-
-    const { error } = await _supabase.from('rh_registros').upsert({
+    const { error } = await _supabase.from('rh_registros').insert({
       empresa_operadora_id: empresa_activa.id,
       prestador_id:         ps.id,
       periodo:              r.fecha_emision?.slice(0, 7) || null,
@@ -448,7 +729,7 @@ async function _confirmarImportRHR() {
       concepto:             r.descripcion || 'SERVICIO',
       moneda:               monedaNorm,
       monto_bruto:          parseFloat(r.renta_bruta) || 0,
-      tiene_retencion:       parseFloat(r.retencion) > 0,
+      tiene_retencion:      parseFloat(r.retencion) > 0,
       porcentaje_retencion: parseFloat(r.renta_bruta) > 0 ? Math.round(parseFloat(r.retencion) / parseFloat(r.renta_bruta) * 10000) / 100 : 0,
       monto_retencion:      parseFloat(r.retencion) || 0,
       monto_neto:           parseFloat(r.renta_neta) || 0,
@@ -457,11 +738,7 @@ async function _confirmarImportRHR() {
       nro_doc_emisor:       dni,
       nombre_emisor:        r.nombre_emisor || null,
       usuario_id:           perfil_usuario?.id || null,
-    }, { 
-      // ESTA LÍNEA AHORA SÍ COINCIDE CON SUPABASE
-      onConflict: 'empresa_operadora_id, prestador_id, numero_rh' 
     });
-
     if (error) errCount++; else ok++;
   }
 
@@ -470,9 +747,10 @@ async function _confirmarImportRHR() {
   cargarRHRecibidas();
 }
 
+// ── Exportar Excel ────────────────────────────────────────────────
 async function exportarExcelRHRecibidas() {
-  const mes  = document.getElementById('rhr-mes')?.value;
-  const anio = document.getElementById('rhr-anio')?.value;
+  const mes   = document.getElementById('rhr-mes')?.value;
+  const anio  = document.getElementById('rhr-anio')?.value;
   const desde = `${anio}-${mes}-01`;
   const hasta = `${anio}-${mes}-${new Date(anio, mes, 0).getDate()}`;
 
@@ -484,10 +762,20 @@ async function exportarExcelRHRecibidas() {
 
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
-  const cab = ['Fecha Emisión','N° RH','N° Doc Emisor','Nombre Emisor','Concepto','Moneda','Renta Bruta','Retención','Renta Neta','Estado','Fecha Pago','Observaciones'];
+  // Calcular estados
+  const estadosMap = {};
+  await Promise.all(data.map(async r => {
+    estadosMap[r.id] = r.estado === 'ANULADO' ? { estado: 'CANCELADO' } : await _estadoCalculado(r);
+  }));
+
+  const cab = ['Fecha Emisión','N° RH','N° Doc Emisor','Nombre Emisor','Concepto','Moneda','Renta Bruta','Retención','Renta Neta','Estado','Observaciones'];
   const filas = data.map(r => [
-    r.fecha_emision, r.numero_rh, r.prestadores_servicios?.dni || r.nro_doc_emisor, r.prestadores_servicios?.nombre || r.nombre_emisor,
-    r.concepto, r.moneda, r.monto_bruto, r.monto_retencion, r.monto_neto, r.estado==='ANULADO'?'CANCELADO':r.conciliado?'PAGADO':'PENDIENTE', r.fecha_conciliacion, r.observaciones
+    r.fecha_emision, r.numero_rh,
+    r.prestadores_servicios?.dni || r.nro_doc_emisor,
+    r.prestadores_servicios?.nombre || r.nombre_emisor,
+    r.concepto, r.moneda, r.monto_bruto, r.monto_retencion, r.monto_neto,
+    estadosMap[r.id]?.estado || 'PENDIENTE',
+    r.observaciones
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);

@@ -13,6 +13,8 @@
   <script src="js/utils.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/tema.js"></script>
+  <script src="js/notas.js"></script>
+  <script src="js/alertas.js"></script>
 </head>
 <body>
 
@@ -174,6 +176,10 @@ let empresa_activa = null;
 
   if (!perfil_usuario) { await cerrarSesion(); return; }
 
+  // Inicializar sistema de notas y alertas
+  if (window.NEXUM_NOTAS) window.NEXUM_NOTAS.init(empresa_activa.id, perfil_usuario.id);
+  if (window.NEXUM_ALERTAS) window.NEXUM_ALERTAS.init(empresa_activa.id);
+
   // Llenar datos en el layout
   document.getElementById('empresa-nombre').textContent = empresa_activa.nombre;
   document.getElementById('empresa-ruc').textContent    = 'RUC: ' + empresa_activa.ruc;
@@ -306,6 +312,24 @@ function renderDashboard(area) {
           <h3 style="margin-bottom:12px;font-size:14px">⚠️ Movimientos OBSERVADOS</h3>
           <div id="dash-observados"><div style="text-align:center;padding:20px;color:var(--color-texto-suave);font-size:13px">Cargando…</div></div>
         </div>
+      </div>
+
+      <!-- Widget Tareas Pendientes -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3 style="font-size:14px;margin:0">⚡ Tareas pendientes</h3>
+          <button onclick="window.NEXUM_NOTAS&&window.NEXUM_NOTAS.toggle()" style="padding:4px 10px;background:var(--color-bg-card);color:var(--color-texto-suave);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-size:11px;font-family:var(--font)">📝 Abrir notas</button>
+        </div>
+        <div id="dash-notas-widget"><div style="text-align:center;color:var(--color-texto-suave);font-size:13px;padding:16px">Cargando…</div></div>
+      </div>
+
+      <!-- Widget Alertas del Sistema -->
+      <div class="card" id="dash-alertas-card" style="margin-bottom:20px;display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3 style="font-size:14px;margin:0">🔔 Alertas del sistema</h3>
+          <button onclick="window.NEXUM_ALERTAS&&window.NEXUM_ALERTAS.ejecutarVerificacion(empresa_activa.id)" style="padding:4px 10px;background:var(--color-bg-card);color:var(--color-texto-suave);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-size:11px;font-family:var(--font)">🔄 Verificar ahora</button>
+        </div>
+        <div id="dash-alertas-widget"><div style="text-align:center;color:var(--color-texto-suave);font-size:13px;padding:8px">Sin alertas activas</div></div>
       </div>
 
       <!-- Accesos rápidos -->
@@ -449,6 +473,16 @@ async function cargarDashboard() {
   }
 
   await _dashCargarProgreso();
+
+  // Widget de notas/tareas pendientes
+  if (window.NEXUM_NOTAS?.cargarWidgetDashboard) {
+    await window.NEXUM_NOTAS.cargarWidgetDashboard('dash-notas-widget', empresa_activa.id);
+  }
+
+  // Widget de alertas
+  if (window.NEXUM_ALERTAS?.cargarWidgetDashboard) {
+    await window.NEXUM_ALERTAS.cargarWidgetDashboard('dash-alertas-widget', 'dash-alertas-card', empresa_activa.id);
+  }
 }
 
 function _fmt(n) {
