@@ -22,7 +22,6 @@ jobs:
           echo "anio=$(date +%Y)" >> $GITHUB_OUTPUT
           echo "mes=$(date +%m)" >> $GITHUB_OUTPUT
           echo "periodo=$(date +%Y-%m)" >> $GITHUB_OUTPUT
-          echo "timestamp=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
 
       - name: Crear directorio de backup
         run: |
@@ -33,61 +32,74 @@ jobs:
           SUPA_URL: ${{ secrets.NEXUM_SUPABASE_URL }}
           SUPA_KEY: ${{ secrets.NEXUM_SUPABASE_KEY }}
           PERIODO:  ${{ steps.fecha.outputs.periodo }}
+          BACKUP_DIR: "backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}"
         run: |
-          DIR="backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}"
-          HEADERS='-H "apikey: '"$SUPA_KEY"'" -H "Authorization: Bearer '"$SUPA_KEY"'" -H "Accept: application/json"'
-
           exportar() {
             local tabla=$1
             local filtro=$2
+            local url="$SUPA_URL/rest/v1/$tabla?select=*"
+            if [ -n "$filtro" ]; then url="${url}&${filtro}"; fi
             curl -s --max-time 60 \
               -H "apikey: $SUPA_KEY" \
               -H "Authorization: Bearer $SUPA_KEY" \
               -H "Accept: application/json" \
               -H "Prefer: count=none" \
-              "$SUPA_URL/rest/v1/$tabla?select=*${filtro:+&$filtro}" \
-              -o "$DIR/${tabla}.json" || echo "[]" > "$DIR/${tabla}.json"
-            echo "  ✓ $tabla: $(wc -c < "$DIR/${tabla}.json") bytes"
+              "$url" -o "$BACKUP_DIR/${tabla}.json"
+            local bytes=$(wc -c < "$BACKUP_DIR/${tabla}.json" 2>/dev/null || echo 0)
+            echo "  ✓ $tabla: ${bytes} bytes"
           }
 
           echo "Exportando tablas para periodo $PERIODO..."
-          exportar "movimientos"       "periodo=eq.$PERIODO"
-          exportar "tesoreria_mbd"     "periodo=eq.$PERIODO"
-          exportar "rh_registros"      ""
+          exportar "movimientos"         "periodo=eq.$PERIODO"
+          exportar "tesoreria_mbd"       "periodo=eq.$PERIODO"
+          exportar "rh_registros"        ""
           exportar "rh_movimiento_links" ""
-          exportar "notas_operativas"  ""
-          exportar "alertas_sistema"   "estado=eq.activa"
-          exportar "empresas"          ""
+          exportar "notas_operativas"    ""
+          exportar "alertas_sistema"     "estado=eq.activa"
+          exportar "empresas"            ""
 
-          # Unir todo en un solo JSON de backup
-          python3 - <<'PYEOF'
-          import json, os, glob
-          directorio = os.environ.get("DIR", ".")
-          periodo    = os.environ.get("PERIODO", "")
-          backup = {"periodo": periodo, "generado_en": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')", "tablas": {}}
-          for f in glob.glob(f"{directorio}/*.json"):
-            tabla = os.path.basename(f).replace(".json", "")
-            if tabla == "backup": continue
-            try:
-              with open(f) as fp:
-                backup["tablas"][tabla] = json.load(fp)
-              os.remove(f)
-            except:
-              backup["tablas"][tabla] = []
-          salida = f"{directorio}/backup_{periodo}.json"
-          with open(salida, "w", encoding="utf-8") as fp:
-            json.dump(backup, fp, ensure_ascii=False, indent=2)
-          print(f"Backup generado: {salida}")
-          PYEOF
-        shell: bash
+          echo "Uniendo archivos en backup único..."
+          python3 << PYEOF
+import json, os, glob, datetime
+
+directorio = os.environ["BACKUP_DIR"]
+periodo    = os.environ["PERIODO"]
+ahora      = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+backup = {"periodo": periodo, "generado_en": ahora, "tablas": {}}
+
+for f in sorted(glob.glob(f"{directorio}/*.json")):
+    tabla = os.path.basename(f).replace(".json", "")
+    if tabla.startswith("backup"):
+        continue
+    try:
+        with open(f, encoding="utf-8") as fp:
+            data = json.load(fp)
+        backup["tablas"][tabla] = data if isinstance(data, list) else []
+        os.remove(f)
+    except Exception as e:
+        print(f"  ⚠ Error leyendo {tabla}: {e}")
+        backup["tablas"][tabla] = []
+
+salida = f"{directorio}/backup_{periodo}.json"
+with open(salida, "w", encoding="utf-8") as fp:
+    json.dump(backup, fp, ensure_ascii=False, indent=2)
+
+total = sum(len(v) for v in backup["tablas"].values())
+print(f"  Backup generado: {salida} ({total} registros en total)")
+PYEOF
 
       - name: Verificar backup generado
         run: |
           ARCHIVO="backups/${{ steps.fecha.outputs.anio }}/${{ steps.fecha.outputs.mes }}/backup_${{ steps.fecha.outputs.periodo }}.json"
+          if [ ! -f "$ARCHIVO" ]; then
+            echo "❌ Archivo de backup no encontrado: $ARCHIVO"
+            exit 1
+          fi
           BYTES=$(wc -c < "$ARCHIVO")
-          echo "Archivo: $ARCHIVO ($BYTES bytes)"
+          echo "✓ Archivo: $ARCHIVO (${BYTES} bytes)"
           if [ "$BYTES" -lt 50 ]; then
-            echo "⚠️ Advertencia: backup vacío o muy pequeño"
+            echo "⚠️ Backup vacío o muy pequeño"
             exit 1
           fi
 
@@ -96,9 +108,12 @@ jobs:
           git config user.email "backup-bot@nexum.app"
           git config user.name "NEXUM Backup Bot"
           git add "backups/"
-          git diff --staged --quiet && echo "Sin cambios para commit" || \
+          if git diff --staged --quiet; then
+            echo "Sin cambios para commit"
+          else
             git commit -m "Backup automático ${{ steps.fecha.outputs.periodo }} — $(date +%Y-%m-%d)"
-          git push origin HEAD
+            git push origin HEAD
+          fi
 
       - name: Resumen del backup
         if: always()
