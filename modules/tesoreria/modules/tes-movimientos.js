@@ -766,12 +766,314 @@ async function _movEliminarMasivo() {
   mostrarToast(`✅ ${n} registro${n > 1 ? 's' : ''} eliminado${n > 1 ? 's' : ''}`, 'exito');
 }
 
-// ── MEJORA 5: botón rápido para ir a Conciliación con el mes activo ─
-function _movConciliarMes() {
-  const mes  = document.getElementById('mov-mes')?.value || '';
-  const anio = document.getElementById('mov-anio')?.value || '';
-  if (mes && anio) {
-    localStorage.setItem('conc_periodo_sugerido', `${anio}-${mes}`);
+// ════════════════════════════════════════════════════════════════
+// MEJORA 5 — Conciliación rápida desde Movimientos
+// Motor de matching integrado: sin redirigir al módulo Conciliación
+// ════════════════════════════════════════════════════════════════
+
+// ── Levenshtein compacto ─────────────────────────────────────────
+function _qkLev(a, b) {
+  if (!a || !b) return 0;
+  a = a.toLowerCase(); b = b.toLowerCase();
+  if (a === b) return 100;
+  const la = a.length, lb = b.length;
+  const dp = Array.from({ length: la + 1 }, (_, i) =>
+    Array.from({ length: lb + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= la; i++)
+    for (let j = 1; j <= lb; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return Math.round((1 - dp[la][lb] / Math.max(la, lb)) * 100);
+}
+
+// ── Score mov ↔ doc ──────────────────────────────────────────────
+function _qkScore(mov, doc) {
+  let s = 0;
+  const montoMov = Math.abs(Number(mov.monto));
+  const montoDoc = Math.abs(Number(doc.importe || doc.monto_total || 0));
+  if (montoDoc > 0) {
+    const diff = Math.abs(montoMov - montoDoc);
+    if (diff === 0)       s += 50;
+    else if (diff < 0.5)  s += 40;
+    else if (diff < 5)    s += 25;
+    else if (diff < 20)   s += 10;
   }
-  window.location.href = '/modules/conciliacion/index.html';
+  const nomMov = (mov.descripcion || mov.proveedor_empresa_personal || '').toLowerCase();
+  const nomDoc = (doc._proveedor || '').toLowerCase();
+  if (nomMov && nomDoc) {
+    const lev = _qkLev(nomMov, nomDoc);
+    if (lev >= 90)      s += 40;
+    else if (lev >= 70) s += 25;
+    else if (lev >= 50) s += 10;
+    if (nomMov.includes(nomDoc.slice(0,6)) || nomDoc.includes(nomMov.slice(0,6))) s += 5;
+  }
+  const rucMov = (mov.ruc_dni || '').replace(/\D/g, '');
+  const rucDoc = (doc._ruc || '').replace(/\D/g, '');
+  if (rucMov && rucDoc && rucMov === rucDoc) s += 10;
+  return Math.min(s, 100);
+}
+
+// ── Buscar combo de N movimientos cuya suma ≈ monto doc ──────────
+function _qkCombo(doc, movs) {
+  const montoDoc = Math.abs(Number(doc.importe || doc.monto_total || 0));
+  if (!montoDoc || movs.length === 0) return null;
+  for (let n = 2; n <= Math.min(movs.length, 6); n++) {
+    const comb = (arr, k) => {
+      if (k === 0) return [[]];
+      return arr.flatMap((v, i) => comb(arr.slice(i + 1), k - 1).map(c => [v, ...c]));
+    };
+    for (const combo of comb(movs, n)) {
+      const suma = combo.reduce((a, m) => a + Math.abs(Number(m.monto)), 0);
+      const diff = Math.abs(suma - montoDoc);
+      if (diff / montoDoc < 0.15) return { movs: combo, suma, diferencia: diff };
+    }
+  }
+  return null;
+}
+
+// ── Periodos -3/+6 meses ─────────────────────────────────────────
+function _qkPeriodos(periodo) {
+  const [yyyy, mm] = periodo.split('-');
+  const lista = [];
+  for (let d = -3; d <= 6; d++) {
+    const f = new Date(parseInt(yyyy), parseInt(mm) - 1 + d, 1);
+    lista.push(`${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return lista;
+}
+
+// ── Motor principal ───────────────────────────────────────────────
+async function _qkEjecutar(periodo) {
+  const [yyyy, mm] = periodo.split('-');
+  const inicio = `${yyyy}-${mm}-01`;
+  const fin    = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
+  const periodos = _qkPeriodos(periodo);
+
+  const [rMov, rComp, rVent, rRh] = await Promise.all([
+    _supabase.from('tesoreria_mbd').select('*')
+      .eq('empresa_id', empresa_activa.id)
+      .eq('entrega_doc', 'PENDIENTE')
+      .is('nro_factura_doc', null)
+      .gte('fecha_deposito', inicio)
+      .lte('fecha_deposito', fin),
+    _supabase.from('registro_compras').select('*')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .in('periodo', periodos),
+    _supabase.from('registro_ventas').select('*')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .in('periodo', periodos),
+    _supabase.from('rh_registros').select('*, prestadores_servicios(nombre, dni)')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .in('periodo', periodos),
+  ]);
+
+  const movs = rMov.data || [];
+  const docs = [
+    ...(rComp.data || []).map(d => ({ ...d, _tipo:'COMPRA', _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8)||'—', _proveedor:d.nombre_proveedor||'', _ruc:d.ruc_proveedor||'' })),
+    ...(rVent.data || []).map(d => ({ ...d, _tipo:'VENTA',  _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8)||'—', _proveedor:d.nombre_cliente||'',   _ruc:d.ruc_cliente||'' })),
+    ...(rRh.data   || []).map(d => ({ ...d, _tipo:'RH',     _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8)||'—', _proveedor:d.prestadores_servicios?.nombre||d.nombre||'', _ruc:d.prestadores_servicios?.dni||d.ruc||'' })),
+  ];
+
+  const exactos = [], posibles = [], sinMatch = [];
+  const usadosDoc = new Set();
+
+  for (const mov of movs) {
+    let best = -1, bestDoc = null;
+    for (const doc of docs) {
+      if (usadosDoc.has(doc.id)) continue;
+      const s = _qkScore(mov, doc);
+      if (s > best) { best = s; bestDoc = doc; }
+    }
+    if (bestDoc && best >= 85) { usadosDoc.add(bestDoc.id); exactos.push({ mov, doc: bestDoc, score: best }); }
+    else if (bestDoc && best >= 60) posibles.push({ mov, doc: bestDoc, score: best });
+    else sinMatch.push({ mov, doc: bestDoc, score: best });
+  }
+
+  // Multi-transfer (CORRECCIÓN 13)
+  const usadosSM = new Set();
+  for (const doc of docs) {
+    if (usadosDoc.has(doc.id)) continue;
+    const libres = sinMatch.filter(i => !usadosSM.has(i.mov.id)).map(i => i.mov);
+    const combo  = _qkCombo(doc, libres);
+    if (!combo) continue;
+    usadosDoc.add(doc.id);
+    combo.movs.forEach(m => usadosSM.add(m.id));
+    posibles.push({ movs: combo.movs, doc, score: 75, diferencia: combo.diferencia, sumaMovs: combo.suma, esMulti: true });
+  }
+  sinMatch.splice(0, sinMatch.length, ...sinMatch.filter(i => !usadosSM.has(i.mov.id)));
+
+  return { exactos, posibles, sinMatch, total: movs.length };
+}
+
+// ── Modal de resultados ───────────────────────────────────────────
+async function _movConciliarMes() {
+  const mes  = document.getElementById('mov-mes')?.value  || '';
+  const anio = document.getElementById('mov-anio')?.value || '';
+  if (!mes || !anio) return;
+  const periodo = `${anio}-${mes}`;
+
+  // Mostrar modal con spinner
+  const overlay = document.createElement('div');
+  overlay.id = 'qk-conc-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9500';
+  overlay.innerHTML = `
+    <div id="qk-conc-modal" style="background:var(--color-bg-card);border-radius:12px;width:96%;max-width:820px;
+      max-height:90vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.5);border:1px solid var(--color-borde)">
+      <div style="padding:18px 22px;border-bottom:1px solid var(--color-borde);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--color-bg-card);z-index:1">
+        <div>
+          <div style="font-weight:700;font-size:15px">⚡ Conciliación Rápida — ${new Date(parseInt(anio),parseInt(mes)-1,1).toLocaleString('es-PE',{month:'long',year:'numeric'})}</div>
+          <div style="font-size:12px;color:var(--color-texto-suave);margin-top:2px">Solo movimientos pendientes sin comprobante · ventana 9 meses</div>
+        </div>
+        <button onclick="document.getElementById('qk-conc-overlay').remove()"
+          style="background:none;border:none;cursor:pointer;font-size:22px;color:var(--color-texto-suave)">✕</button>
+      </div>
+      <div id="qk-conc-body" style="padding:20px">
+        <div style="text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div><p style="margin-top:12px;color:var(--color-texto-suave)">Ejecutando motor de matching…</p></div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  const res = await _qkEjecutar(periodo);
+  _qkRenderResultados(res, periodo);
+}
+
+function _qkRenderResultados(res, periodo) {
+  const body = document.getElementById('qk-conc-body');
+  if (!body) return;
+
+  const totAprobables = res.exactos.length + res.posibles.length;
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:18px">
+      <div class="card" style="text-align:center;padding:12px;border-left:4px solid #22c55e">
+        <div style="font-size:22px;font-weight:700;color:#22c55e">${res.exactos.length}</div>
+        <div class="text-muted text-sm">🟢 Exactos</div>
+      </div>
+      <div class="card" style="text-align:center;padding:12px;border-left:4px solid #f59e0b">
+        <div style="font-size:22px;font-weight:700;color:#f59e0b">${res.posibles.length}</div>
+        <div class="text-muted text-sm">🟡 Posibles</div>
+      </div>
+      <div class="card" style="text-align:center;padding:12px;border-left:4px solid #ef4444">
+        <div style="font-size:22px;font-weight:700;color:#ef4444">${res.sinMatch.length}</div>
+        <div class="text-muted text-sm">🔴 Sin match</div>
+      </div>
+    </div>
+
+    ${totAprobables === 0 && res.sinMatch.length === 0 ? '<div class="card" style="text-align:center;padding:24px;color:var(--color-texto-suave)">No hay movimientos pendientes sin comprobante para este mes.</div>' : ''}
+
+    ${res.exactos.length ? `
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px">🟢 Matches exactos</div>
+      ${res.exactos.map((it, i) => _qkRowItem(it, i, 'ex')).join('')}
+      <div style="margin-bottom:16px">
+        <button onclick="_qkAprobarLote()" style="padding:7px 16px;background:#166534;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:600">✅ Aprobar todos los exactos</button>
+      </div>` : ''}
+
+    ${res.posibles.length ? `
+      <div style="font-weight:700;font-size:13px;margin:12px 0 8px">🟡 Posibles matches</div>
+      ${res.posibles.map((it, i) => _qkRowItem(it, i, 'pos')).join('')}` : ''}
+
+    ${res.sinMatch.length ? `
+      <div style="font-weight:700;font-size:13px;margin:12px 0 8px">🔴 Sin match (${res.sinMatch.length} movimientos)</div>
+      <div class="card" style="padding:10px 14px;font-size:12px;color:var(--color-texto-suave)">
+        ${res.sinMatch.map(it => `<div style="padding:4px 0;border-bottom:1px solid var(--color-borde)">${formatearFecha(it.mov.fecha_deposito)} · ${escapar(it.mov.descripcion||'—')} · ${formatearMoneda(it.mov.monto)}</div>`).join('')}
+      </div>` : ''}`;
+
+  // Guardar en window para acceso desde botones
+  window._qkRes = res;
+}
+
+function _qkRowItem(it, i, pref) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  if (it.esMulti) {
+    const diff = it.diferencia ?? 0;
+    return `<div id="qk-row-${pref}-${i}" style="padding:8px 10px;margin-bottom:6px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);border-radius:6px;font-size:12px">
+      <div style="font-weight:600;color:#d97706;margin-bottom:4px">⚠️ Multi-transferencia — ${it.movs.length} movimientos → ${escapar(it.doc._ndoc||'—')}</div>
+      <div style="color:var(--color-texto-suave)">
+        ${it.movs.map(m=>`${formatearFecha(m.fecha_deposito)} ${formatearMoneda(m.monto)}`).join(' + ')} = ${formatearMoneda(it.sumaMovs)}
+        &nbsp;·&nbsp; Comprobante: ${formatearMoneda(it.doc.importe||it.doc.monto_total||0)}
+        &nbsp;·&nbsp; <strong style="color:${diff>0?'#ef4444':'#22c55e'}">Diferencia: ${formatearMoneda(diff)}</strong>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button onclick="_qkAprobarMulti(${i},'${pref}')" style="padding:4px 12px;background:#166534;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:var(--font)">✓ Confirmar</button>
+        <button onclick="_qkDescartarItem(${i},'${pref}')" style="padding:4px 10px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px">✕ Descartar</button>
+      </div>
+    </div>`;
+  }
+  const diff = Math.abs(Math.abs(Number(it.mov.monto)) - Math.abs(Number(it.doc.importe||it.doc.monto_total||0)));
+  return `<div id="qk-row-${pref}-${i}" style="padding:8px 10px;margin-bottom:6px;background:${pref==='ex'?'rgba(34,197,94,.06)':'rgba(245,158,11,.06)'};border:1px solid ${pref==='ex'?'rgba(34,197,94,.25)':'rgba(245,158,11,.25)'};border-radius:6px;font-size:12px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px">
+      <div>
+        <div style="font-weight:600">${escapar(it.mov.descripcion||it.mov.proveedor_empresa_personal||'—')} → ${escapar(it.doc._ndoc||'—')} · ${escapar(it.doc._proveedor||'')}</div>
+        <div style="color:var(--color-texto-suave);margin-top:2px">
+          Mov: ${formatearMoneda(it.mov.monto)} · Doc: ${formatearMoneda(it.doc.importe||it.doc.monto_total||0)}
+          ${diff > 0 ? `· <strong style="color:#ef4444">Diferencia: ${formatearMoneda(diff)}</strong>` : '· <span style="color:#22c55e">Sin diferencia</span>'}
+          · Score: ${it.score}%
+        </div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button onclick="_qkAprobarUno(${i},'${pref}')" style="padding:4px 12px;background:#166534;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:var(--font)">✓ Aprobar</button>
+        <button onclick="_qkDescartarItem(${i},'${pref}')" style="padding:4px 10px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px">✕</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function _qkAprobarUno(idx, pref) {
+  const res  = window._qkRes;
+  const arr  = pref === 'ex' ? res.exactos : res.posibles;
+  const item = arr[idx];
+  if (!item || item._aprobado) return;
+  const hoy = new Date().toISOString().slice(0, 10);
+  const patch = {
+    entrega_doc:         'EMITIDO',
+    estado_conciliacion: 'conciliado',
+    nro_factura_doc:     item.doc._ndoc || null,
+    tipo_doc:            item.doc._tipo || null,
+    fecha_actualizacion: hoy,
+  };
+  if (item.doc._proveedor && !item.mov.proveedor_empresa_personal) patch.proveedor_empresa_personal = item.doc._proveedor;
+  if (item.doc._ruc       && !item.mov.ruc_dni)                   patch.ruc_dni                    = item.doc._ruc;
+  const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', item.mov.id);
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  await _supabase.from('conciliaciones').insert({ empresa_operadora_id: empresa_activa.id, movimiento_id: item.mov.id, doc_tipo: item.doc._tipo, doc_id: item.doc.id || null, score: item.score, tipo_match: pref === 'ex' ? 'EXACTO' : 'POSIBLE', estado: 'APROBADO', usuario_id: perfil_usuario?.id || null });
+  item._aprobado = true;
+  const fila = document.getElementById(`qk-row-${pref}-${idx}`);
+  if (fila) { fila.style.opacity = '0.35'; fila.querySelectorAll('button').forEach(b => b.disabled = true); }
+  mostrarToast('✓ Aprobado', 'exito');
+}
+
+async function _qkAprobarMulti(idx, pref) {
+  const item = (window._qkRes?.posibles || [])[idx];
+  if (!item || !item.esMulti || item._aprobado) return;
+  const hoy = new Date().toISOString().slice(0, 10);
+  let ok = 0;
+  for (const mov of item.movs) {
+    const patch = { entrega_doc: 'EMITIDO', estado_conciliacion: 'conciliado', nro_factura_doc: item.doc._ndoc || null, tipo_doc: item.doc._tipo || null, fecha_actualizacion: hoy };
+    if (item.doc._proveedor && !mov.proveedor_empresa_personal) patch.proveedor_empresa_personal = item.doc._proveedor;
+    if (item.doc._ruc       && !mov.ruc_dni)                   patch.ruc_dni                    = item.doc._ruc;
+    const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', mov.id);
+    if (!error) { await _supabase.from('conciliaciones').insert({ empresa_operadora_id: empresa_activa.id, movimiento_id: mov.id, doc_tipo: item.doc._tipo, doc_id: item.doc.id || null, score: item.score, tipo_match: 'MULTI_TRANSFER', estado: 'APROBADO', usuario_id: perfil_usuario?.id || null }); ok++; }
+  }
+  item._aprobado = true;
+  const fila = document.getElementById(`qk-row-${pref}-${idx}`);
+  if (fila) { fila.style.opacity = '0.35'; fila.querySelectorAll('button').forEach(b => b.disabled = true); }
+  mostrarToast(`✅ Multi-transferencia aprobada (${ok} movimientos)`, 'exito');
+}
+
+async function _qkAprobarLote() {
+  const exactos = window._qkRes?.exactos || [];
+  const pendientes = exactos.filter(i => !i._aprobado);
+  if (!pendientes.length) { mostrarToast('No hay exactos pendientes', 'atencion'); return; }
+  if (!await confirmar(`¿Aprobar los ${pendientes.length} matches exactos?`, { btnOk: 'Sí, aprobar', btnColor: '#166534' })) return;
+  for (let i = 0; i < exactos.length; i++) if (!exactos[i]._aprobado) await _qkAprobarUno(i, 'ex');
+  mostrarToast(`✅ ${pendientes.length} aprobados`, 'exito');
+  cargarMovimientos();
+}
+
+function _qkDescartarItem(idx, pref) {
+  const arr  = pref === 'ex' ? (window._qkRes?.exactos||[]) : (window._qkRes?.posibles||[]);
+  const fila = document.getElementById(`qk-row-${pref}-${idx}`);
+  if (arr[idx]) arr[idx]._descartado = true;
+  if (fila) { fila.style.opacity = '0.3'; fila.querySelectorAll('button').forEach(b => b.disabled = true); }
 }
