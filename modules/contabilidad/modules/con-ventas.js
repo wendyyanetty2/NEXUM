@@ -21,6 +21,7 @@ function renderTabVentas(area) {
           <button onclick="cargarVentas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button onclick="_conciliarLoteVentas()" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔗 Conciliar con banco</button>
           <button onclick="exportarExcelVentas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar PLE</button>
           <button onclick="document.getElementById('v-sunat-file').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📊 Importar SUNAT</button>
           <input type="file" id="v-sunat-file" accept=".xlsx,.xls" style="display:none" onchange="_vSunatHandleFile(this)">
@@ -129,6 +130,7 @@ async function cargarVentas() {
             <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">
               <button onclick="abrirModalVenta('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Editar">✏️</button>
+              <button onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')" title="Conciliar con movimiento bancario" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔗</button>
               <button onclick="eliminarVenta('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Eliminar">🗑️</button>
             </td>
           </tr>
@@ -606,5 +608,199 @@ async function _vSunatConfirmar() {
   _vSunatCerrar();
   if (!errCount) mostrarToast(`✓ ${nuevos.length} nuevo(s) + ${actualizar.length} actualizado(s).`, 'exito');
   else mostrarToast('Importación parcial. Revisa los datos.', 'atencion');
+  cargarVentas();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CONCILIACIÓN VENTAS ↔ TESORERÍA MBD
+// Reutiliza helpers de con-compras.js (_cAbrirModalConciliar,
+// _cBuscarMovManual, _cVincularMovimiento, _cAplicarLoteConciliacion)
+// ══════════════════════════════════════════════════════════════════
+
+async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmision) {
+  const margen  = Math.max(total * 0.05, 5);
+  const { data: movs } = await _supabase
+    .from('tesoreria_mbd')
+    .select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .neq('entrega_doc', 'EMITIDO')
+    .gte('monto', total - margen)
+    .lte('monto', total + margen)
+    .order('fecha_deposito', { ascending: false })
+    .limit(30);
+
+  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || []);
+}
+
+async function _conciliarLoteVentas() {
+  const periodo = document.getElementById('v-periodo')?.value.trim();
+  if (!periodo) { mostrarToast('Selecciona un periodo primero', 'atencion'); return; }
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex">
+      <div class="modal" style="max-width:500px;width:95%;padding:32px;text-align:center">
+        <div class="spinner" style="margin:0 auto 12px"></div>
+        <div style="color:var(--color-texto-suave)">Buscando ventas pendientes…</div>
+      </div>
+    </div>`;
+
+  const { data: ventas } = await _supabase
+    .from('contabilidad_ventas')
+    .select('id, serie_cdp, nro_cp_inicial, cliente, total_cp, fecha_emision')
+    .eq('empresa_id', empresa_activa.id)
+    .eq('periodo', periodo);
+
+  if (!ventas?.length) {
+    document.querySelector('.modal-overlay')?.remove();
+    mostrarToast('No hay ventas en este periodo', 'atencion');
+    return;
+  }
+
+  const numeros = ventas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
+  const { data: yaAplic } = numeros.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    : { data: [] };
+  const aplicadosSet = new Set((yaAplic || []).map(r => r.nro_factura_doc));
+  const pendientes   = ventas.filter(r => {
+    const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+    return !aplicadosSet.has(nDoc);
+  });
+
+  document.querySelector('.modal-overlay')?.remove();
+
+  if (!pendientes.length) {
+    mostrarToast(`✅ Todas las ventas del periodo ${periodo} ya están conciliadas`, 'exito');
+    return;
+  }
+
+  const matches = [];
+  for (const v of pendientes.slice(0, 20)) {
+    const nDoc   = [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-');
+    const total  = Number(v.total_cp || 0);
+    const margen = Math.max(total * 0.05, 5);
+    const { data: movs } = await _supabase
+      .from('tesoreria_mbd')
+      .select('id, fecha_deposito, monto, descripcion, nro_operacion_bancaria, proveedor_empresa_personal, ruc_dni, entrega_doc')
+      .eq('empresa_id', empresa_activa.id)
+      .neq('entrega_doc', 'EMITIDO')
+      .gte('monto', total - margen)
+      .lte('monto', total + margen)
+      .limit(5);
+    if (movs?.length) {
+      const mejor = movs.sort((a, b) => Math.abs(Number(a.monto) - total) - Math.abs(Number(b.monto) - total))[0];
+      matches.push({ compra: { ...v, nDoc }, mov: mejor, total });
+    }
+  }
+
+  if (!matches.length) {
+    mostrarToast(`${pendientes.length} venta(s) pendiente(s) pero sin movimientos bancarios que coincidan`, 'atencion');
+    return;
+  }
+
+  const mc2 = document.getElementById('modal-container');
+  mc2.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:760px;width:95%;max-height:90vh;display:flex;flex-direction:column">
+        <div class="modal-header" style="flex-shrink:0">
+          <h3>🔗 Conciliar Ventas con Banco — ${periodo}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:12px">
+            Se encontraron <strong>${matches.length}</strong> posible(s) match(es) de ${pendientes.length} venta(s) pendientes.
+          </p>
+          <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+            <button onclick="document.querySelectorAll('[id^=vnt-chk-]').forEach(c=>c.checked=true)"
+              style="padding:5px 12px;border:1px solid var(--color-borde);border-radius:6px;background:none;cursor:pointer;font-size:12px;font-family:var(--font);color:var(--color-texto)">
+              ☑ Marcar todos</button>
+            <button onclick="document.querySelectorAll('[id^=vnt-chk-]').forEach(c=>c.checked=false)"
+              style="padding:5px 12px;border:1px solid var(--color-borde);border-radius:6px;background:none;cursor:pointer;font-size:12px;font-family:var(--font);color:var(--color-texto)">
+              ☐ Desmarcar todos</button>
+          </div>
+          ${matches.map((m, i) => {
+            const diff = Math.abs(Number(m.mov.monto) - m.total);
+            const pct  = m.total > 0 ? Math.round(diff / m.total * 100) : 0;
+            return `
+            <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:8px;background:var(--color-bg-card)">
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+                <input type="checkbox" id="vnt-chk-${i}" data-idx="${i}" checked
+                  style="margin-top:3px;width:16px;height:16px;flex-shrink:0;cursor:pointer">
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-bottom:6px">
+                    <span style="font-weight:700;color:var(--color-secundario)">${escapar(m.compra.nDoc)}</span>
+                    <span style="font-weight:700;color:var(--color-exito)">${formatearMoneda(m.total)}</span>
+                  </div>
+                  <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:6px">${escapar(truncar(m.compra.cliente||'—',40))} · ${formatearFecha(m.compra.fecha_emision)}</div>
+                  <div style="padding:8px 10px;background:rgba(44,82,130,.06);border:1px solid rgba(44,82,130,.2);border-radius:6px;font-size:12px">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                      <div>
+                        <div style="color:var(--color-secundario);font-weight:600;font-family:monospace;font-size:11px">${escapar(m.mov.nro_operacion_bancaria||'—')}</div>
+                        <div style="color:var(--color-texto-suave);font-size:11px">${formatearFecha(m.mov.fecha_deposito)} · ${escapar(truncar(m.mov.descripcion||'—',45))}</div>
+                      </div>
+                      <div style="text-align:right;flex-shrink:0">
+                        <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(m.mov.monto)}</div>
+                        ${diff > 0 ? `<div style="font-size:10px;color:${pct>5?'#ef4444':'#f59e0b'}">Dif: ${formatearMoneda(diff)} (${pct}%)</div>` : '<div style="font-size:10px;color:#22c55e">✓ Exacto</div>'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="modal-footer" style="flex-shrink:0;gap:8px">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+          <button class="btn btn-primario"
+            onclick="_vAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,cliente:m.compra.cliente||'',total:m.total})))})">
+            ✅ Aplicar seleccionados
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function _vAplicarLoteConciliacion(items) {
+  const checks = document.querySelectorAll('[id^=vnt-chk-]');
+  const hoy    = new Date().toISOString().slice(0, 10);
+  let ok = 0, errores = 0;
+
+  for (const chk of checks) {
+    if (!chk.checked) continue;
+    const idx  = parseInt(chk.dataset.idx, 10);
+    const item = items[idx];
+    if (!item) continue;
+
+    const { error } = await _supabase.from('tesoreria_mbd').update({
+      entrega_doc:          'EMITIDO',
+      nro_factura_doc:      item.nDoc,
+      tipo_doc:             'VENTA',
+      estado_conciliacion:  'conciliado',
+      proveedor_empresa_personal: item.cliente || undefined,
+      fecha_actualizacion:  hoy,
+    }).eq('id', item.movId);
+
+    if (!error) {
+      await _supabase.from('conciliaciones').insert({
+        empresa_operadora_id: empresa_activa.id,
+        movimiento_id:        item.movId,
+        doc_tipo:             'VENTA',
+        doc_id:               null,
+        score:                0,
+        tipo_match:           'AUTO_LOTE',
+        estado:               'APROBADO',
+        usuario_id:           perfil_usuario?.id || null,
+      });
+      ok++;
+    } else {
+      errores++;
+    }
+  }
+
+  document.querySelector('.modal-overlay')?.remove();
+  mostrarToast(
+    `✅ ${ok} conciliación(es) aplicada(s)${errores ? ` · ${errores} con error` : ''}`,
+    ok > 0 ? 'exito' : 'error'
+  );
   cargarVentas();
 }

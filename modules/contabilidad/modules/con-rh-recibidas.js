@@ -35,6 +35,7 @@ function renderTabRHRecibidas(area) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="rhConciliarAutomatico()" id="btn-rhr-auto" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">⚡ Conciliar automáticamente</button>
+          <button onclick="rhVerHistorialConciliacion()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📋 Historial conciliación</button>
           <button onclick="exportarExcelRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar Excel</button>
           <button onclick="document.getElementById('rhr-file-input').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📂 Importar Excel</button>
           <input type="file" id="rhr-file-input" accept=".xlsx,.xls" style="display:none" onchange="procesarImportRHR(this)">
@@ -209,7 +210,7 @@ async function cargarRHRecibidas() {
   `;
 }
 
-// ── Conciliación automática ───────────────────────────────────────
+// ── Conciliación automática — muestra PREVIEW antes de guardar ────
 async function rhConciliarAutomatico() {
   const mes  = document.getElementById('rhr-mes')?.value;
   const anio = document.getElementById('rhr-anio')?.value;
@@ -217,24 +218,226 @@ async function rhConciliarAutomatico() {
   if (!btn) return;
 
   btn.disabled = true;
-  btn.textContent = 'Conciliando…';
+  btn.textContent = '⏳ Calculando…';
 
+  let resultado;
   try {
-    const resultado = await ejecutarMatchingAutomatico(
-      empresa_activa.id, Number(mes), Number(anio), perfil_usuario?.id
+    resultado = await _rhCalcularMatchesSinGuardar(
+      empresa_activa.id, Number(mes), Number(anio)
     );
-    mostrarToast(
-      `✅ Conciliación completa: ${resultado.ok} aplicados, ${resultado.posibles} posibles, ${resultado.sinMatch} sin match (de ${resultado.total} RH)`,
-      resultado.ok > 0 ? 'exito' : 'atencion',
-      6000
-    );
-    cargarRHRecibidas();
   } catch (e) {
-    mostrarToast('Error en la conciliación: ' + e.message, 'error');
-  } finally {
+    mostrarToast('Error al calcular matches: ' + e.message, 'error');
     btn.disabled = false;
     btn.textContent = '⚡ Conciliar automáticamente';
+    return;
   }
+
+  btn.disabled = false;
+  btn.textContent = '⚡ Conciliar automáticamente';
+
+  if (!resultado.total) {
+    mostrarToast('No hay RH en este periodo', 'atencion');
+    return;
+  }
+
+  // ── Construir modal de preview ─────────────────────────────────
+  const { lista } = resultado;
+  const autoItems    = lista.filter(i => i.tipo === 'auto');
+  const posibItems   = lista.filter(i => i.tipo === 'posible');
+  const comboItems   = lista.filter(i => i.tipo === 'combo');
+  const yaConc       = lista.filter(i => i.tipo === 'ya_conciliado');
+  const sinMatch     = lista.filter(i => i.tipo === 'sin_match');
+
+  const confianzaLabel = c =>
+    c === 'alto'    ? '<span style="background:#166534;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">ALTA</span>'
+    : c === 'medio' ? '<span style="background:#854d0e;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">MEDIA</span>'
+    :                 '<span style="background:#2C5282;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">POSIBLE</span>';
+
+  const _itemHtml = (item, idx, preChecked) => {
+    const rh  = item.rh;
+    const mov = item.mejorMatch?.movimiento;
+    const key = `rhr-chk-${idx}`;
+    return `
+      <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:8px;background:var(--color-bg-card)">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+          <input type="checkbox" id="${key}" data-idx="${idx}"
+            style="margin-top:3px;width:16px;height:16px;flex-shrink:0;cursor:pointer"
+            ${preChecked ? 'checked' : ''}>
+          <div style="flex:1;min-width:0">
+            <!-- RH info -->
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+              <div>
+                <span style="font-weight:700;font-size:13px;color:var(--color-texto)">${escapar(rh.prestadores_servicios?.nombre || rh.nombre_emisor || '—')}</span>
+                ${rh.nro_doc_emisor ? `<span style="font-size:11px;color:var(--color-texto-suave);margin-left:6px">DNI: ${escapar(rh.nro_doc_emisor)}</span>` : ''}
+              </div>
+              <div style="font-size:13px;font-weight:700;color:var(--color-exito);white-space:nowrap">${formatearMoneda(rh.monto_bruto)}</div>
+            </div>
+            <!-- Movimiento sugerido -->
+            ${mov ? `<div style="padding:8px 10px;background:rgba(44,82,130,.06);border:1px solid rgba(44,82,130,.2);border-radius:6px;font-size:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <div>
+                  <div style="color:var(--color-secundario);font-weight:600">${formatearFecha(mov.fecha)} — N° Op: <span style="font-family:monospace;font-size:11px">${escapar(mov.numero_operacion||'—')}</span></div>
+                  <div style="color:var(--color-texto-suave);font-size:11px;margin-top:1px">${escapar((mov.descripcion||'').slice(0,60))}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0">
+                  <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(mov.importe)}</div>
+                  <div style="margin-top:3px">${confianzaLabel(item.mejorMatch.confianza)}</div>
+                </div>
+              </div>
+            </div>` : (item.tipo === 'combo'
+              ? `<div style="padding:8px 10px;background:rgba(113,71,224,.06);border:1px solid rgba(113,71,224,.2);border-radius:6px;font-size:12px;color:var(--color-texto-suave)">
+                  🔗 Pago en ${item.combo.cuotas} cuotas: ${item.combo.movimientos.map(m=>`${formatearFecha(m.fecha)} ${formatearMoneda(m.importe)}`).join(' + ')}
+                </div>`
+              : '')}
+          </div>
+        </label>
+      </div>`;
+  };
+
+  const itemsHtml = [
+    ...autoItems.map((it, i) => _itemHtml(it, lista.indexOf(it), true)),
+    ...posibItems.map((it, i)  => _itemHtml(it, lista.indexOf(it), false)),
+    ...comboItems.map((it, i)  => _itemHtml(it, lista.indexOf(it), false)),
+  ].join('');
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:700px;width:95%;max-height:90vh;display:flex;flex-direction:column">
+        <div class="modal-header" style="flex-shrink:0">
+          <h3>⚡ Preview de Conciliación RH — ${String(mes).padStart(2,'0')}/${anio}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+
+          <!-- Resumen stats -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:16px">
+            <div style="padding:10px;background:#166534;border-radius:8px;color:#fff;text-align:center">
+              <div style="font-size:20px;font-weight:700">${autoItems.length}</div>
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">✅ Auto-match</div>
+            </div>
+            <div style="padding:10px;background:#854d0e;border-radius:8px;color:#fff;text-align:center">
+              <div style="font-size:20px;font-weight:700">${posibItems.length}</div>
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">⚠️ Posibles</div>
+            </div>
+            <div style="padding:10px;background:#2C5282;border-radius:8px;color:#fff;text-align:center">
+              <div style="font-size:20px;font-weight:700">${comboItems.length}</div>
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">🔗 Combos</div>
+            </div>
+            <div style="padding:10px;background:#718096;border-radius:8px;color:#fff;text-align:center">
+              <div style="font-size:20px;font-weight:700">${yaConc.length}</div>
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">✔ Ya concil.</div>
+            </div>
+            <div style="padding:10px;background:#C53030;border-radius:8px;color:#fff;text-align:center">
+              <div style="font-size:20px;font-weight:700">${sinMatch.length}</div>
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">❌ Sin match</div>
+            </div>
+          </div>
+
+          ${(autoItems.length || posibItems.length || comboItems.length) ? `
+          <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:10px">
+            ✅ <strong>Auto-match</strong> = DNI/nombre exacto — pre-seleccionados.
+            ⚠️ <strong>Posibles</strong> = solo monto — revisa antes de confirmar.
+            Marca los que deseas aplicar y haz clic en "Aplicar seleccionados".
+          </p>
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <button onclick="document.querySelectorAll('[id^=rhr-chk-]').forEach(c=>c.checked=true)"
+              style="padding:5px 12px;border:1px solid var(--color-borde);border-radius:6px;background:none;cursor:pointer;font-size:12px;font-family:var(--font);color:var(--color-texto)">
+              ☑ Marcar todos</button>
+            <button onclick="document.querySelectorAll('[id^=rhr-chk-]').forEach(c=>c.checked=false)"
+              style="padding:5px 12px;border:1px solid var(--color-borde);border-radius:6px;background:none;cursor:pointer;font-size:12px;font-family:var(--font);color:var(--color-texto)">
+              ☐ Desmarcar todos</button>
+          </div>
+          ${itemsHtml}
+          ` : `<div style="padding:24px;text-align:center;color:var(--color-texto-suave)">
+            ${yaConc.length ? `${yaConc.length} RH ya están conciliados. ` : ''}
+            ${sinMatch.length ? `${sinMatch.length} sin match posible.` : 'No hay nuevos matches para este periodo.'}
+          </div>`}
+        </div>
+        <div class="modal-footer" style="flex-shrink:0;gap:8px">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+          ${(autoItems.length || posibItems.length || comboItems.length) ? `
+          <button class="btn btn-primario" id="rhr-btn-aplicar"
+            onclick="_rhAplicarSeleccionados(${JSON.stringify(lista.map(i=>({
+              tipo: i.tipo,
+              rhId: i.rh.id,
+              movId: i.mejorMatch?.movimiento?.id || null,
+              confianza: i.mejorMatch?.confianza || null,
+              nivel: i.mejorMatch?.nivel || null,
+              comboMovIds: i.combo?.movimientos?.map(m=>m.id) || [],
+            })))})">
+            ✅ Aplicar seleccionados
+          </button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Aplica solo los items seleccionados en el modal de preview ────
+async function _rhAplicarSeleccionados(listaPlana) {
+  const btn = document.getElementById('rhr-btn-aplicar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+
+  const checks = document.querySelectorAll('[id^=rhr-chk-]');
+  let ok = 0, errores = 0;
+  const hoy = new Date().toISOString();
+  const usuarioId = perfil_usuario?.id || null;
+
+  for (const chk of checks) {
+    if (!chk.checked) continue;
+    const idx  = parseInt(chk.dataset.idx, 10);
+    const item = listaPlana[idx];
+    if (!item) continue;
+
+    if (item.tipo === 'auto' || item.tipo === 'posible') {
+      if (!item.movId) continue;
+      const autoConf = item.nivel <= 2;
+      const { error } = await _supabase.from('rh_movimiento_links').upsert({
+        empresa_id:      empresa_activa.id,
+        rh_id:           item.rhId,
+        movimiento_id:   item.movId,
+        nivel_confianza: item.confianza || 'medio',
+        es_parcial:      false,
+        monto_parcial:   null,
+        confirmado_por:  usuarioId,
+        confirmado_en:   hoy,
+      }, { onConflict: 'rh_id,movimiento_id', ignoreDuplicates: true });
+      if (!error) {
+        // Actualizar tesoreria_mbd via confirmarLinkRH
+        await confirmarLinkRH(item.rhId, item.movId, usuarioId);
+        ok++;
+      } else {
+        errores++;
+      }
+    } else if (item.tipo === 'combo') {
+      let comboOk = true;
+      for (const movId of item.comboMovIds) {
+        const { error } = await _supabase.from('rh_movimiento_links').upsert({
+          empresa_id:      empresa_activa.id,
+          rh_id:           item.rhId,
+          movimiento_id:   movId,
+          nivel_confianza: 'posible',
+          es_parcial:      true,
+          monto_parcial:   null,
+          confirmado_por:  usuarioId,
+          confirmado_en:   hoy,
+        }, { onConflict: 'rh_id,movimiento_id', ignoreDuplicates: true });
+        if (!error) await confirmarLinkRH(item.rhId, movId, usuarioId);
+        else comboOk = false;
+      }
+      if (comboOk) ok++;
+      else errores++;
+    }
+  }
+
+  // Cerrar modal
+  document.querySelector('.modal-overlay')?.remove();
+  mostrarToast(
+    `✅ ${ok} conciliacion${ok !== 1 ? 'es' : ''} aplicada${ok !== 1 ? 's' : ''}${errores ? ` · ${errores} con error` : ''}`,
+    ok > 0 ? 'exito' : 'error',
+    5000
+  );
+  cargarRHRecibidas();
 }
 
 // ── Ver links de un RH ────────────────────────────────────────────
@@ -783,4 +986,143 @@ async function exportarExcelRHRecibidas() {
   XLSX.utils.book_append_sheet(wb, ws, 'RH Recibidas');
   XLSX.writeFile(wb, `RH_Recibidas_${empresa_activa.nombre_corto}_${anio}${mes}.xlsx`);
   mostrarToast('Archivo exportado.', 'exito');
+}
+
+// ── Historial de conciliación RH — links confirmados ─────────────
+async function rhVerHistorialConciliacion() {
+  const mes  = document.getElementById('rhr-mes')?.value;
+  const anio = document.getElementById('rhr-anio')?.value;
+  if (!mes || !anio) { mostrarToast('Selecciona mes y año', 'atencion'); return; }
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:750px;width:95%;max-height:90vh;display:flex;flex-direction:column">
+        <div class="modal-header" style="flex-shrink:0">
+          <h3>📋 Historial de Conciliación RH — ${String(mes).padStart(2,'0')}/${anio}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <div class="cargando"><div class="spinner"></div><span>Cargando historial…</span></div>
+        </div>
+        <div class="modal-footer" style="flex-shrink:0">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Cargar datos
+  const desde = `${anio}-${String(mes).padStart(2,'0')}-01`;
+  const hasta  = `${anio}-${String(mes).padStart(2,'0')}-${new Date(anio, mes, 0).getDate()}`;
+
+  const [{ data: rhList }, { data: links }] = await Promise.all([
+    _supabase.from('rh_registros')
+      .select('id, numero_rh, fecha_emision, monto_bruto, monto_neto, nombre_emisor, nro_doc_emisor, prestadores_servicios(nombre,dni)')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .gte('fecha_emision', desde).lte('fecha_emision', hasta)
+      .order('fecha_emision'),
+    _supabase.from('rh_movimiento_links')
+      .select('*, movimientos(id, fecha, importe, descripcion, numero_operacion)')
+      .in('rh_id', (await _supabase.from('rh_registros').select('id')
+        .eq('empresa_operadora_id', empresa_activa.id)
+        .gte('fecha_emision', desde).lte('fecha_emision', hasta)
+      ).data?.map(r => r.id) || [])
+      .not('confirmado_en', 'is', null)
+      .order('confirmado_en', { ascending: false }),
+  ]);
+
+  const linksByRH = {};
+  (links || []).forEach(l => {
+    if (!linksByRH[l.rh_id]) linksByRH[l.rh_id] = [];
+    linksByRH[l.rh_id].push(l);
+  });
+
+  const rhConLinks = (rhList || []).filter(r => linksByRH[r.id]?.length);
+  const body = document.querySelector('#modal-container .modal-body');
+  if (!body) return;
+
+  if (!rhConLinks.length) {
+    body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--color-texto-suave)">
+      No hay conciliaciones confirmadas en este periodo.</div>`;
+    return;
+  }
+
+  const _TD = 'padding:7px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;font-size:12px';
+
+  body.innerHTML = `
+    <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:12px">
+      ${rhConLinks.length} RH con conciliaciones confirmadas. Puedes revertir individualmente.
+    </p>
+    <div style="overflow-x:auto;border:1px solid var(--color-borde);border-radius:8px">
+      <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;background:var(--color-bg-card)">
+        <thead>
+          <tr style="background:var(--color-primario);color:#fff">
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Fecha RH</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">N° RH</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Prestador</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap;text-align:right">Monto</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Movimiento vinculado</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Confianza</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Confirmado</th>
+            <th style="padding:9px 10px;font-size:11px;white-space:nowrap">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rhConLinks.flatMap(rh => (linksByRH[rh.id] || []).map(l => {
+            const mov = l.movimientos;
+            const confChip = l.nivel_confianza === 'alto'
+              ? '<span style="background:#166534;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">ALTA</span>'
+              : l.nivel_confianza === 'medio'
+              ? '<span style="background:#854d0e;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">MEDIA</span>'
+              : '<span style="background:#2C5282;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">POSIBLE</span>';
+            return `<tr
+              onmouseover="this.style.background='var(--color-hover)'"
+              onmouseout="this.style.background=''">
+              <td style="${_TD};white-space:nowrap">${formatearFecha(rh.fecha_emision)}</td>
+              <td style="${_TD};font-weight:600;color:var(--color-secundario)">${escapar(rh.numero_rh||'—')}</td>
+              <td style="${_TD};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                ${escapar((rh.prestadores_servicios?.nombre || rh.nombre_emisor || '—').slice(0,25))}</td>
+              <td style="${_TD};text-align:right;font-weight:700;color:var(--color-exito)">${formatearMoneda(rh.monto_neto)}</td>
+              <td style="${_TD};max-width:200px">
+                ${mov ? `<div style="font-size:11px;font-family:monospace">${escapar(mov.numero_operacion||'—')}</div>
+                  <div style="font-size:11px;color:var(--color-texto-suave)">${formatearFecha(mov.fecha)} · ${formatearMoneda(mov.importe)}</div>` : '—'}
+              </td>
+              <td style="${_TD};text-align:center">${confChip}</td>
+              <td style="${_TD};font-size:11px;white-space:nowrap">${l.confirmado_en ? formatearFecha(l.confirmado_en.slice(0,10)) : '—'}</td>
+              <td style="${_TD}">
+                <button title="Revertir esta conciliación"
+                  onclick="_rhRevertirLink('${rh.id}','${l.movimiento_id}')"
+                  style="padding:4px 10px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid rgba(197,48,48,.3);border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)">
+                  ↩ Revertir
+                </button>
+              </td>
+            </tr>`;
+          })).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ── Revertir un link de conciliación RH ────────────────────────────
+async function _rhRevertirLink(rhId, movId) {
+  if (!await confirmar('¿Revertir esta conciliación? El link se eliminará y el movimiento bancario volverá a PENDIENTE.',
+    { btnOk: 'Sí, revertir', btnColor: '#C53030' })) return;
+
+  // Eliminar link
+  await eliminarLinkRH(rhId, movId);
+
+  // Revertir estado en tesoreria_mbd
+  if (movId) {
+    await _supabase.from('tesoreria_mbd')
+      .update({ entrega_doc: 'PENDIENTE', nro_factura_doc: null, tipo_doc: null, estado_conciliacion: null })
+      .eq('id', movId);
+  }
+
+  mostrarToast('↩ Conciliación revertida', 'exito');
+
+  // Recargar el historial si el modal sigue abierto
+  const overlay = document.querySelector('.modal-overlay');
+  if (overlay) overlay.remove();
+  rhVerHistorialConciliacion();
+  cargarRHRecibidas();
 }

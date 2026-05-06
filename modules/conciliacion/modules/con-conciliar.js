@@ -764,6 +764,8 @@ function _rowMatchHtml(item, idx, prefijo, _TD) {
           onclick="_verComprobante('${key}')">👁️</button>
         <button title="Buscar comprobante manualmente" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px"
           onclick="_abrirPanelManualPorKey('${key}')">🔍</button>
+        <button title="Ver documentos enlazados a este movimiento" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px"
+          onclick="_verDocumentosEnlazados('${m.id}','${escapar(m.nro_operacion_bancaria||'')}')">🔗</button>
         <button title="Rechazar sugerencia" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
           onclick="_rechazarMatch(${idx},'${prefijo}')">✕</button>
       </div>
@@ -819,7 +821,7 @@ function _rowMultiMatchHtml(item, idx, _TD) {
   }).join('');
 }
 
-// ── Vista rápida del comprobante sugerido ─────────────────────────
+// ── Vista completa del comprobante sugerido (👁️) ─────────────────
 function _verComprobante(key) {
   const item = _conItemCache[key];
   if (!item) { mostrarToast('Dato no disponible', 'atencion'); return; }
@@ -827,91 +829,166 @@ function _verComprobante(key) {
   const m = item.mov;
   const d = item.doc;
 
-  const tipoBg  = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
+  const tipoBg   = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
   const tipoIcon = d._tipo === 'RH' ? '🧾' : d._tipo === 'VENTA' ? '📄' : '🛒';
 
-  // Detalles extras según tipo
-  const extrasDoc = d._tipo === 'RH'
-    ? `<div class="__cv-fila"><span class="__cv-lbl">DNI prestador</span><span>${escapar(d._ruc || '—')}</span></div>`
-    : `<div class="__cv-fila"><span class="__cv-lbl">RUC proveedor</span><span>${escapar(d._ruc || '—')}</span></div>`;
+  const _f = (lbl, val, bold = false) => val
+    ? `<div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:13px;border-bottom:1px solid rgba(128,128,128,.1)">
+        <span style="color:var(--color-texto-suave);font-size:12px;flex-shrink:0;margin-right:12px;min-width:130px">${lbl}</span>
+        <span style="${bold?'font-weight:700;':''}text-align:right;word-break:break-all">${val}</span>
+       </div>`
+    : '';
+
+  // ── Campos del comprobante según tipo ───────────────────────────
+  let docCampos = '';
+  if (d._tipo === 'COMPRA') {
+    docCampos = [
+      _f('N° Comprobante',  `<strong style="color:var(--color-secundario)">${escapar(d._ndoc||'—')}</strong>`),
+      _f('Proveedor',       escapar(d.nombre_proveedor||d._proveedor||'—'), true),
+      _f('RUC proveedor',   escapar(d.ruc_proveedor||d._ruc||'—')),
+      _f('Tipo doc.',       escapar(d.tipo_documento_codigo||d.tipo_cp_doc||'—')),
+      _f('Fecha emisión',   formatearFecha(d.fecha_emision||d._fecha)),
+      _f('Período',         escapar(d.periodo||'—')),
+      _f('Base imponible',  `<strong>${formatearMoneda(d.base_imponible||0)}</strong>`),
+      _f('IGV',             formatearMoneda(d.igv||0)),
+      _f('Total',           `<strong style="color:var(--color-exito);font-size:15px">${formatearMoneda(d.total||d._total||0, d.moneda==='USD'?'USD':'PEN')}</strong>`),
+      _f('Moneda',          escapar(d.moneda||'PEN')),
+      _f('Tipo de cambio',  d.tipo_cambio && d.tipo_cambio !== 1 ? String(d.tipo_cambio) : null),
+      _f('Estado',          escapar(d.estado||'—')),
+    ].join('');
+  } else if (d._tipo === 'VENTA') {
+    docCampos = [
+      _f('N° Comprobante',  `<strong style="color:var(--color-secundario)">${escapar(d._ndoc||'—')}</strong>`),
+      _f('Cliente',         escapar(d.nombre_cliente||d.razon_social||d._proveedor||'—'), true),
+      _f('RUC / DNI',       escapar(d.ruc_cliente||d.ruc||d._ruc||'—')),
+      _f('Tipo doc.',       escapar(d.tipo_documento_codigo||d.tipo_cp_doc||'—')),
+      _f('Fecha emisión',   formatearFecha(d.fecha_emision||d._fecha)),
+      _f('Período',         escapar(d.periodo||'—')),
+      _f('Base imponible',  `<strong>${formatearMoneda(d.base_imponible||0)}</strong>`),
+      _f('IGV',             formatearMoneda(d.igv||0)),
+      _f('Total',           `<strong style="color:var(--color-exito);font-size:15px">${formatearMoneda(d.total||d._total||0, d.moneda==='USD'?'USD':'PEN')}</strong>`),
+      _f('Moneda',          escapar(d.moneda||'PEN')),
+      _f('Estado',          escapar(d.estado||'—')),
+    ].join('');
+  } else { // RH
+    docCampos = [
+      _f('N° RH',           `<strong style="color:var(--color-secundario)">${escapar(d._ndoc||'—')}</strong>`),
+      _f('Prestador',       escapar(d.prestadores_servicios?.nombre||d._proveedor||'—'), true),
+      _f('DNI prestador',   escapar(d.prestadores_servicios?.dni||d._ruc||'—')),
+      _f('Concepto',        escapar(d.concepto||'—')),
+      _f('Fecha emisión',   formatearFecha(d.fecha_emision||d._fecha)),
+      _f('Período',         escapar(d.periodo||'—')),
+      _f('Renta bruta',     `<strong>${formatearMoneda(d.monto_bruto||0)}</strong>`),
+      _f('Retención',       formatearMoneda(d.monto_retencion||0)),
+      _f('Renta neta',      `<strong style="color:var(--color-exito);font-size:15px">${formatearMoneda(d.monto_neto||d._total||0)}</strong>`),
+      _f('Moneda',          escapar(d.moneda||'PEN')),
+      _f('Estado',          escapar(d.estado||'—')),
+    ].join('');
+  }
+
+  // ── Campos del movimiento bancario ──────────────────────────────
+  const movCampos = [
+    _f('N° Operación',     `<span style="font-family:monospace">${escapar(m.nro_operacion_bancaria||'—')}</span>`),
+    _f('Fecha depósito',   formatearFecha(m.fecha_deposito)),
+    _f('Descripción banco',escapar(m.descripcion||'—')),
+    _f('Proveedor / Empresa', escapar(m.proveedor_empresa_personal||'—'), true),
+    _f('RUC / DNI',        escapar(m.ruc_dni||'—')),
+    _f('Monto',            `<strong style="color:${Number(m.monto)<0?'var(--color-critico)':'var(--color-exito)'};font-size:15px">${formatearMoneda(m.monto, m.moneda==='USD'?'USD':'PEN')}</strong>`),
+    _f('Moneda',           escapar(m.moneda||'PEN')),
+    _f('Concepto',         escapar(m.concepto||'—')),
+    _f('Proyecto',         m.proyecto ? escapar(m.proyecto) : null),
+    _f('Empresa',          m.empresa ? escapar(m.empresa) : null),
+    _f('Cotización',       m.cotizacion ? escapar(m.cotizacion) : null),
+    _f('OC',               m.oc ? escapar(m.oc) : null),
+    _f('Autorización',     m.autorizacion ? escapar(m.autorizacion) : null),
+    _f('Detalles compra',  m.detalles_compra_servicio ? escapar(m.detalles_compra_servicio) : null),
+    _f('Observaciones',    m.observaciones ? escapar(m.observaciones) : null),
+    _f('Estado actual',    `<span style="background:${m.entrega_doc==='EMITIDO'?'#2F855A':'#C53030'};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${escapar(m.entrega_doc||'PENDIENTE')}</span>`),
+    _f('Estado conciliación', m.estado_conciliacion ? `<span style="color:${m.estado_conciliacion==='conciliado'?'#22c55e':'#f59e0b'};font-weight:700">${escapar(m.estado_conciliacion)}</span>` : null),
+  ].join('');
+
+  // ── Diferencia de montos ─────────────────────────────────────────
+  const montoMov = Math.abs(Number(m.monto));
+  const montoDoc = Math.abs(Number(d._total || d.monto_neto || 0));
+  const diff     = Math.abs(montoMov - montoDoc);
+  const diffPct  = montoDoc > 0 ? Math.round(diff / montoDoc * 100) : 0;
+  const diffHtml = diff === 0
+    ? '<span style="color:#22c55e;font-weight:700">✓ Montos exactos</span>'
+    : `<span style="color:${diffPct>5?'#ef4444':'#f59e0b'}">Diferencia: ${formatearMoneda(diff)} (${diffPct}%)</span>`;
 
   const overlay = document.createElement('div');
-  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);
-    display:flex;align-items:center;justify-content:center;z-index:9999`;
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:12px';
 
   overlay.innerHTML = `
-    <div style="background:var(--color-bg-card);border-radius:12px;padding:0;max-width:480px;width:94%;
-      box-shadow:0 20px 60px rgba(0,0,0,.4);border:1px solid var(--color-borde);overflow:hidden">
+    <div style="background:var(--color-bg-card);border-radius:12px;padding:0;max-width:680px;width:100%;
+      box-shadow:0 20px 60px rgba(0,0,0,.4);border:1px solid var(--color-borde);overflow:hidden;
+      max-height:calc(100vh - 24px);display:flex;flex-direction:column">
 
       <!-- Header -->
-      <div style="background:${tipoBg};padding:16px 20px;display:flex;align-items:center;gap:10px">
-        <span style="font-size:22px">${tipoIcon}</span>
+      <div style="background:${tipoBg};padding:16px 20px;display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:24px">${tipoIcon}</span>
         <div>
-          <div style="color:#fff;font-weight:700;font-size:15px">${escapar(d._ndoc || '—')}</div>
-          <div style="color:rgba(255,255,255,.75);font-size:12px">Comprobante sugerido · ${escapar(d._tipo || '')}</div>
+          <div style="color:#fff;font-weight:700;font-size:16px">${escapar(d._ndoc || '—')}</div>
+          <div style="color:rgba(255,255,255,.8);font-size:12px">Vista previa completa · ${escapar(d._tipo || '')} ${_scoreChip(item.score)}</div>
         </div>
         <button onclick="this.closest('[style*=fixed]').remove()"
           style="margin-left:auto;background:rgba(255,255,255,.2);border:none;border-radius:50%;
-            width:28px;height:28px;cursor:pointer;color:#fff;font-size:16px;line-height:1">✕</button>
+            width:30px;height:30px;cursor:pointer;color:#fff;font-size:18px;line-height:1">✕</button>
       </div>
 
-      <!-- Cuerpo -->
-      <style>
-        .__cv-sec { padding:14px 20px; border-bottom:1px solid var(--color-borde); }
-        .__cv-sec:last-child { border-bottom:none; }
-        .__cv-titulo { font-size:10px;font-weight:700;color:var(--color-texto-suave);
-          text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px; }
-        .__cv-fila { display:flex;justify-content:space-between;align-items:baseline;
-          font-size:13px;color:var(--color-texto);padding:3px 0; }
-        .__cv-lbl { color:var(--color-texto-suave);font-size:12px;flex-shrink:0;margin-right:12px; }
-        .__cv-monto { font-size:22px;font-weight:700;color:var(--color-exito); }
-      </style>
-
-      <!-- Comprobante -->
-      <div class="__cv-sec">
-        <div class="__cv-titulo">📋 Datos del comprobante</div>
-        <div class="__cv-fila"><span class="__cv-lbl">Número</span><strong style="color:var(--color-secundario)">${escapar(d._ndoc || '—')}</strong></div>
-        <div class="__cv-fila"><span class="__cv-lbl">Proveedor / Prestador</span><span>${escapar(d._proveedor || '—')}</span></div>
-        ${extrasDoc}
-        <div class="__cv-fila"><span class="__cv-lbl">Fecha emisión</span><span>${formatearFecha(d._fecha)}</span></div>
-        <div class="__cv-fila"><span class="__cv-lbl">Total</span><strong class="__cv-monto">${formatearMoneda(d._total, 'PEN')}</strong></div>
-      </div>
-
-      <!-- Movimiento bancario -->
-      <div class="__cv-sec">
-        <div class="__cv-titulo">🏦 Movimiento bancario</div>
-        <div class="__cv-fila"><span class="__cv-lbl">N° Operación</span><span style="font-family:monospace">${escapar(m.nro_operacion_bancaria || '—')}</span></div>
-        <div class="__cv-fila"><span class="__cv-lbl">Fecha depósito</span><span>${formatearFecha(m.fecha_deposito)}</span></div>
-        <div class="__cv-fila"><span class="__cv-lbl">Proveedor / Empresa</span><span>${escapar(m.proveedor_empresa_personal || '—')}</span></div>
-        <div class="__cv-fila"><span class="__cv-lbl">Monto</span>
-          <strong style="color:${Number(m.monto)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda(m.monto, m.moneda==='USD'?'USD':'PEN')}</strong>
+      <!-- Diferencia rápida -->
+      <div style="padding:10px 20px;background:rgba(128,128,128,.05);border-bottom:1px solid var(--color-borde);
+        display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;flex-shrink:0">
+        <div style="font-size:12px;color:var(--color-texto-suave)">
+          🏦 Mov: <strong>${formatearMoneda(montoMov)}</strong>
+          &nbsp;·&nbsp;
+          📋 Doc: <strong>${formatearMoneda(montoDoc)}</strong>
+          &nbsp;·&nbsp;${diffHtml}
+        </div>
+        <div style="font-size:12px;color:var(--color-texto-suave)">
+          ${item.score >= 85 ? '✅ Alta confianza' : item.score >= 60 ? '⚠️ Media confianza' : '❌ Baja confianza'}
         </div>
       </div>
 
-      <!-- Score -->
-      <div class="__cv-sec" style="display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div class="__cv-titulo" style="margin-bottom:4px">🎯 Confianza del match</div>
-          <div style="font-size:12px;color:var(--color-texto-suave)">
-            ${item.score >= 85 ? '✅ Alta — se puede aprobar con confianza'
-              : item.score >= 60 ? '⚠️ Media — revisa antes de aprobar'
-              : '❌ Baja — verificar manualmente'}
+      <!-- Cuerpo en 2 columnas -->
+      <div style="flex:1;overflow-y:auto;padding:0">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0">
+
+          <!-- Col izq: Comprobante -->
+          <div style="padding:16px 20px;border-right:1px solid var(--color-borde)">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+              color:var(--color-texto-suave);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+              ${tipoIcon} Comprobante
+              <span style="background:${tipoBg};color:#fff;padding:2px 6px;border-radius:4px;font-size:9px">${escapar(d._tipo||'')}</span>
+            </div>
+            ${docCampos || '<div style="color:var(--color-texto-suave);font-size:12px">Sin datos</div>'}
+          </div>
+
+          <!-- Col der: Movimiento bancario -->
+          <div style="padding:16px 20px">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+              color:var(--color-texto-suave);margin-bottom:10px">🏦 Movimiento bancario</div>
+            ${movCampos || '<div style="color:var(--color-texto-suave);font-size:12px">Sin datos</div>'}
           </div>
         </div>
-        ${_scoreChip(item.score)}
       </div>
 
       <!-- Acciones -->
-      <div style="padding:14px 20px;display:flex;gap:8px;justify-content:flex-end">
+      <div style="padding:14px 20px;border-top:1px solid var(--color-borde);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;flex-wrap:wrap">
+        <button onclick="_verDocumentosEnlazados('${m.id}','${escapar(m.nro_operacion_bancaria||'')}');this.closest('[style*=fixed]').remove()"
+          style="padding:8px 14px;border:1px solid rgba(113,71,224,.4);border-radius:8px;background:rgba(113,71,224,.1);
+            color:#7147e0;cursor:pointer;font-size:12px;font-family:var(--font)">
+          🔗 Ver enlaces
+        </button>
         <button onclick="this.closest('[style*=fixed]').remove()"
           style="padding:8px 16px;border:1px solid var(--color-borde);border-radius:8px;
             background:var(--color-bg-card);color:var(--color-texto);cursor:pointer;font-size:13px;font-family:var(--font)">
           Cerrar
         </button>
         <button onclick="this.closest('[style*=fixed]').remove(); _aprobarMatch('${m.id}','${d._tipo}','${d.id}',${item.score},'${item.score>=85?'EXACTO':'POSIBLE'}',${parseInt(key.split('_')[1])},'${key.split('_')[0]}')"
-          style="padding:8px 16px;border:none;border-radius:8px;background:#2C5282;color:#fff;
-            cursor:pointer;font-size:13px;font-family:var(--font);font-weight:500">
-          ✓ Aprobar este match
+          style="padding:8px 18px;border:none;border-radius:8px;background:#2C5282;color:#fff;
+            cursor:pointer;font-size:13px;font-family:var(--font);font-weight:600">
+          ✓ Aprobar match
         </button>
       </div>
     </div>`;
@@ -1030,6 +1107,8 @@ function _renderTablaSinMatch(wrap) {
                     onclick="_guardarClasificacion('${m.id}',${idx})">Guardar</button>
                   <button title="Buscar comprobante manualmente" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px"
                     onclick="_abrirPanelManual('${m.id}',${m.monto},'${m.fecha_deposito || ''}','${(m.nro_operacion_bancaria||'').replace(/'/g,'') }')">🔍</button>
+                  <button title="Ver documentos enlazados a este movimiento" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px"
+                    onclick="_verDocumentosEnlazados('${m.id}','${escapar(m.nro_operacion_bancaria||'')}')">🔗</button>
                 </div>
               </td>
             </tr>`;
@@ -1314,13 +1393,17 @@ async function _panelBuscar(movId) {
   resEl.innerHTML = '<div class="spinner" style="margin:10px auto"></div>';
 
   const periodo = _con_periodo_actual;
-  const [resC, resR] = await Promise.all([
-    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empresa_activa.id).eq('periodo', periodo),
-    _supabase.from('rh_registros').select('*, prestadores_servicios(nombre, dni)').eq('empresa_operadora_id', empresa_activa.id).eq('periodo', periodo),
+  // Construir ventana de 9 meses para búsqueda manual también
+  const periodosVentana = periodo ? _conPeriodosAdyacentes(periodo) : [periodo];
+  const [resC, resV, resR] = await Promise.all([
+    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empresa_activa.id).in('periodo', periodosVentana),
+    _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id', empresa_activa.id).in('periodo', periodosVentana),
+    _supabase.from('rh_registros').select('*, prestadores_servicios(nombre, dni)').eq('empresa_operadora_id', empresa_activa.id).in('periodo', periodosVentana),
   ]);
 
   const todos = [
     ...(resC.data||[]).map(d=>({ ...d, _tipo:'COMPRA', _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_proveedor||'', _total: d.total||0 })),
+    ...(resV.data||[]).map(d=>({ ...d, _tipo:'VENTA',  _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_cliente||d.razon_social||'', _total: d.total||0 })),
     ...(resR.data||[]).map(d=>({ ...d, _tipo:'RH',     _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _total: d.monto_neto||0 })),
   ].filter(d => {
     const ndocL = (d._ndoc||'').toLowerCase();
@@ -1724,6 +1807,110 @@ async function _renderHistorial(wrap) {
           }).join('')}
         </tbody>
       </table>
+    </div>`;
+}
+
+// ── Ver documentos enlazados al movimiento bancario (🔗) ─────────────
+async function _verDocumentosEnlazados(movId, nroOp) {
+  // Overlay de carga
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.innerHTML = `<div style="background:var(--color-bg-card);border-radius:12px;padding:32px;min-width:320px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+    <div class="spinner" style="margin:0 auto 12px"></div><div style="font-size:13px;color:var(--color-texto-suave)">Cargando enlaces…</div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  // Obtener movimiento actual
+  const [resMov, resConcils] = await Promise.all([
+    _supabase.from('tesoreria_mbd').select('*').eq('id', movId).maybeSingle(),
+    _supabase.from('conciliaciones').select('*').eq('movimiento_id', movId).order('created_at', { ascending: false }),
+  ]);
+
+  const mov     = resMov.data;
+  const concils = resConcils.data || [];
+
+  const _fila = (lbl, val) => `<div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:13px;border-bottom:1px solid var(--color-borde)">
+    <span style="color:var(--color-texto-suave);font-size:12px;flex-shrink:0;margin-right:16px">${lbl}</span>
+    <span style="font-weight:500;text-align:right">${val}</span></div>`;
+
+  const chipTipo = tipo => {
+    const bg = tipo === 'RH' ? '#744210' : tipo === 'VENTA' ? '#276749' : '#2C5282';
+    return `<span style="background:${bg};color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escapar(tipo)}</span>`;
+  };
+
+  const estadoMov = mov?.entrega_doc || 'PENDIENTE';
+  const estadoColor = estadoMov === 'EMITIDO' ? '#22c55e' : estadoMov === 'OBSERVADO' ? '#f59e0b' : '#ef4444';
+
+  const concilsHtml = concils.length
+    ? concils.map(c => `
+      <div style="margin-top:10px;padding:10px 14px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.25);border-radius:8px;font-size:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-weight:700;color:var(--color-secundario)">${chipTipo(c.doc_tipo || '—')}</span>
+          ${c.score != null ? _scoreChip(c.score) : ''}
+        </div>
+        ${c.clasificacion_manual ? _fila('Clasificación', `<strong>${escapar(c.clasificacion_manual)}</strong>`) : ''}
+        ${_fila('Tipo match', `<span style="font-family:monospace;font-size:11px">${escapar(c.tipo_match || '—')}</span>`)}
+        ${_fila('Estado',     `<span style="color:${c.estado === 'APROBADO' ? '#22c55e' : '#ef4444'};font-weight:700">${escapar(c.estado || '—')}</span>`)}
+        ${_fila('Fecha reg.', `${c.created_at ? formatearFecha(c.created_at.slice(0,10)) : '—'}`)}
+        <div style="margin-top:8px;text-align:right">
+          <button onclick="document.querySelector('[style*=fixed][style*=9999]')?.remove();_conRevertir('${movId}')"
+            style="padding:4px 12px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid rgba(197,48,48,.3);border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)">
+            ↩ Revertir esta conciliación
+          </button>
+        </div>
+      </div>`).join('')
+    : `<div style="padding:20px;text-align:center;color:var(--color-texto-suave);font-size:13px">
+        Sin registros de conciliación para este movimiento
+       </div>`;
+
+  overlay.innerHTML = `
+    <div style="background:var(--color-bg-card);border-radius:12px;padding:0;max-width:500px;width:94%;
+      box-shadow:0 20px 60px rgba(0,0,0,.4);border:1px solid var(--color-borde);overflow:hidden;max-height:90vh;overflow-y:auto">
+
+      <!-- Header -->
+      <div style="background:#7147e0;padding:16px 20px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:1">
+        <span style="font-size:22px">🔗</span>
+        <div>
+          <div style="color:#fff;font-weight:700;font-size:15px">Documentos enlazados</div>
+          <div style="color:rgba(255,255,255,.75);font-size:12px;font-family:monospace">${escapar(nroOp || movId)}</div>
+        </div>
+        <button onclick="this.closest('[style*=fixed]').remove()"
+          style="margin-left:auto;background:rgba(255,255,255,.2);border:none;border-radius:50%;
+            width:28px;height:28px;cursor:pointer;color:#fff;font-size:16px;line-height:1">✕</button>
+      </div>
+
+      <!-- Estado actual del movimiento -->
+      <div style="padding:14px 20px;border-bottom:1px solid var(--color-borde)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--color-texto-suave);margin-bottom:8px">Estado actual del movimiento</div>
+        ${mov ? `
+          ${_fila('N° Operación',   `<span style="font-family:monospace;font-size:11px">${escapar(mov.nro_operacion_bancaria || '—')}</span>`)}
+          ${_fila('Fecha',          formatearFecha(mov.fecha_deposito))}
+          ${_fila('Proveedor',      escapar(mov.proveedor_empresa_personal || '—'))}
+          ${_fila('Monto',          `<strong style="color:${Number(mov.monto)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda(mov.monto, mov.moneda==='USD'?'USD':'PEN')}</strong>`)}
+          ${_fila('Estado doc',     `<span style="color:${estadoColor};font-weight:700">${escapar(estadoMov)}</span>`)}
+          ${_fila('N° Comprobante', mov.nro_factura_doc ? `<strong style="color:var(--color-secundario)">${escapar(mov.nro_factura_doc)}</strong>` : '<span style="color:var(--color-texto-suave)">Sin comprobante</span>')}
+          ${mov.tipo_doc ? _fila('Tipo DOC', chipTipo(mov.tipo_doc)) : ''}
+          ${mov.estado_conciliacion ? _fila('Conciliación', `<span style="color:${mov.estado_conciliacion==='conciliado'?'#22c55e':'#f59e0b'};font-weight:700">${escapar(mov.estado_conciliacion)}</span>`) : ''}
+        ` : '<div style="color:var(--color-texto-suave);font-size:13px">No se encontró el movimiento</div>'}
+      </div>
+
+      <!-- Registros de conciliación -->
+      <div style="padding:14px 20px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--color-texto-suave);margin-bottom:4px">
+          Historial de conciliación (${concils.length} registro${concils.length !== 1 ? 's' : ''})
+        </div>
+        ${concilsHtml}
+      </div>
+
+      <!-- Pie -->
+      <div style="padding:14px 20px;border-top:1px solid var(--color-borde);display:flex;justify-content:flex-end">
+        <button onclick="this.closest('[style*=fixed]').remove()"
+          style="padding:8px 20px;border:1px solid var(--color-borde);border-radius:8px;
+            background:var(--color-bg-card);color:var(--color-texto);cursor:pointer;font-size:13px;font-family:var(--font)">
+          Cerrar
+        </button>
+      </div>
     </div>`;
 }
 

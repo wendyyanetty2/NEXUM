@@ -238,6 +238,56 @@ async function ejecutarMatchingAutomatico(empresaId, mes, anio, usuarioId) {
   return { ok, posibles, sinMatch, total: rhList.length };
 }
 
+// ── Calcula matches SIN guardar — para preview antes de confirmar ─
+async function _rhCalcularMatchesSinGuardar(empresaId, mes, anio) {
+  const desdeFiltro = `${anio}-${String(mes).padStart(2,'0')}-01`;
+  const hastaFiltro = `${anio}-${String(mes).padStart(2,'0')}-${new Date(anio, mes, 0).getDate()}`;
+
+  const { data: rhList } = await _supabase
+    .from('rh_registros')
+    .select('*, prestadores_servicios(nombre, dni)')
+    .eq('empresa_operadora_id', empresaId)
+    .gte('fecha_emision', desdeFiltro)
+    .lte('fecha_emision', hastaFiltro)
+    .neq('estado', 'ANULADO');
+
+  if (!rhList?.length) return { lista: [], total: 0 };
+
+  const movimientos = await _cargarMovimientosVentana(empresaId, mes, anio);
+  const resultado   = [];
+
+  for (const rh of rhList) {
+    // Verificar si ya tiene links guardados
+    const existing = await _linksExistentes(rh.id);
+    if (existing.length) {
+      resultado.push({ rh, tipo: 'ya_conciliado', matches: [], combo: null, existing });
+      continue;
+    }
+
+    const matches = _matchearRH(rh, movimientos);
+
+    if (!matches.length) {
+      const combo = _buscarCombinaciones(rh, movimientos);
+      if (combo) {
+        resultado.push({ rh, tipo: 'combo', matches: [], combo });
+      } else {
+        resultado.push({ rh, tipo: 'sin_match', matches: [], combo: null });
+      }
+    } else {
+      const mejor = matches[0];
+      resultado.push({
+        rh,
+        tipo:     mejor.nivel <= 2 ? 'auto' : 'posible',
+        matches,
+        mejorMatch: mejor,
+        combo: null,
+      });
+    }
+  }
+
+  return { lista: resultado, total: rhList.length };
+}
+
 // ── Confirma un link posible ──────────────────────────────────────
 async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
   const { error } = await _supabase
