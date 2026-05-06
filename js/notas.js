@@ -32,12 +32,12 @@
     const root = document.createElement('div');
     root.id = 'nexum-notas-root';
     root.innerHTML = `
-      <!-- Botón flotante -->
+      <!-- Botón flotante — esquina superior derecha, fuera de la tabla -->
       <div id="nexum-notas-fab" onclick="window.NEXUM_NOTAS.toggle()"
-        style="position:fixed;bottom:24px;right:24px;z-index:9000;cursor:pointer;
+        style="position:fixed;top:14px;right:80px;z-index:9000;cursor:pointer;
                background:var(--color-secundario,#2B6CB0);color:#fff;border-radius:50px;
-               padding:10px 18px;font-size:14px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.4);
-               display:flex;align-items:center;gap:8px;transition:transform .15s;user-select:none"
+               padding:7px 14px;font-size:13px;font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.35);
+               display:flex;align-items:center;gap:6px;transition:transform .15s;user-select:none"
         onmouseover="this.style.transform='scale(1.05)'"
         onmouseout="this.style.transform='scale(1)'">
         📝 Notas

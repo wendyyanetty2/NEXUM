@@ -78,6 +78,11 @@ async function renderTabMovimientos(area) {
               style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
               🗑️ Eliminar mes completo
             </button>
+            <button class="btn btn-sm" onclick="_movConciliarMes()"
+              title="Ir al módulo de Conciliación con el mes actual preseleccionado"
+              style="background:#276749;color:#fff;border:none;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
+              ⚡ Conciliar mes
+            </button>
             <button class="btn btn-primario btn-sm" onclick="abrirModalMovimiento(null)"
               title="Agregar un nuevo movimiento manualmente">+ Nuevo</button>
           </div>
@@ -512,19 +517,33 @@ function _movCancelarSeleccion() {
 }
 
 // ── Genera una fila de campo editable con checkbox ──────────────────
-function _movFilaCampo(campo, label, tipo, opciones) {
+// tipo: 'text' | 'select' | 'combobox'
+// opciones: array {v,t} para select
+// listaItems: array de strings para combobox (datalist)
+function _movFilaCampo(campo, label, tipo, opciones, listaItems) {
   const inputId = `mas-${campo}`;
   const chkId   = `chk-mas-${campo}`;
+  const listId  = `dl-mas-${campo}`;
   const inputEstilo = `width:100%;padding:6px 10px;border:1px solid var(--color-borde);
     border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);
     font-family:var(--font);font-size:13px;opacity:.4;cursor:not-allowed;box-sizing:border-box`;
 
-  const inputHtml = tipo === 'select'
-    ? `<select id="${inputId}" disabled style="${inputEstilo}">
-        ${opciones.map(o => `<option value="${o.v}">${o.t}</option>`).join('')}
-       </select>`
-    : `<input type="text" id="${inputId}" disabled placeholder="${label}"
-        style="${inputEstilo}">`;
+  let inputHtml;
+  if (tipo === 'select') {
+    inputHtml = `<select id="${inputId}" disabled style="${inputEstilo}">
+      ${(opciones||[]).map(o => `<option value="${o.v}">${o.t}</option>`).join('')}
+    </select>`;
+  } else if (tipo === 'combobox') {
+    inputHtml = `
+      <input type="text" id="${inputId}" disabled placeholder="${label}"
+        list="${listId}" style="${inputEstilo}">
+      <datalist id="${listId}">
+        ${(listaItems||[]).map(i=>`<option value="${escapar(i)}">`).join('')}
+      </datalist>`;
+  } else {
+    inputHtml = `<input type="text" id="${inputId}" disabled placeholder="${label}"
+      style="${inputEstilo}">`;
+  }
 
   return `
     <div style="display:flex;gap:10px;align-items:flex-start;
@@ -555,7 +574,7 @@ function _movToggleCampo(campo, enabled) {
 }
 
 // ── Abrir modal de edición masiva ───────────────────────────────────
-function _movEditarMasivo() {
+async function _movEditarMasivo() {
   const n = mov_seleccionados.size;
   if (n === 0) return;
 
@@ -565,15 +584,12 @@ function _movEditarMasivo() {
     return;
   }
 
+  // Cargar catálogos para los dropdowns
+  await _mbdCargarCatalogos();
+
   const TIPO_DOC = [
-    { v: '',              t: '— Seleccionar —' },
-    { v: 'FA',            t: 'FA — Factura' },
-    { v: 'BOLETA',        t: 'BV — Boleta de venta' },
-    { v: 'RH',            t: 'RH — Recibo de honorarios' },
-    { v: 'GASTO_DIRECTO', t: 'Gasto directo' },
-    { v: 'ITF',           t: 'ITF — Impuesto bancario' },
-    { v: 'COMISION',      t: 'Comisión bancaria' },
-    { v: 'OTRO',          t: 'Otro' },
+    { v: '', t: '— Seleccionar —' },
+    ...TIPOS_DOC_MBD.map(t => ({ v: t.val, t: t.lab })),
   ];
 
   const ESTADO = [
@@ -590,7 +606,7 @@ function _movEditarMasivo() {
     display:flex;align-items:center;justify-content:center;z-index:9000`;
 
   overlay.innerHTML = `
-    <div style="background:var(--color-bg-card);border-radius:12px;width:94%;max-width:500px;
+    <div style="background:var(--color-bg-card);border-radius:12px;width:94%;max-width:580px;
       max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.4);
       border:1px solid var(--color-borde)">
 
@@ -611,14 +627,17 @@ function _movEditarMasivo() {
 
       <!-- Campos -->
       <div style="padding:4px 22px 8px">
-        ${_movFilaCampo('proveedor_empresa_personal', 'Proveedor / Empresa / Personal', 'text')}
+        ${_movFilaCampo('proveedor_empresa_personal', 'Proveedor / Empresa / Personal', 'combobox', null, _mbdCatalogos.proveedores.map(p=>p.nombre))}
         ${_movFilaCampo('ruc_dni',         'RUC / DNI',             'text')}
+        ${_movFilaCampo('proyecto',        'Proyecto',              'combobox', null, _mbdCatalogos.proyectos)}
         ${_movFilaCampo('nro_factura_doc', 'N° Factura / DOC',      'text')}
         ${_movFilaCampo('tipo_doc',        'Tipo de DOC',           'select', TIPO_DOC)}
         ${_movFilaCampo('entrega_doc',     'Estado DOC',            'select', ESTADO)}
-        ${_movFilaCampo('autorizacion',    'Autorización',          'text')}
-        ${_movFilaCampo('concepto',        'Concepto',              'text')}
+        ${_movFilaCampo('concepto',        'Concepto',              'combobox', null, _mbdCatalogos.conceptos)}
+        ${_movFilaCampo('empresa',         'Empresa',               'combobox', null, _mbdCatalogos.empresas)}
+        ${_movFilaCampo('autorizacion',    'Autorización',          'combobox', null, _mbdCatalogos.autorizaciones)}
         ${_movFilaCampo('observaciones',   'Observaciones',         'text')}
+        ${_movFilaCampo('observaciones_2', 'Observaciones 2',       'text')}
       </div>
 
       <!-- Pie fijo -->
@@ -635,7 +654,7 @@ function _movEditarMasivo() {
               background:var(--color-bg-card);color:var(--color-texto);cursor:pointer;
               font-size:13px;font-family:var(--font)">Cancelar</button>
           <button id="btn-guardar-masivo" onclick="_movGuardarMasivo()"
-            title="Aplicar los campos activados (☑) a todos los ${n} registros seleccionados en un solo guardado"
+            title="Aplicar los campos activados (☑) a todos los ${n} registros seleccionados"
             style="padding:9px 20px;border:none;border-radius:8px;
               background:var(--color-secundario);color:#fff;cursor:pointer;
               font-size:13px;font-family:var(--font);font-weight:600">
@@ -647,13 +666,25 @@ function _movEditarMasivo() {
 
   document.body.appendChild(overlay);
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  // Auto-completar RUC/DNI al seleccionar proveedor en edición masiva
+  const provInp = document.getElementById('mas-proveedor_empresa_personal');
+  if (provInp) {
+    provInp.addEventListener('input', () => {
+      const rucInp = document.getElementById('mas-ruc_dni');
+      if (!rucInp || rucInp.value) return;
+      const found = _mbdCatalogos.proveedores.find(p => p.nombre.toLowerCase() === provInp.value.toLowerCase());
+      if (found?.doc) rucInp.value = found.doc;
+    });
+  }
 }
 
 // ── Guardar edición masiva ──────────────────────────────────────────
 async function _movGuardarMasivo() {
   const CAMPOS = [
-    'proveedor_empresa_personal', 'ruc_dni', 'nro_factura_doc',
-    'tipo_doc', 'entrega_doc', 'autorizacion', 'concepto', 'observaciones',
+    'proveedor_empresa_personal', 'ruc_dni', 'proyecto', 'nro_factura_doc',
+    'tipo_doc', 'entrega_doc', 'concepto', 'empresa', 'autorizacion',
+    'observaciones', 'observaciones_2',
   ];
 
   const payload = {};
@@ -733,4 +764,14 @@ async function _movEliminarMasivo() {
   filtrarMovimientos();
 
   mostrarToast(`✅ ${n} registro${n > 1 ? 's' : ''} eliminado${n > 1 ? 's' : ''}`, 'exito');
+}
+
+// ── MEJORA 5: botón rápido para ir a Conciliación con el mes activo ─
+function _movConciliarMes() {
+  const mes  = document.getElementById('mov-mes')?.value || '';
+  const anio = document.getElementById('mov-anio')?.value || '';
+  if (mes && anio) {
+    localStorage.setItem('conc_periodo_sugerido', `${anio}-${mes}`);
+  }
+  window.location.href = '/modules/conciliacion/index.html';
 }

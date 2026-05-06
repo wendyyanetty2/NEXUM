@@ -163,7 +163,16 @@ async function renderTabConciliar(area) {
 
   const hoy = new Date();
   const el  = document.getElementById('con-periodo');
-  if (el) el.value = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+  if (el) {
+    // MEJORA 5: si venimos del botón de Tesorería, usar ese periodo
+    const periodoSug = localStorage.getItem('conc_periodo_sugerido');
+    if (periodoSug) {
+      el.value = periodoSug;
+      localStorage.removeItem('conc_periodo_sugerido');
+    } else {
+      el.value = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+    }
+  }
 }
 
 // ── Borrar mes / año ─────────────────────────────────────────────
@@ -258,6 +267,7 @@ async function _ejecutarConciliacion(periodo) {
       .select('*')
       .eq('empresa_id', empresa_activa.id)
       .eq('entrega_doc', 'PENDIENTE')
+      .is('nro_factura_doc', null)   // MEJORA 10: solo movimientos sin comprobante asignado
       .gte('fecha_deposito', inicio)
       .lte('fecha_deposito', fin),
 
@@ -339,10 +349,34 @@ async function _ejecutarConciliacion(periodo) {
     }
   }
 
+  // CORRECCIÓN 13 + MEJORA 9: Multi-transfer matching (N movs → 1 comprobante)
+  const usadosSinMatch = new Set();
+  for (const doc of documentos) {
+    if (usadosDoc.has(doc.id)) continue;
+    const libresMovs = sin_match
+      .filter(i => !usadosSinMatch.has(i.mov.id))
+      .map(i => i.mov);
+    const combo = _buscarComboNTransfer(doc, libresMovs);
+    if (!combo) continue;
+    usadosDoc.add(doc.id);
+    combo.movs.forEach(m => usadosSinMatch.add(m.id));
+    posibles.push({
+      movs:      combo.movs,
+      doc,
+      score:     75,
+      diferencia: combo.diferencia,
+      sumaMovs:  combo.suma,
+      esMulti:   true,
+    });
+  }
+  // Sacar de sin_match los que fueron asignados a multi-transfer
+  sin_match.splice(0, sin_match.length, ...sin_match.filter(i => !usadosSinMatch.has(i.mov.id)));
+
   // Ordenar: score DESC, fecha ASC
   const byScoreFecha = (a, b) =>
     b.score !== a.score ? b.score - a.score
-    : (a.mov.fecha_deposito || '').localeCompare(b.mov.fecha_deposito || '');
+    : (a.esMulti ? (a.movs[0]?.fecha_deposito||'') : (a.mov.fecha_deposito || ''))
+      .localeCompare(b.esMulti ? (b.movs[0]?.fecha_deposito||'') : (b.mov.fecha_deposito || ''));
 
   exactos.sort(byScoreFecha);
   posibles.sort(byScoreFecha);
@@ -416,6 +450,66 @@ function _calcularScore(mov, doc) {
   }
 
   return Math.min(score, 100);
+}
+
+// ── Similitud de nombre por palabras comunes (0-1) ───────────────
+function _simNombre(a, b) {
+  a = (a || '').toLowerCase().trim();
+  b = (b || '').toLowerCase().trim();
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const wa = new Set(a.split(/\s+/).filter(w => w.length > 2));
+  const wb = new Set(b.split(/\s+/).filter(w => w.length > 2));
+  if (!wa.size || !wb.size) return 0;
+  let comunes = 0;
+  wa.forEach(w => { if (wb.has(w)) comunes++; });
+  return comunes / Math.max(wa.size, wb.size);
+}
+
+// ── MEJORA 9: buscar N movimientos que sumen al total del comprobante ─
+function _buscarComboNTransfer(doc, movsList) {
+  const target = doc._total || 0;
+  if (target <= 0 || movsList.length < 2) return null;
+  const tol = Math.max(target * 0.15, 1); // 15% de tolerancia mínimo 1 sol
+
+  // Top 20 candidatos por similitud de nombre con el comprobante
+  const candidatos = movsList
+    .map(m => ({ m, sim: _simNombre(m.proveedor_empresa_personal || '', doc._proveedor || '') }))
+    .filter(c => c.sim > 0.15)
+    .sort((a, b) => b.sim - a.sim)
+    .slice(0, 20)
+    .map(c => c.m);
+
+  if (candidatos.length < 2) return null;
+
+  // Intentar pares
+  for (let i = 0; i < candidatos.length - 1; i++) {
+    for (let j = i + 1; j < candidatos.length; j++) {
+      const suma = Math.abs(parseFloat(candidatos[i].monto) || 0) +
+                   Math.abs(parseFloat(candidatos[j].monto) || 0);
+      if (Math.abs(suma - target) <= tol) {
+        return { movs: [candidatos[i], candidatos[j]], suma, diferencia: suma - target };
+      }
+    }
+  }
+
+  // Intentar tríos (sólo si hay suficientes candidatos)
+  if (candidatos.length >= 3) {
+    for (let i = 0; i < candidatos.length - 2; i++) {
+      for (let j = i + 1; j < candidatos.length - 1; j++) {
+        for (let k = j + 1; k < candidatos.length; k++) {
+          const suma = Math.abs(parseFloat(candidatos[i].monto) || 0) +
+                       Math.abs(parseFloat(candidatos[j].monto) || 0) +
+                       Math.abs(parseFloat(candidatos[k].monto) || 0);
+          if (Math.abs(suma - target) <= tol) {
+            return { movs: [candidatos[i], candidatos[j], candidatos[k]], suma, diferencia: suma - target };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 // ── Helpers visuales ─────────────────────────────────────────────
@@ -509,6 +603,13 @@ function _filtrarItems(lista, tab) {
   if (f.q) {
     const q = f.q;
     items = items.filter(item => {
+      if (item.esMulti) {
+        const str = [
+          item.doc?._ndoc, item.doc?._proveedor,
+          ...(item.movs || []).flatMap(m => [m.nro_operacion_bancaria, m.descripcion, m.proveedor_empresa_personal]),
+        ].map(v => (v||'').toLowerCase()).join(' ');
+        return str.includes(q);
+      }
       const m   = item.mov;
       const str = [
         m.nro_operacion_bancaria, m.descripcion, m.proveedor_empresa_personal,
@@ -528,11 +629,18 @@ function _filtrarItems(lista, tab) {
     items = [...items].sort((a, b) => {
       let va, vb;
       switch (f.sortCol) {
-        case 'score':     va = a.score || 0;             vb = b.score || 0;             break;
-        case 'fecha':     va = a.mov.fecha_deposito||''; vb = b.mov.fecha_deposito||''; break;
-        case 'monto':     va = Math.abs(parseFloat(a.mov.monto)||0); vb = Math.abs(parseFloat(b.mov.monto)||0); break;
-        case 'proveedor': va = a.mov.proveedor_empresa_personal||''; vb = b.mov.proveedor_empresa_personal||''; break;
-        default:          va = ''; vb = '';
+        case 'score':
+          va = a.score || 0; vb = b.score || 0; break;
+        case 'fecha':
+          va = a.esMulti ? (a.movs[0]?.fecha_deposito||'') : (a.mov?.fecha_deposito||'');
+          vb = b.esMulti ? (b.movs[0]?.fecha_deposito||'') : (b.mov?.fecha_deposito||''); break;
+        case 'monto':
+          va = a.esMulti ? (a.sumaMovs||0) : Math.abs(parseFloat(a.mov?.monto)||0);
+          vb = b.esMulti ? (b.sumaMovs||0) : Math.abs(parseFloat(b.mov?.monto)||0); break;
+        case 'proveedor':
+          va = a.esMulti ? (a.movs[0]?.proveedor_empresa_personal||'') : (a.mov?.proveedor_empresa_personal||'');
+          vb = b.esMulti ? (b.movs[0]?.proveedor_empresa_personal||'') : (b.mov?.proveedor_empresa_personal||''); break;
+        default: va = ''; vb = '';
       }
       if (typeof va === 'string') return f.sortDir * va.localeCompare(vb);
       return f.sortDir * (va - vb);
@@ -611,7 +719,11 @@ function _renderTablaPosibles(wrap) {
           </tr>
         </thead>
         <tbody>
-          ${items.length ? items.map((item, idx) => _rowMatchHtml(item, idx, 'pos', _TD)).join('') :
+          ${items.length ? items.map((item, idx) =>
+              item.esMulti
+                ? _rowMultiMatchHtml(item, idx, _TD)
+                : _rowMatchHtml(item, idx, 'pos', _TD)
+            ).join('') :
             `<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--color-texto-suave)">Sin resultados para este filtro</td></tr>`}
         </tbody>
       </table>
@@ -663,6 +775,54 @@ function _rowMatchHtml(item, idx, prefijo, _TD) {
       </div>
     </td>
   </tr>`;
+}
+
+// ── Row multi-transferencia (N movimientos → 1 comprobante) ──────
+function _rowMultiMatchHtml(item, idx, _TD) {
+  const d        = item.doc;
+  const key      = `pos_${idx}`;
+  _conItemCache[key] = item;
+  const tipoBg   = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
+  const rowspan  = item.movs.length;
+  const multiBg  = 'rgba(44,82,130,.05)';
+
+  return item.movs.map((m, mi) => {
+    const isFirst = mi === 0;
+    return `<tr id="${isFirst ? `con-row-pos-${idx}` : `con-row-pos-${idx}-${mi}`}"
+      style="background:${multiBg}"
+      onmouseover="this.style.background='var(--color-hover)'"
+      onmouseout="this.style.background='${multiBg}'">
+      <td style="${_TD};font-family:monospace;font-size:11px;white-space:nowrap">${escapar(m.nro_operacion_bancaria||'—')}</td>
+      <td style="${_TD};white-space:nowrap">${formatearFecha(m.fecha_deposito)}</td>
+      <td style="${_TD};max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(m.descripcion||'')}">${escapar(m.descripcion||'—')}</td>
+      <td style="${_TD};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        <strong style="font-size:11px">${escapar((m.proveedor_empresa_personal||'—').slice(0,30))}</strong>
+        ${isFirst ? `<div style="font-size:10px;color:var(--color-secundario);margin-top:2px">🔗 Multi-transfer (${rowspan} movs)</div>` : ''}
+      </td>
+      <td style="${_TD};text-align:right;white-space:nowrap;font-weight:700;color:${Number(m.monto)<0?'var(--color-critico)':'var(--color-exito)'}">
+        ${formatearMoneda(m.monto, m.moneda==='USD'?'USD':'PEN')}
+      </td>
+      ${isFirst ? `<td style="${_TD};text-align:center" rowspan="${rowspan}">${_scoreChip(item.score)}</td>` : ''}
+      ${isFirst ? `<td style="${_TD};max-width:160px;white-space:nowrap" rowspan="${rowspan}">
+        <div style="font-size:11px;font-weight:600;color:var(--color-secundario)">${escapar(d._ndoc||'—')}</div>
+        <div style="font-size:10px;color:var(--color-texto-suave)">${escapar((d._proveedor||'—').slice(0,25))}</div>
+        <div style="font-size:10px;color:var(--color-texto-suave);margin-top:2px">Σ ${formatearMoneda(item.sumaMovs)} / Total ${formatearMoneda(d._total)}</div>
+      </td>` : ''}
+      ${isFirst ? `<td style="${_TD};text-align:center" rowspan="${rowspan}">
+        <span style="background:${tipoBg};color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escapar(d._tipo||'—')}</span>
+        <div style="font-size:10px;color:var(--color-texto-suave);margin-top:3px">N→1</div>
+      </td>` : ''}
+      ${isFirst ? `<td style="${_TD}" rowspan="${rowspan}">${_tdEstado('PENDIENTE')}</td>` : ''}
+      ${isFirst ? `<td style="${_TD}" rowspan="${rowspan}">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 9px"
+            onclick="_aprobarMatchMulti('${key}',${idx})">✓ Aprobar</button>
+          <button style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
+            onclick="_rechazarMatchMulti(${idx})">✕ Rechazar</button>
+        </div>
+      </td>` : ''}
+    </tr>`;
+  }).join('');
 }
 
 // ── Vista rápida del comprobante sugerido ─────────────────────────
@@ -784,14 +944,21 @@ function _renderTablaSinMatch(wrap) {
     return;
   }
 
+  // MEJORA 8: lista estándar de tipos de comprobante (igual que TIPOS_DOC_MBD)
   const opciones = [
-    { v:'', t:'— Clasificar como —' },
-    { v:'FACTURA',       t:'FA — Factura' },
-    { v:'RH',            t:'RH — Recibo honorarios' },
-    { v:'GASTO_DIRECTO', t:'Gasto directo' },
-    { v:'ITF',           t:'ITF — Impuesto bancario' },
-    { v:'COMISION',      t:'Comisión bancaria' },
-    { v:'OTRO',          t:'Otro' },
+    { v:'',   t:'— Clasificar como —' },
+    { v:'FA', t:'FA — Factura' },
+    { v:'BO', t:'BO — Boleta' },
+    { v:'BP', t:'BP — Boleta de Pago' },
+    { v:'RH', t:'RH — Recibo por Honorarios' },
+    { v:'TK', t:'TK — Ticket' },
+    { v:'PM', t:'PM — Planilla de Movilidad' },
+    { v:'AT', t:'AT — App de Taxi' },
+    { v:'DL', t:'DL — Delivery' },
+    { v:'PJ', t:'PJ — Ticket de Peaje' },
+    { v:'SB', t:'SB — Recibo de Luz / Agua / Gas' },
+    { v:'VB', t:'VB — Voucher de Banco' },
+    { v:'OT', t:'OT — Comprobante sin serie legible' },
   ];
   const _TD = 'padding:7px 10px;border-bottom:1px solid var(--color-borde);vertical-align:middle;font-size:12px';
 
@@ -859,13 +1026,21 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
   const nroDoc    = itemLocal?.doc?._ndoc || null;
   const tipoDoc   = itemLocal?.doc?._tipo || null;
 
+  // MEJORA 6: migrar proveedor y ruc sólo si el comprobante los tiene y el mov no
+  const updateMov = {
+    entrega_doc:         'EMITIDO',
+    nro_factura_doc:     nroDoc,
+    tipo_doc:            tipoDoc,
+    fecha_actualizacion: hoy,
+  };
+  if (itemLocal?.doc?._proveedor && !itemLocal?.mov?.proveedor_empresa_personal)
+    updateMov.proveedor_empresa_personal = itemLocal.doc._proveedor;
+  if (itemLocal?.doc?._ruc && !itemLocal?.mov?.ruc_dni)
+    updateMov.ruc_dni = itemLocal.doc._ruc;
+
   const { error: errMov } = await _supabase
     .from('tesoreria_mbd')
-    .update({
-      entrega_doc:     'EMITIDO',
-      nro_factura_doc: nroDoc,
-      tipo_doc:        tipoDoc,
-    })
+    .update(updateMov)
     .eq('id', movId);
 
   if (errMov) { mostrarToast('Error al actualizar movimiento: ' + errMov.message, 'error'); return; }
@@ -923,6 +1098,67 @@ function _rechazarMatch(idx, prefijo) {
   _conActivarSubtab(prefijo === 'ex' ? 'exactos' : 'posibles');
 }
 
+// ── Aprobar multi-transferencia ───────────────────────────────────
+async function _aprobarMatchMulti(key, idx) {
+  const item = _conItemCache[key];
+  if (!item || !item.esMulti) return;
+  const hoy = new Date().toISOString().slice(0, 10);
+  const d   = item.doc;
+  let ok = 0, errores = 0;
+
+  for (const m of item.movs) {
+    const updateMov = {
+      entrega_doc:         'EMITIDO',
+      nro_factura_doc:     d._ndoc || null,
+      tipo_doc:            d._tipo || null,
+      fecha_actualizacion: hoy,
+    };
+    if (d._proveedor && !m.proveedor_empresa_personal)
+      updateMov.proveedor_empresa_personal = d._proveedor;
+    if (d._ruc && !m.ruc_dni)
+      updateMov.ruc_dni = d._ruc;
+
+    const { error: errMov } = await _supabase.from('tesoreria_mbd').update(updateMov).eq('id', m.id);
+    if (errMov) { errores++; continue; }
+
+    await _supabase.from('conciliaciones').insert({
+      empresa_operadora_id: empresa_activa.id,
+      movimiento_id:        m.id,
+      doc_tipo:             d._tipo,
+      doc_id:               d.id || null,
+      score:                item.score,
+      tipo_match:           'MULTI_TRANSFER',
+      estado:               'APROBADO',
+      usuario_id:           perfil_usuario?.id || null,
+    });
+    ok++;
+  }
+
+  for (let mi = 0; mi < item.movs.length; mi++) {
+    const rowId = mi === 0 ? `con-row-pos-${idx}` : `con-row-pos-${idx}-${mi}`;
+    const fila  = document.getElementById(rowId);
+    if (fila) { fila.style.opacity = '0.35'; fila.querySelectorAll('button').forEach(b => b.disabled = true); }
+  }
+
+  _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
+  document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
+  _conRefrescarPanel();
+  mostrarToast(`✅ Multi-transferencia aprobada (${ok} movimientos)${errores ? ` · ${errores} con error` : ''}`, ok ? 'exito' : 'error');
+}
+
+// ── Rechazar multi-transferencia ──────────────────────────────────
+function _rechazarMatchMulti(idx) {
+  const item = _con_resultados.posibles[idx];
+  if (!item || !item.esMulti) return;
+  for (const m of item.movs) {
+    _con_resultados.sin_match.push({ mov: m, score: 0 });
+  }
+  _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
+  document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
+  document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
+  _conActivarSubtab('posibles');
+}
+
 // ── Aprobar en lote ───────────────────────────────────────────────
 async function _aprobarEnLote() {
   const lista = _con_resultados.exactos;
@@ -936,12 +1172,19 @@ async function _aprobarEnLote() {
   let   errores = 0;
 
   for (const item of lista) {
+    // MEJORA 6: migrar proveedor y ruc sólo si el comprobante los tiene y el mov no
+    const updLote = {
+      entrega_doc:         'EMITIDO',
+      nro_factura_doc:     item.doc._ndoc || null,
+      tipo_doc:            item.doc._tipo || null,
+      fecha_actualizacion: hoy,
+    };
+    if (item.doc._proveedor && !item.mov.proveedor_empresa_personal)
+      updLote.proveedor_empresa_personal = item.doc._proveedor;
+    if (item.doc._ruc && !item.mov.ruc_dni)
+      updLote.ruc_dni = item.doc._ruc;
     const { error: e1 } = await _supabase.from('tesoreria_mbd')
-      .update({
-        entrega_doc:     'EMITIDO',
-        nro_factura_doc: item.doc._ndoc || null,
-        tipo_doc:        item.doc._tipo || null,
-      }).eq('id', item.mov.id);
+      .update(updLote).eq('id', item.mov.id);
 
     if (e1) { errores++; continue; }
 

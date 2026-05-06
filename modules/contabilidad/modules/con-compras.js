@@ -88,6 +88,14 @@ async function cargarCompras() {
     return;
   }
 
+  // MEJORA 7: verificar qué comprobantes tienen movimiento bancario aplicado
+  const numeros = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
+  const { data: mbdAplicados } = numeros.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    : { data: [] };
+  const aplicadosSet = new Set((mbdAplicados || []).map(r => r.nro_factura_doc));
+
   wrap.innerHTML = `
     <table class="tabla-nexum">
       <thead><tr>
@@ -96,10 +104,15 @@ async function cargarCompras() {
         <th style="text-align:right">B.I. Grav. DG</th>
         <th style="text-align:right">IGV/IPM DG</th>
         <th style="text-align:right">Total CP</th>
-        <th>Moneda</th><th style="text-align:center">Acc.</th>
+        <th>Moneda</th><th style="text-align:center">Banco</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filas.map(r => `
+        ${filas.map(r => {
+          const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+          const bancoHtml = aplicadosSet.has(nDoc)
+            ? '<span style="background:#2F855A;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">✅ APLIC.</span>'
+            : '<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">🔴 PEND.</span>';
+          return `
           <tr>
             <td>${escapar(r.periodo)}</td>
             <td style="white-space:nowrap">${formatearFecha(r.fecha_emision)}</td>
@@ -113,12 +126,13 @@ async function cargarCompras() {
             <td style="text-align:right">${formatearMoneda(r.igv_ipm_dg, r.moneda==='USD'?'USD':'PEN')}</td>
             <td style="text-align:right;font-weight:600">${formatearMoneda(r.total_cp, r.moneda==='USD'?'USD':'PEN')}</td>
             <td>${escapar(r.moneda)}</td>
+            <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">
               <button onclick="abrirModalCompra('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
               <button onclick="eliminarCompra('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
             </td>
           </tr>
-        `).join('')}
+        `}).join('')}
       </tbody>
     </table>
     <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} comprobante(s)</p>
