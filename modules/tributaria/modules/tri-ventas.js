@@ -57,7 +57,7 @@ async function renderTabVentas(area) {
           <thead><tr>
             <th>Fecha</th><th>Tipo Doc.</th><th>Serie-Número</th>
             <th>Cliente</th><th>RUC</th><th>Base Imponible</th>
-            <th>IGV</th><th>Total</th><th>Estado</th><th>Acciones</th>
+            <th>IGV</th><th>Total</th><th>Estado</th><th>Banco</th><th>Acciones</th>
           </tr></thead>
           <tbody id="tbody-ventas"></tbody>
           <tfoot id="tfoot-ventas"></tfoot>
@@ -223,14 +223,27 @@ function _renderResumenVentas() {
     </div>`;
 }
 
-function renderTablaVentas() {
+async function renderTablaVentas() {
   const inicio = (ventas_pag - 1) * VENTAS_POR_PAG;
   const pagina = ventas_filtrada.slice(inicio, inicio + VENTAS_POR_PAG);
   const tbody  = document.getElementById('tbody-ventas');
   if (!tbody) return;
 
+  // MEJORA 11: verificar qué ventas tienen movimiento bancario aplicado
+  const numsTriV = pagina.map(v => [v.serie, v.numero].filter(Boolean).join('-')).filter(Boolean);
+  const { data: mbdTriV } = numsTriV.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numsTriV)
+    : { data: [] };
+  const aplicadosTriV = new Set((mbdTriV || []).map(r => r.nro_factura_doc));
+
   const colores = { EMITIDO: 'badge-activo', BORRADOR: 'badge-warning', ANULADO: 'badge-inactivo' };
-  tbody.innerHTML = pagina.length ? pagina.map(v => `
+  tbody.innerHTML = pagina.length ? pagina.map(v => {
+    const nDoc = [v.serie, v.numero].filter(Boolean).join('-');
+    const bancoBadge = aplicadosTriV.has(nDoc)
+      ? '<span class="badge badge-activo" style="font-size:10px">✅ APLIC.</span>'
+      : '<span class="badge badge-inactivo" style="font-size:10px">🔴 PEND.</span>';
+    return `
     <tr ${v.estado === 'ANULADO' ? 'style="opacity:0.55"' : ''}>
       <td>${formatearFecha(v.fecha_emision)}</td>
       <td class="text-sm">${escapar(v.tipo_documento_codigo || '—')}</td>
@@ -241,13 +254,15 @@ function renderTablaVentas() {
       <td class="text-right">${formatearMoneda(v.igv || 0)}</td>
       <td class="text-right font-medium">${formatearMoneda(v.total || 0)}</td>
       <td><span class="badge ${colores[v.estado] || 'badge-info'}" style="font-size:11px">${v.estado}</span></td>
+      <td class="text-center">${bancoBadge}</td>
       <td>
         <button class="btn-icono" onclick="abrirModalVenta('${v.id}')">✏️</button>
         <button class="btn-icono peligro" onclick="anularVenta('${v.id}')">🚫</button>
         <button class="btn-icono peligro" onclick="eliminarVenta('${v.id}')">🗑️</button>
       </td>
-    </tr>`).join('') :
-    '<tr><td colspan="10" class="text-center text-muted">Sin registros de ventas</td></tr>';
+    </tr>`;
+  }).join('') :
+    '<tr><td colspan="11" class="text-center text-muted">Sin registros de ventas</td></tr>';
 
   // Totales al pie
   const activas  = ventas_filtrada.filter(v => v.estado !== 'ANULADO');
@@ -261,7 +276,7 @@ function renderTablaVentas() {
       <td class="text-right">${formatearMoneda(sumBase)}</td>
       <td class="text-right">${formatearMoneda(sumIgv)}</td>
       <td class="text-right">${formatearMoneda(sumTotal)}</td>
-      <td colspan="2"></td>
+      <td colspan="3"></td>
     </tr>`;
   }
 

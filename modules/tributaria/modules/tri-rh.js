@@ -50,7 +50,7 @@ async function renderTabRH(area) {
         <table class="tabla">
           <thead><tr>
             <th>Fecha</th><th>N° RH</th><th>Prestador</th><th>Concepto</th>
-            <th>Bruto</th><th>Retención</th><th>Neto</th><th>Estado</th><th>Acciones</th>
+            <th>Bruto</th><th>Retención</th><th>Neto</th><th>Estado</th><th>Banco</th><th>Acciones</th>
           </tr></thead>
           <tbody id="tbody-rh"></tbody>
         </table>
@@ -205,15 +205,27 @@ function limpiarFiltrosRH() {
   filtrarRH();
 }
 
-function _renderTablaRH() {
+async function _renderTablaRH() {
   const inicio = (rh_pag - 1) * RH_POR_PAG;
   const pagina = rh_filtrada.slice(inicio, inicio + RH_POR_PAG);
   const tbody  = document.getElementById('tbody-rh');
   if (!tbody) return;
 
+  // MEJORA 11: verificar qué RH tienen movimiento bancario aplicado
+  const numsRH = pagina.map(r => r.numero_rh).filter(Boolean);
+  const { data: mbdRH } = numsRH.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numsRH)
+    : { data: [] };
+  const aplicadosRH = new Set((mbdRH || []).map(r => r.nro_factura_doc));
+
   const colores = { EMITIDO: 'badge-activo', BORRADOR: 'badge-warning', ANULADO: 'badge-inactivo' };
 
-  tbody.innerHTML = pagina.length ? pagina.map(r => `
+  tbody.innerHTML = pagina.length ? pagina.map(r => {
+    const bancoBadge = aplicadosRH.has(r.numero_rh)
+      ? '<span class="badge badge-activo" style="font-size:10px">✅ APLIC.</span>'
+      : '<span class="badge badge-inactivo" style="font-size:10px">🔴 PEND.</span>';
+    return `
     <tr>
       <td>${formatearFecha(r.fecha_emision)}</td>
       <td class="text-mono text-sm">${escapar(r.numero_rh || '—')}</td>
@@ -226,12 +238,14 @@ function _renderTablaRH() {
       <td class="text-right text-rojo">${r.monto_retencion > 0 ? '-'+formatearMoneda(r.monto_retencion) : '—'}</td>
       <td class="text-right text-verde font-medium">${formatearMoneda(r.monto_neto)}</td>
       <td><span class="badge ${colores[r.estado]||'badge-info'}" style="font-size:11px">${r.estado}</span></td>
+      <td class="text-center">${bancoBadge}</td>
       <td>
         <button class="btn-icono" onclick="abrirModalRH('${r.id}')">✏️</button>
         <button class="btn-icono peligro" onclick="eliminarRH('${r.id}')">🗑️</button>
       </td>
-    </tr>`).join('') :
-    '<tr><td colspan="9" class="text-center text-muted">Sin registros de RH</td></tr>';
+    </tr>`;
+  }).join('') :
+    '<tr><td colspan="10" class="text-center text-muted">Sin registros de RH</td></tr>';
 
   const total = rh_filtrada.length;
   const pags  = Math.ceil(total / RH_POR_PAG);

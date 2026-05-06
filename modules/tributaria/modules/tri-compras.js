@@ -55,7 +55,7 @@ async function renderTabCompras(area) {
           <thead><tr>
             <th>F. Emisión</th><th>F. Vencimiento</th><th>Tipo Doc.</th><th>Serie-Número</th>
             <th>Proveedor</th><th>RUC</th><th>Base</th><th>IGV</th>
-            <th>Total</th><th>Detracción</th><th>Estado</th><th>Acciones</th>
+            <th>Total</th><th>Detracción</th><th>Estado</th><th>Banco</th><th>Acciones</th>
           </tr></thead>
           <tbody id="tbody-compras"></tbody>
           <tfoot id="tfoot-compras"></tfoot>
@@ -222,7 +222,7 @@ function filtrarCompras() {
   if (ctr) ctr.textContent = `${compras_filtrada.length} registro(s)`;
   compras_pag = 1;
   _renderResumenCompras();
-  renderTablaCompras();
+  renderTablaCompras(); // async — intentional fire-and-forget for synchronous callers
 }
 
 function _renderResumenCompras() {
@@ -247,13 +247,27 @@ function _renderResumenCompras() {
     </div>`;
 }
 
-function renderTablaCompras() {
+async function renderTablaCompras() {
   const inicio = (compras_pag - 1) * COMPRAS_POR_PAG;
   const pagina = compras_filtrada.slice(inicio, inicio + COMPRAS_POR_PAG);
   const tbody  = document.getElementById('tbody-compras');
   if (!tbody) return;
+
+  // MEJORA 11: verificar qué compras tienen movimiento bancario aplicado
+  const numsTri = pagina.map(c => [c.serie, c.numero].filter(Boolean).join('-')).filter(Boolean);
+  const { data: mbdTri } = numsTri.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numsTri)
+    : { data: [] };
+  const aplicadosTriC = new Set((mbdTri || []).map(r => r.nro_factura_doc));
+
   const colores = { EMITIDO: 'badge-activo', BORRADOR: 'badge-warning', ANULADO: 'badge-inactivo' };
-  tbody.innerHTML = pagina.length ? pagina.map(c => `
+  tbody.innerHTML = pagina.length ? pagina.map(c => {
+    const nDoc = [c.serie, c.numero].filter(Boolean).join('-');
+    const bancoBadge = aplicadosTriC.has(nDoc)
+      ? '<span class="badge badge-activo" style="font-size:10px">✅ APLIC.</span>'
+      : '<span class="badge badge-inactivo" style="font-size:10px">🔴 PEND.</span>';
+    return `
     <tr ${c.estado === 'ANULADO' ? 'style="opacity:0.55"' : ''}>
       <td>${formatearFecha(c.fecha_emision)}</td>
       <td class="text-sm">${c.fecha_vencimiento ? formatearFecha(c.fecha_vencimiento) : '—'}</td>
@@ -266,13 +280,15 @@ function renderTablaCompras() {
       <td class="text-right font-medium">${formatearMoneda(c.total || 0)}</td>
       <td class="text-center">${c.tiene_detraccion ? '<span class="badge badge-warning" style="font-size:10px">'+formatearMoneda(c.monto_detraccion||0)+'</span>' : '—'}</td>
       <td><span class="badge ${colores[c.estado]||'badge-info'}" style="font-size:11px">${c.estado}</span></td>
+      <td class="text-center">${bancoBadge}</td>
       <td>
         <button class="btn-icono" onclick="abrirModalCompra('${c.id}')">✏️</button>
         <button class="btn-icono peligro" onclick="anularCompra('${c.id}')">🚫</button>
         <button class="btn-icono peligro" onclick="eliminarCompra('${c.id}')">🗑️</button>
       </td>
-    </tr>`).join('') :
-    '<tr><td colspan="12" class="text-center text-muted">Sin registros de compras</td></tr>';
+    </tr>`;
+  }).join('') :
+    '<tr><td colspan="13" class="text-center text-muted">Sin registros de compras</td></tr>';
 
   const activos  = compras_filtrada.filter(c => c.estado !== 'ANULADO');
   const sumBase  = activos.reduce((s, c) => s + parseFloat(c.base_imponible || 0), 0);
@@ -285,7 +301,7 @@ function renderTablaCompras() {
       <td class="text-right">${formatearMoneda(sumBase)}</td>
       <td class="text-right">${formatearMoneda(sumIgv)}</td>
       <td class="text-right">${formatearMoneda(sumTotal)}</td>
-      <td colspan="3"></td>
+      <td colspan="4"></td>
     </tr>`;
   }
 
@@ -299,7 +315,7 @@ function renderTablaCompras() {
     <button class="btn-pag" onclick="cambiarPagCompras(1)"  ${compras_pag>=pags?'disabled':''}>›</button>` : '';
 }
 
-function cambiarPagCompras(dir) { compras_pag += dir; renderTablaCompras(); }
+function cambiarPagCompras(dir) { compras_pag += dir; renderTablaCompras(); } // renderTablaCompras is async, caller doesn't need to await
 
 function calcularTotalesCompra() {
   const base = parseFloat(document.getElementById('c-base')?.value) || 0;

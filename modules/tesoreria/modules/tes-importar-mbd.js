@@ -11,21 +11,43 @@ const TIPOS_DOC_MBD = [
   {val:'VB',lab:'VB — Voucher de banco'},{val:'OT',lab:'OT — Comprobante sin serie legible'}
 ];
 
-let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [] };
+let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [], proveedores: [], proyectos: [] };
 let _pendientesGrupos = {};
 
 async function _mbdCargarCatalogos() {
   const eid = empresa_activa.id;
-  const [rc, re, ra, rm] = await Promise.all([
+  const [rc, re, ra, rm, rproy, rprest] = await Promise.all([
     _supabase.from('conceptos').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('empresas_clientes').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+    _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
     _supabase.from('autorizaciones').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
     _supabase.from('medios_pago').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+    _supabase.from('proyectos').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+    _supabase.from('prestadores_servicios').select('nombre,dni').eq('activo', true).order('nombre'),
   ]);
   _mbdCatalogos.conceptos      = (rc.data || []).map(r => r.nombre);
   _mbdCatalogos.empresas       = (re.data || []).map(r => r.nombre);
   _mbdCatalogos.autorizaciones = (ra.data || []).map(r => r.nombre);
   _mbdCatalogos.mediosPago     = (rm.data || []).map(r => r.nombre);
+  _mbdCatalogos.proyectos      = (rproy.data || []).map(r => r.nombre);
+
+  // Combinar empresas_clientes (RUC) + prestadores_servicios (DNI) — sin duplicados
+  const provEmp  = (re.data || []).map(r => ({ nombre: r.nombre, doc: r.ruc_dni || '' }));
+  const provPres = (rprest.data || []).map(r => ({ nombre: r.nombre, doc: r.dni || '' }));
+  const seen = new Set();
+  _mbdCatalogos.proveedores = [...provEmp, ...provPres].filter(p => {
+    const k = p.nombre.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+// Auto-completar RUC/DNI al seleccionar proveedor del catálogo
+function _mbdFillRucFromProveedor(val) {
+  const rucEl = document.getElementById('mbd-ruc-dni');
+  if (!val || !rucEl || rucEl.value) return;
+  const found = (_mbdCatalogos.proveedores || []).find(p => p.nombre.toLowerCase() === val.toLowerCase());
+  if (found?.doc) rucEl.value = found.doc;
 }
 
 function renderTabImportarMBD(area) {
@@ -332,11 +354,19 @@ async function abrirModalMBD(id = null) {
             </div>
             <div class="campo" style="grid-column:span 2">
               <label>Proveedor / Empresa / Personal</label>
-              <input type="text" id="mbd-proveedor" value="${escapar(item?.proveedor_empresa_personal||'')}" placeholder="Nombre">
+              <input type="text" id="mbd-proveedor"
+                value="${escapar(item?.proveedor_empresa_personal||'')}"
+                placeholder="Escribir o seleccionar de la lista"
+                list="mbd-prov-datalist"
+                oninput="_mbdFillRucFromProveedor(this.value)"
+                onchange="_mbdFillRucFromProveedor(this.value)">
+              <datalist id="mbd-prov-datalist">
+                ${_mbdCatalogos.proveedores.map(p=>`<option value="${escapar(p.nombre)}">${escapar(p.nombre)}${p.doc?' · '+p.doc:''}</option>`).join('')}
+              </datalist>
             </div>
             <div class="campo">
               <label>RUC / DNI</label>
-              <input type="text" id="mbd-ruc-dni" value="${escapar(item?.ruc_dni||'')}" placeholder="Documento">
+              <input type="text" id="mbd-ruc-dni" value="${escapar(item?.ruc_dni||'')}" placeholder="Autocompletado al seleccionar">
             </div>
             <div class="campo">
               <label>Concepto</label>
@@ -393,7 +423,13 @@ async function abrirModalMBD(id = null) {
             </div>
             <div class="campo">
               <label>Proyecto</label>
-              <input type="text" id="mbd-proyecto" value="${escapar(item?.proyecto||'')}">
+              <input type="text" id="mbd-proyecto"
+                value="${escapar(item?.proyecto||'')}"
+                placeholder="Escribir o seleccionar"
+                list="mbd-proy-datalist">
+              <datalist id="mbd-proy-datalist">
+                ${_mbdCatalogos.proyectos.map(p=>`<option value="${escapar(p)}">`).join('')}
+              </datalist>
             </div>
             <div class="campo" style="grid-column:span 3">
               <label>Detalles Compra / Servicio</label>
