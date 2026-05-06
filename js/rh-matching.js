@@ -245,7 +245,24 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
     .update({ confirmado_por: usuarioId, confirmado_en: new Date().toISOString() })
     .eq('rh_id', rhId)
     .eq('movimiento_id', movimientoId);
-  return !error;
+  if (error) return false;
+
+  // MEJORA 6: migrar datos del RH al movimiento bancario en tesoreria_mbd
+  const [{ data: rh }, { data: mov }] = await Promise.all([
+    _supabase.from('rh_registros').select('nombre,ruc,numero,serie').eq('id', rhId).single(),
+    _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni,nro_factura_doc,tipo_doc').eq('id', movimientoId).single(),
+  ]);
+  if (rh && mov) {
+    const patch = { estado_conciliacion: 'conciliado', entrega_doc: 'EMITIDO' };
+    const nroDoc = [rh.serie, rh.numero].filter(Boolean).join('-') || null;
+    if (nroDoc  && !mov.nro_factura_doc)              patch.nro_factura_doc            = nroDoc;
+    if (!mov.tipo_doc)                                patch.tipo_doc                   = 'RH';
+    if (rh.nombre && !mov.proveedor_empresa_personal) patch.proveedor_empresa_personal = rh.nombre;
+    if (rh.ruc    && !mov.ruc_dni)                    patch.ruc_dni                    = rh.ruc;
+    await _supabase.from('tesoreria_mbd').update(patch).eq('id', movimientoId);
+  }
+
+  return true;
 }
 
 // ── Elimina un link específico ────────────────────────────────────

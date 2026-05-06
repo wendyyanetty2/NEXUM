@@ -38,17 +38,15 @@ async function renderTabConciliar(area) {
           </div>
         </div>
 
-        <!-- Toggle: incluir RH y comprobantes de meses adyacentes -->
+        <!-- Info ventana temporal siempre activa -->
         <div style="margin-top:12px;padding:10px 14px;background:rgba(44,82,130,.07);border-radius:8px;border:1px solid rgba(44,82,130,.2);display:flex;align-items:flex-start;gap:10px">
-          <input type="checkbox" id="con-incluir-adyacentes"
-            style="margin-top:2px;width:15px;height:15px;cursor:pointer;accent-color:var(--color-secundario);flex-shrink:0">
-          <label for="con-incluir-adyacentes" style="cursor:pointer;font-size:13px;color:var(--color-texto);line-height:1.4">
-            <strong>📅 Buscar RH y compras en meses adyacentes (±3 meses)</strong><br>
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px">📅</span>
+          <div style="font-size:13px;color:var(--color-texto);line-height:1.4">
+            <strong>Ventana de búsqueda: 9 meses (siempre activa)</strong><br>
             <span style="font-size:11px;color:var(--color-texto-suave)">
-              Actívalo si hay RH o facturas emitidas fuera del mes que corresponden a movimientos de este periodo.
-              El motor buscará comprobantes desde 3 meses antes hasta 3 meses después.
+              El motor busca comprobantes desde 3 meses antes hasta 6 meses después del mes seleccionado.
             </span>
-          </label>
+          </div>
         </div>
       </div>
 
@@ -238,11 +236,11 @@ async function _conIniciar() {
   }
 }
 
-// ── Helper: calcula array de periodos adyacentes ─────────────────
-function _conPeriodosAdyacentes(periodo, delta = 3) {
+// ── Helper: ventana -3/+6 meses (9 meses, regla transversal) ─────
+function _conPeriodosAdyacentes(periodo, antes = 3, despues = 6) {
   const [yyyy, mm] = periodo.split('-');
   const lista = [];
-  for (let d = -delta; d <= delta; d++) {
+  for (let d = -antes; d <= despues; d++) {
     const fecha = new Date(parseInt(yyyy), parseInt(mm) - 1 + d, 1);
     lista.push(`${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`);
   }
@@ -255,11 +253,8 @@ async function _ejecutarConciliacion(periodo) {
   const inicio = `${yyyy}-${mm}-01`;
   const fin    = new Date(parseInt(yyyy), parseInt(mm), 0).toISOString().slice(0, 10);
 
-  // Si el toggle está activo, ampliamos el rango de comprobantes a ±3 meses
-  const incluirAdyacentes = document.getElementById('con-incluir-adyacentes')?.checked ?? false;
-  const periodosDoc = incluirAdyacentes
-    ? _conPeriodosAdyacentes(periodo, 3)
-    : [periodo];
+  // Ventana siempre activa: 3 meses antes + 6 meses después (9 meses total)
+  const periodosDoc = _conPeriodosAdyacentes(periodo);
 
   const [resMbd, resCompras, resVentas, resRh] = await Promise.all([
     _supabase
@@ -267,7 +262,8 @@ async function _ejecutarConciliacion(periodo) {
       .select('*')
       .eq('empresa_id', empresa_activa.id)
       .eq('entrega_doc', 'PENDIENTE')
-      .is('nro_factura_doc', null)   // MEJORA 10: solo movimientos sin comprobante asignado
+      .is('nro_factura_doc', null)   // CORRECCIÓN 10: solo movimientos sin comprobante asignado
+      .is('tipo_doc', null)           // CORRECCIÓN 10: excluir los que ya tienen tipo doc asignado
       .gte('fecha_deposito', inicio)
       .lte('fecha_deposito', fin),
 
@@ -290,7 +286,8 @@ async function _ejecutarConciliacion(periodo) {
       .in('periodo', periodosDoc),
   ]);
 
-  const movBanco = resMbd.data || [];
+  // CORRECCIÓN 10: excluir movimientos ya conciliados en sesiones anteriores
+  const movBanco = (resMbd.data || []).filter(m => m.estado_conciliacion !== 'conciliado');
 
   const compras = (resCompras.data || []).map(d => ({
     ...d,
@@ -345,7 +342,8 @@ async function _ejecutarConciliacion(periodo) {
     } else if (mejorDoc && mejorScore >= 60) {
       posibles.push({ mov, doc: mejorDoc, score: mejorScore });
     } else {
-      sin_match.push({ mov, score: mejorDoc ? mejorScore : 0 });
+      // MEJORA 9: conservar mejorDoc aunque score < 60 para mostrar sugerencia al usuario
+      sin_match.push({ mov, doc: mejorDoc || null, score: mejorDoc ? mejorScore : 0 });
     }
   }
 
@@ -466,49 +464,45 @@ function _simNombre(a, b) {
   return comunes / Math.max(wa.size, wb.size);
 }
 
-// ── MEJORA 9: buscar N movimientos que sumen al total del comprobante ─
+// ── CORRECCIÓN 13: buscar N movimientos (sin límite) que sumen al total del doc ─
 function _buscarComboNTransfer(doc, movsList) {
-  const target = doc._total || 0;
+  const target = Math.abs(doc._total || doc.importe || doc.monto_total || 0);
   if (target <= 0 || movsList.length < 2) return null;
-  const tol = Math.max(target * 0.15, 1); // 15% de tolerancia mínimo 1 sol
 
-  // Top 20 candidatos por similitud de nombre con el comprobante
-  const candidatos = movsList
-    .map(m => ({ m, sim: _simNombre(m.proveedor_empresa_personal || '', doc._proveedor || '') }))
-    .filter(c => c.sim > 0.15)
-    .sort((a, b) => b.sim - a.sim)
-    .slice(0, 20)
-    .map(c => c.m);
+  // Candidatos: similitud de nombre ≥ 15% ó incluir todos si pocos candidatos
+  const conSim = movsList
+    .map(m => ({ m, sim: _simNombre(m.proveedor_empresa_personal || m.descripcion || '', doc._proveedor || '') }))
+    .sort((a, b) => b.sim - a.sim);
+  const candidatos = conSim.filter(c => c.sim > 0.15).length >= 2
+    ? conSim.filter(c => c.sim > 0.15).slice(0, 15).map(c => c.m)
+    : movsList.slice(0, 15);
 
   if (candidatos.length < 2) return null;
 
-  // Intentar pares
-  for (let i = 0; i < candidatos.length - 1; i++) {
-    for (let j = i + 1; j < candidatos.length; j++) {
-      const suma = Math.abs(parseFloat(candidatos[i].monto) || 0) +
-                   Math.abs(parseFloat(candidatos[j].monto) || 0);
-      if (Math.abs(suma - target) <= tol) {
-        return { movs: [candidatos[i], candidatos[j]], suma, diferencia: suma - target };
+  // Búsqueda recursiva de combinaciones de tamaño 2..N (hasta 6)
+  const montos = candidatos.map(m => Math.abs(parseFloat(m.monto) || 0));
+  const MAX_N  = Math.min(candidatos.length, 6);
+
+  function combinar(inicio, n, sumaAcum, idxs) {
+    if (n === 0) {
+      const diff = Math.abs(sumaAcum - target);
+      // Sin límite fijo de diferencia: siempre presentar como POSIBLE MATCH
+      if (diff / target < 0.5) {
+        return { movs: idxs.map(i => candidatos[i]), suma: sumaAcum, diferencia: sumaAcum - target };
       }
+      return null;
     }
+    for (let i = inicio; i <= candidatos.length - n; i++) {
+      const res = combinar(i + 1, n - 1, sumaAcum + montos[i], [...idxs, i]);
+      if (res) return res;
+    }
+    return null;
   }
 
-  // Intentar tríos (sólo si hay suficientes candidatos)
-  if (candidatos.length >= 3) {
-    for (let i = 0; i < candidatos.length - 2; i++) {
-      for (let j = i + 1; j < candidatos.length - 1; j++) {
-        for (let k = j + 1; k < candidatos.length; k++) {
-          const suma = Math.abs(parseFloat(candidatos[i].monto) || 0) +
-                       Math.abs(parseFloat(candidatos[j].monto) || 0) +
-                       Math.abs(parseFloat(candidatos[k].monto) || 0);
-          if (Math.abs(suma - target) <= tol) {
-            return { movs: [candidatos[i], candidatos[j], candidatos[k]], suma, diferencia: suma - target };
-          }
-        }
-      }
-    }
+  for (let n = 2; n <= MAX_N; n++) {
+    const res = combinar(0, n, 0, []);
+    if (res) return res;
   }
-
   return null;
 }
 
@@ -944,7 +938,11 @@ function _renderTablaSinMatch(wrap) {
     return;
   }
 
-  // MEJORA 8: lista estándar de tipos de comprobante (igual que TIPOS_DOC_MBD)
+  // MEJORA 9: registrar ítems con sugerencia en cache para que _aprobarMatch los encuentre
+  lista.forEach((item, idx) => {
+    if (item.doc) _conItemCache[`sm_${idx}`] = { mov: item.mov, doc: item.doc, score: item.score };
+  });
+
   const opciones = [
     { v:'',   t:'— Clasificar como —' },
     { v:'FA', t:'FA — Factura' },
@@ -974,13 +972,37 @@ function _renderTablaSinMatch(wrap) {
             ${_thFijo('Proveedor / Empresa / Personal')}
             ${_thSort('monto','Monto',tab)}
             ${_thFijo('Estado')}
-            ${_thFijo('Clasificar como')}
+            ${_thFijo('Posible match / Clasificar')}
             ${_thFijo('Acciones')}
           </tr>
         </thead>
         <tbody>
           ${lista.length ? lista.map((item, idx) => {
             const m = item.mov;
+
+            // MEJORA 9: bloque de sugerencia si existe un doc con cualquier score
+            let sugerenciaHtml = '';
+            if (item.doc) {
+              const d    = item.doc;
+              const montoDoc = Math.abs(Number(d.importe || d.monto_total || 0));
+              const diff = Math.abs(Math.abs(Number(m.monto)) - montoDoc);
+              sugerenciaHtml = `
+                <div style="margin-bottom:5px;padding:6px 8px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:6px;font-size:11px">
+                  <div style="font-weight:600;color:#d97706;margin-bottom:2px">⚠️ POSIBLE MATCH (${item.score}%)</div>
+                  <div style="color:var(--color-texto);margin-bottom:1px">${escapar(d._ndoc||'—')} · ${escapar((d._proveedor||'').slice(0,25)||'—')}</div>
+                  <div style="color:var(--color-texto-suave)">
+                    Comprobante: ${formatearMoneda(montoDoc)}
+                    · <strong style="color:${diff>0?'#ef4444':'#22c55e'}">Diferencia: ${formatearMoneda(diff)}</strong>
+                  </div>
+                  <div style="display:flex;gap:4px;margin-top:4px">
+                    <button style="padding:3px 8px;background:#166534;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)"
+                      onclick="_aprobarMatch('${m.id}','${d._tipo||''}','${d.id||''}',${item.score},'POSIBLE',${idx},'sm')">✓ Confirmar</button>
+                    <button style="padding:3px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
+                      onclick="_descartarSugerenciaSM(${idx})">✕ Descartar</button>
+                  </div>
+                </div>`;
+            }
+
             return `<tr id="con-row-sm-${idx}"
               onmouseover="this.style.background='var(--color-hover)'"
               onmouseout="this.style.background=''">
@@ -994,10 +1016,11 @@ function _renderTablaSinMatch(wrap) {
                 ${formatearMoneda(m.monto, m.moneda==='USD'?'USD':'PEN')}
               </td>
               <td style="${_TD}">${_tdEstado(m.entrega_doc)}</td>
-              <td style="${_TD}">
+              <td style="${_TD};min-width:220px">
+                ${sugerenciaHtml}
                 <select id="con-clas-${idx}"
                   style="padding:4px 8px;border:1px solid var(--color-borde);border-radius:4px;
-                         background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
+                         background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font);width:100%">
                   ${opciones.map(o=>`<option value="${o.v}">${o.t}</option>`).join('')}
                 </select>
               </td>
@@ -1017,6 +1040,14 @@ function _renderTablaSinMatch(wrap) {
     </div>`;
 }
 
+// ── Descartar sugerencia sin match ───────────────────────────────
+function _descartarSugerenciaSM(idx) {
+  const item = _con_resultados.sin_match[idx];
+  if (item) item.doc = null;
+  delete _conItemCache[`sm_${idx}`];
+  _conActivarSubtab('sin_match');
+}
+
 // ── Aprobar match individual ─────────────────────────────────────
 async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefijo) {
   const hoy = new Date().toISOString().slice(0, 10);
@@ -1028,10 +1059,11 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
 
   // MEJORA 6: migrar proveedor y ruc sólo si el comprobante los tiene y el mov no
   const updateMov = {
-    entrega_doc:         'EMITIDO',
-    nro_factura_doc:     nroDoc,
-    tipo_doc:            tipoDoc,
-    fecha_actualizacion: hoy,
+    entrega_doc:          'EMITIDO',
+    estado_conciliacion:  'conciliado',
+    nro_factura_doc:      nroDoc,
+    tipo_doc:             tipoDoc,
+    fecha_actualizacion:  hoy,
   };
   if (itemLocal?.doc?._proveedor && !itemLocal?.mov?.proveedor_empresa_personal)
     updateMov.proveedor_empresa_personal = itemLocal.doc._proveedor;
@@ -1071,6 +1103,12 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
     _con_resultados.exactos  = _con_resultados.exactos.filter(i => i.mov.id !== movId);
     document.getElementById('con-cnt-exactos').textContent  = _con_resultados.exactos.length;
     _conActualizarBtnLote();
+  } else if (prefijo === 'sm') {
+    // MEJORA 9: aprobado desde pestaña Sin match
+    _con_resultados.sin_match = _con_resultados.sin_match.filter(i => i.mov.id !== movId);
+    document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
+    delete _conItemCache[`sm_${idx}`];
+    _conActivarSubtab('sin_match');
   } else {
     _con_resultados.posibles = _con_resultados.posibles.filter(i => i.mov.id !== movId);
     document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
@@ -1108,10 +1146,11 @@ async function _aprobarMatchMulti(key, idx) {
 
   for (const m of item.movs) {
     const updateMov = {
-      entrega_doc:         'EMITIDO',
-      nro_factura_doc:     d._ndoc || null,
-      tipo_doc:            d._tipo || null,
-      fecha_actualizacion: hoy,
+      entrega_doc:          'EMITIDO',
+      estado_conciliacion:  'conciliado',
+      nro_factura_doc:      d._ndoc || null,
+      tipo_doc:             d._tipo || null,
+      fecha_actualizacion:  hoy,
     };
     if (d._proveedor && !m.proveedor_empresa_personal)
       updateMov.proveedor_empresa_personal = d._proveedor;
@@ -1174,10 +1213,11 @@ async function _aprobarEnLote() {
   for (const item of lista) {
     // MEJORA 6: migrar proveedor y ruc sólo si el comprobante los tiene y el mov no
     const updLote = {
-      entrega_doc:         'EMITIDO',
-      nro_factura_doc:     item.doc._ndoc || null,
-      tipo_doc:            item.doc._tipo || null,
-      fecha_actualizacion: hoy,
+      entrega_doc:          'EMITIDO',
+      estado_conciliacion:  'conciliado',
+      nro_factura_doc:      item.doc._ndoc || null,
+      tipo_doc:             item.doc._tipo || null,
+      fecha_actualizacion:  hoy,
     };
     if (item.doc._proveedor && !item.mov.proveedor_empresa_personal)
       updLote.proveedor_empresa_personal = item.doc._proveedor;
@@ -1217,7 +1257,7 @@ async function _guardarClasificacion(movId, idx) {
   if (!clas) { mostrarToast('Selecciona una clasificación', 'atencion'); return; }
 
   const { error } = await _supabase.from('tesoreria_mbd')
-    .update({ entrega_doc: 'EMITIDO', tipo_doc: clas })
+    .update({ entrega_doc: 'EMITIDO', tipo_doc: clas, estado_conciliacion: 'conciliado' })
     .eq('id', movId);
 
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }

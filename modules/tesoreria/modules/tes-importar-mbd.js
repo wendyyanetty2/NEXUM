@@ -510,7 +510,9 @@ async function guardarMBD(id) {
   if (error) { alerta.textContent = 'Error al guardar: ' + error.message; alerta.classList.add('visible'); return; }
   mostrarToast(id ? 'Movimiento actualizado.' : 'Movimiento registrado.', 'exito');
   cerrarModalMBD();
-  cargarMBD();
+  // Refrescar el panel activo: Movimientos o importar-MBD según el tab abierto
+  if (document.getElementById('tbody-movimientos')) cargarMovimientos();
+  if (document.getElementById('mbd-tabla-wrap')) cargarMBD();
 }
 
 async function eliminarMBD(id) {
