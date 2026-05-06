@@ -92,10 +92,10 @@ async function cargarVentas() {
   // MEJORA 7: verificar qué ventas tienen movimiento bancario aplicado
   const numerosV = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicadosV } = numerosV.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id')
         .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numerosV)
     : { data: [] };
-  const aplicadosSetV = new Set((mbdAplicadosV || []).map(r => r.nro_factura_doc));
+  const aplicadosMapV = new Map((mbdAplicadosV || []).map(r => [r.nro_factura_doc, r]));
 
   wrap.innerHTML = `
     <table class="tabla-nexum">
@@ -109,10 +109,18 @@ async function cargarVentas() {
       </tr></thead>
       <tbody>
         ${filas.map(r => {
-          const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-          const bancoHtml = aplicadosSetV.has(nDoc)
-            ? '<span style="background:#2F855A;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">✅ APLIC.</span>'
-            : '<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">🔴 PEND.</span>';
+          const nDoc    = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+          const movLinkV = aplicadosMapV.get(nDoc);
+          const bancoHtml = movLinkV
+            ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
+                 title="Click para ver movimiento bancario vinculado"
+                 onclick="_verMovBancarioLink('${escapar(nDoc)}','VENTA')">
+                <span style="background:#2F855A;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">✅ APLIC.</span>
+                <span style="font-family:monospace;font-size:9px;color:#22c55e;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(movLinkV.nro_operacion_bancaria||'')}</span>
+              </div>`
+            : `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
+                 title="Click para conciliar con banco"
+                 onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')">🔴 PEND.</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>

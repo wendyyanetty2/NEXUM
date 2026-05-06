@@ -3,6 +3,7 @@
    ============================================================ */
 
 const TIPOS_DOC_ID_C = {'1':'DNI','4':'Carnet Extranjería','6':'RUC','7':'Pasaporte','0':'Otros'};
+let _mbdLinkCache = []; // Cache para modal de movimiento bancario vinculado
 
 function renderTabCompras(area) {
   const hoy = new Date();
@@ -92,10 +93,10 @@ async function cargarCompras() {
   // MEJORA 7: verificar qué comprobantes tienen movimiento bancario aplicado
   const numeros = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicados } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id')
         .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
     : { data: [] };
-  const aplicadosSet = new Set((mbdAplicados || []).map(r => r.nro_factura_doc));
+  const aplicadosMap = new Map((mbdAplicados || []).map(r => [r.nro_factura_doc, r]));
 
   wrap.innerHTML = `
     <table class="tabla-nexum">
@@ -109,10 +110,18 @@ async function cargarCompras() {
       </tr></thead>
       <tbody>
         ${filas.map(r => {
-          const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-          const bancoHtml = aplicadosSet.has(nDoc)
-            ? '<span style="background:#2F855A;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">✅ APLIC.</span>'
-            : '<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">🔴 PEND.</span>';
+          const nDoc    = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+          const movLink = aplicadosMap.get(nDoc);
+          const bancoHtml = movLink
+            ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
+                 title="Click para ver movimiento bancario vinculado"
+                 onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA')">
+                <span style="background:#2F855A;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">✅ APLIC.</span>
+                <span style="font-family:monospace;font-size:9px;color:#22c55e;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(movLink.nro_operacion_bancaria||'')}</span>
+              </div>`
+            : `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
+                 title="Click para conciliar"
+                 onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')">🔴 PEND.</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -949,4 +958,103 @@ async function _cAplicarLoteConciliacion(items) {
     ok > 0 ? 'exito' : 'error'
   );
   cargarCompras();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// VER MOVIMIENTO BANCARIO VINCULADO (compartido con Ventas)
+// ══════════════════════════════════════════════════════════════════
+
+async function _verMovBancarioLink(nDoc, tipo) {
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex">
+      <div class="modal" style="max-width:520px;width:95%;padding:28px;text-align:center">
+        <div class="spinner" style="margin:0 auto 10px"></div>
+        <div style="color:var(--color-texto-suave);font-size:13px">Cargando movimiento bancario…</div>
+      </div>
+    </div>`;
+
+  const { data: movs } = await _supabase
+    .from('tesoreria_mbd')
+    .select('*')
+    .eq('empresa_id', empresa_activa.id)
+    .eq('nro_factura_doc', nDoc)
+    .limit(5);
+
+  _mbdLinkCache = movs || [];
+
+  const filas = _mbdLinkCache.map((m, i) => `
+    <div style="padding:12px 14px;border:1px solid var(--color-borde);border-radius:8px;margin-bottom:10px;background:var(--color-bg-card)">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:10px">
+        <div>
+          <div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">N° Operación bancaria</div>
+          <div style="font-family:monospace;font-weight:700;font-size:13px;color:var(--color-secundario)">${escapar(m.nro_operacion_bancaria||'—')}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">Fecha depósito</div>
+          <div>${formatearFecha(m.fecha_deposito)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">Monto</div>
+          <div style="font-weight:700;font-size:14px;color:${Number(m.monto)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda(m.monto)}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">Estado</div>
+          <span style="background:#2F855A;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">✅ EMITIDO</span>
+        </div>
+        ${m.proveedor_empresa_personal ? `<div style="grid-column:span 2"><div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">Proveedor / Empresa</div><div style="font-size:12px">${escapar(m.proveedor_empresa_personal)}</div></div>` : ''}
+        ${m.descripcion ? `<div style="grid-column:span 2"><div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">Descripción banco</div><div style="font-size:11px;color:var(--color-texto-suave)">${escapar(m.descripcion)}</div></div>` : ''}
+        ${m.ruc_dni ? `<div><div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">RUC / DNI</div><div style="font-family:monospace;font-size:12px">${escapar(m.ruc_dni)}</div></div>` : ''}
+        ${m.concepto ? `<div><div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">Concepto</div><div style="font-size:12px">${escapar(m.concepto)}</div></div>` : ''}
+        ${m.estado_conciliacion ? `<div style="grid-column:span 2"><div style="font-size:10px;color:var(--color-texto-suave);margin-bottom:2px">Estado conciliación</div><span style="color:#22c55e;font-weight:700;font-size:12px">${escapar(m.estado_conciliacion)}</span></div>` : ''}
+      </div>
+      <div style="text-align:right">
+        <button onclick="_desvincularmovLink(${i},'${escapar(nDoc)}','${tipo}')"
+          style="padding:5px 14px;background:rgba(197,48,48,.08);color:#C53030;border:1px solid rgba(197,48,48,.3);border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">
+          🔓 Desvincular
+        </button>
+      </div>
+    </div>`).join('');
+
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:540px;width:95%;max-height:85vh;display:flex;flex-direction:column">
+        <div class="modal-header" style="flex-shrink:0">
+          <h3>🏦 Movimiento bancario vinculado</h3>
+          <button class="modal-cerrar" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <div style="padding:8px 12px;background:rgba(44,82,130,.07);border-radius:6px;margin-bottom:14px;font-size:12px;display:flex;align-items:center;gap:8px">
+            <span>Comprobante: <strong style="color:var(--color-texto)">${escapar(nDoc)}</strong></span>
+            <span style="background:${tipo==='VENTA'?'#276749':'#2C5282'};color:#fff;padding:1px 8px;border-radius:4px;font-size:10px;font-weight:700">${tipo}</span>
+          </div>
+          ${_mbdLinkCache.length ? filas : '<p style="text-align:center;color:var(--color-texto-suave);padding:24px">No se encontró movimiento vinculado.</p>'}
+        </div>
+        <div class="modal-footer" style="flex-shrink:0">
+          <button class="btn btn-secundario" onclick="document.getElementById('modal-container').innerHTML=''">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function _desvincularmovLink(idx, nDoc, tipo) {
+  const mov = _mbdLinkCache?.[idx];
+  if (!mov) return;
+  const ok = await confirmar(
+    `¿Desvincular el movimiento ${mov.nro_operacion_bancaria||''} del comprobante ${nDoc}?`,
+    { btnOk: 'Desvincular', btnColor: '#C53030' }
+  );
+  if (!ok) return;
+  const { error } = await _supabase.from('tesoreria_mbd').update({
+    entrega_doc:         'PENDIENTE',
+    nro_factura_doc:     null,
+    tipo_doc:            null,
+    estado_conciliacion: null,
+    fecha_actualizacion: new Date().toISOString().slice(0, 10),
+  }).eq('id', mov.id);
+  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+  mostrarToast('✅ Desvinculado correctamente', 'exito');
+  document.getElementById('modal-container').innerHTML = '';
+  if (tipo === 'VENTA') cargarVentas();
+  else cargarCompras();
 }

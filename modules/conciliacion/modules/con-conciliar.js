@@ -778,9 +778,11 @@ function _rowMultiMatchHtml(item, idx, _TD) {
   const d        = item.doc;
   const key      = `pos_${idx}`;
   _conItemCache[key] = item;
-  const tipoBg   = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
-  const rowspan  = item.movs.length;
-  const multiBg  = 'rgba(44,82,130,.05)';
+  const tipoBg      = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
+  const rowspan     = item.movs.length;
+  const multiBg     = 'rgba(44,82,130,.05)';
+  const firstMovId  = item.movs[0]?.id || '';
+  const firstMovNro = (item.movs[0]?.nro_operacion_bancaria || '').replace(/'/g, '');
 
   return item.movs.map((m, mi) => {
     const isFirst = mi === 0;
@@ -813,8 +815,14 @@ function _rowMultiMatchHtml(item, idx, _TD) {
         <div style="display:flex;flex-direction:column;gap:4px">
           <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 9px"
             onclick="_aprobarMatchMulti('${key}',${idx})">✓ Aprobar</button>
-          <button style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
-            onclick="_rechazarMatchMulti(${idx})">✕ Rechazar</button>
+          <div style="display:flex;gap:3px">
+            <button title="Ver comprobante completo" style="padding:4px 8px;background:rgba(39,103,73,.15);color:#276749;border:1px solid rgba(39,103,73,.3);border-radius:4px;cursor:pointer;font-size:12px"
+              onclick="_verComprobanteMultiDoc('${key}')">👁️</button>
+            <button title="Ver documentos enlazados" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:12px"
+              onclick="_verDocumentosEnlazados('${firstMovId}','${firstMovNro}')">🔗</button>
+            <button title="Rechazar sugerencia" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
+              onclick="_rechazarMatchMulti(${idx})">✕</button>
+          </div>
         </div>
       </td>` : ''}
     </tr>`;
@@ -989,6 +997,118 @@ function _verComprobante(key) {
           style="padding:8px 18px;border:none;border-radius:8px;background:#2C5282;color:#fff;
             cursor:pointer;font-size:13px;font-family:var(--font);font-weight:600">
           ✓ Aprobar match
+        </button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── Vista comprobante para Multi-transfer (👁️) ──────────────────
+function _verComprobanteMultiDoc(key) {
+  const item = _conItemCache[key];
+  if (!item || !item.esMulti) { mostrarToast('Dato no disponible', 'atencion'); return; }
+
+  const d       = item.doc;
+  const tipoBg  = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
+  const tipoIcon = d._tipo === 'RH' ? '🧾' : d._tipo === 'VENTA' ? '📄' : '🛒';
+
+  const _f = (lbl, val) => val
+    ? `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid rgba(128,128,128,.1)">
+        <span style="color:var(--color-texto-suave);font-size:11px;flex-shrink:0;margin-right:10px;min-width:110px">${lbl}</span>
+        <span style="text-align:right;word-break:break-all">${val}</span>
+       </div>`
+    : '';
+
+  let docCampos = '';
+  if (d._tipo === 'COMPRA') {
+    docCampos = [
+      _f('N° Comprobante', `<strong style="color:var(--color-secundario)">${escapar(d._ndoc||'—')}</strong>`),
+      _f('Proveedor', escapar(d.nombre_proveedor||d._proveedor||'—')),
+      _f('RUC proveedor', escapar(d.ruc_proveedor||d._ruc||'—')),
+      _f('Fecha emisión', formatearFecha(d.fecha_emision||d._fecha)),
+      _f('Período', escapar(d.periodo||'—')),
+      _f('Base imponible', formatearMoneda(d.base_imponible||0)),
+      _f('IGV', formatearMoneda(d.igv||0)),
+      _f('Total', `<strong style="color:var(--color-exito);font-size:14px">${formatearMoneda(d.total||d._total||0)}</strong>`),
+    ].join('');
+  } else if (d._tipo === 'VENTA') {
+    docCampos = [
+      _f('N° Comprobante', `<strong style="color:var(--color-secundario)">${escapar(d._ndoc||'—')}</strong>`),
+      _f('Cliente', escapar(d.nombre_cliente||d.razon_social||d._proveedor||'—')),
+      _f('RUC / DNI', escapar(d.ruc_cliente||d.ruc||d._ruc||'—')),
+      _f('Fecha emisión', formatearFecha(d.fecha_emision||d._fecha)),
+      _f('Período', escapar(d.periodo||'—')),
+      _f('Total', `<strong style="color:var(--color-exito);font-size:14px">${formatearMoneda(d.total||d._total||0)}</strong>`),
+    ].join('');
+  } else { // RH
+    docCampos = [
+      _f('N° RH', `<strong style="color:var(--color-secundario)">${escapar(d._ndoc||'—')}</strong>`),
+      _f('Prestador', escapar(d.prestadores_servicios?.nombre||d._proveedor||'—')),
+      _f('DNI prestador', escapar(d.prestadores_servicios?.dni||d._ruc||'—')),
+      _f('Concepto', escapar(d.concepto||'—')),
+      _f('Fecha emisión', formatearFecha(d.fecha_emision||d._fecha)),
+      _f('Renta bruta', formatearMoneda(d.monto_bruto||0)),
+      _f('Retención', formatearMoneda(d.monto_retencion||0)),
+      _f('Renta neta', `<strong style="color:var(--color-exito);font-size:14px">${formatearMoneda(d.monto_neto||d._total||0)}</strong>`),
+    ].join('');
+  }
+
+  const movsResumen = item.movs.map((m, i) => `
+    <div style="padding:8px 10px;background:rgba(44,82,130,.05);border:1px solid rgba(44,82,130,.15);border-radius:6px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>
+          <div style="font-family:monospace;font-size:11px;font-weight:600;color:var(--color-secundario)">${escapar(m.nro_operacion_bancaria||'—')}</div>
+          <div style="font-size:11px;color:var(--color-texto-suave);margin-top:1px">${formatearFecha(m.fecha_deposito)} · ${escapar(truncar(m.descripcion||'—',35))}</div>
+        </div>
+        <div style="font-weight:700;font-size:13px;flex-shrink:0;color:${Number(m.monto)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda(m.monto)}</div>
+      </div>
+    </div>`).join('');
+
+  const firstMovId  = item.movs[0]?.id || '';
+  const firstMovNro = (item.movs[0]?.nro_operacion_bancaria || '').replace(/'/g, '');
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:12px';
+  overlay.innerHTML = `
+    <div style="background:var(--color-bg-card);border-radius:12px;max-width:520px;width:100%;
+      box-shadow:0 20px 60px rgba(0,0,0,.4);border:1px solid var(--color-borde);overflow:hidden;
+      max-height:calc(100vh - 24px);display:flex;flex-direction:column">
+
+      <div style="background:${tipoBg};padding:14px 20px;display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:22px">${tipoIcon}</span>
+        <div style="flex:1">
+          <div style="color:#fff;font-weight:700;font-size:15px">${escapar(d._ndoc||'—')}</div>
+          <div style="color:rgba(255,255,255,.8);font-size:11px">Multi-transfer · ${item.movs.length} movimientos · Σ ${formatearMoneda(item.sumaMovs)} · Score ${item.score}%</div>
+        </div>
+        <button onclick="this.closest('[style*=fixed]').remove()"
+          style="background:rgba(255,255,255,.2);border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;color:#fff;font-size:16px">✕</button>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:0">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--color-borde)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--color-texto-suave);margin-bottom:8px">
+            ${tipoIcon} Comprobante — ${escapar(d._tipo||'')}
+          </div>
+          ${docCampos}
+        </div>
+        <div style="padding:14px 18px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#7147e0;margin-bottom:8px">
+            🏦 ${item.movs.length} Movimientos bancarios vinculados — Total: ${formatearMoneda(item.sumaMovs)} / Doc: ${formatearMoneda(d._total||0)}
+          </div>
+          ${movsResumen}
+        </div>
+      </div>
+
+      <div style="padding:12px 18px;border-top:1px solid var(--color-borde);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0">
+        <button onclick="_verDocumentosEnlazados('${firstMovId}','${firstMovNro}');this.closest('[style*=fixed]').remove()"
+          style="padding:7px 14px;border:1px solid rgba(113,71,224,.4);border-radius:8px;background:rgba(113,71,224,.1);color:#7147e0;cursor:pointer;font-size:12px;font-family:var(--font)">
+          🔗 Ver enlaces
+        </button>
+        <button onclick="this.closest('[style*=fixed]').remove()"
+          style="padding:7px 16px;border:1px solid var(--color-borde);border-radius:8px;background:var(--color-bg-card);color:var(--color-texto);cursor:pointer;font-size:13px;font-family:var(--font)">
+          Cerrar
         </button>
       </div>
     </div>`;
