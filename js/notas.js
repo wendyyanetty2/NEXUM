@@ -32,18 +32,17 @@
     const root = document.createElement('div');
     root.id = 'nexum-notas-root';
     root.innerHTML = `
-      <!-- Botón flotante — esquina superior derecha, fuera de la tabla -->
-      <div id="nexum-notas-fab" onclick="window.NEXUM_NOTAS.toggle()"
-        style="position:fixed;top:14px;right:80px;z-index:9000;cursor:pointer;
+      <!-- Botón flotante — arrastrable, posición por defecto esquina inferior derecha -->
+      <div id="nexum-notas-fab"
+        title="📝 Notas — Arrastrar para mover"
+        style="position:fixed;bottom:20px;right:20px;z-index:9000;cursor:grab;
                background:var(--color-secundario,#2B6CB0);color:#fff;border-radius:50px;
-               padding:7px 14px;font-size:13px;font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.35);
-               display:flex;align-items:center;gap:6px;transition:transform .15s;user-select:none"
-        onmouseover="this.style.transform='scale(1.05)'"
-        onmouseout="this.style.transform='scale(1)'">
-        📝 Notas
+               padding:7px 14px;font-size:13px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.4);
+               display:flex;align-items:center;gap:6px;user-select:none;transition:box-shadow .15s">
+        <span style="font-size:11px;opacity:.6;letter-spacing:1px">⠿</span> 📝 Notas
         <span id="nexum-notas-badge" style="display:none;background:#C53030;color:#fff;
           border-radius:50%;width:20px;height:20px;font-size:11px;font-weight:700;
-          display:none;align-items:center;justify-content:center;min-width:20px"></span>
+          align-items:center;justify-content:center;min-width:20px"></span>
       </div>
 
       <!-- Overlay -->
@@ -403,11 +402,76 @@
     _cargarNotas();
   }
 
+  // ── Drag & Drop del botón flotante ──────────────────────────────
+  function _initDrag() {
+    const fab = document.getElementById('nexum-notas-fab');
+    if (!fab) return;
+
+    // Restaurar posición guardada
+    try {
+      const saved = JSON.parse(localStorage.getItem('nexum_notas_pos') || 'null');
+      if (saved) {
+        fab.style.left   = saved.left   || 'auto';
+        fab.style.top    = saved.top    || 'auto';
+        fab.style.right  = saved.right  || 'auto';
+        fab.style.bottom = saved.bottom || 'auto';
+      }
+    } catch(e) {}
+
+    let dragging = false, moved = false;
+    let startX, startY, startLeft, startTop;
+
+    fab.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      dragging = true; moved = false;
+      startX = e.clientX; startY = e.clientY;
+      const rect = fab.getBoundingClientRect();
+      startLeft = rect.left; startTop = rect.top;
+      fab.style.cursor = 'grabbing';
+      fab.style.transition = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+      if (!moved) return;
+      const newLeft = Math.max(4, Math.min(window.innerWidth  - fab.offsetWidth  - 4, startLeft + dx));
+      const newTop  = Math.max(4, Math.min(window.innerHeight - fab.offsetHeight - 4, startTop  + dy));
+      fab.style.left   = newLeft + 'px';
+      fab.style.top    = newTop  + 'px';
+      fab.style.right  = 'auto';
+      fab.style.bottom = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      fab.style.cursor = 'grab';
+      fab.style.transition = 'box-shadow .15s';
+      if (moved) {
+        try {
+          localStorage.setItem('nexum_notas_pos', JSON.stringify({
+            left: fab.style.left, top: fab.style.top, right: 'auto', bottom: 'auto'
+          }));
+        } catch(e) {}
+      }
+    });
+
+    // Click: solo abrir/cerrar si NO hubo arrastre
+    fab.addEventListener('click', () => {
+      if (moved) { moved = false; return; }
+      window.NEXUM_NOTAS.toggle();
+    });
+  }
+
   // ── Inicializar con contexto de empresa/usuario ─────────────────
   function init(empresaId, usuarioId) {
     _notasEmpresaId = empresaId;
     _notasUsuarioId = usuarioId;
     _inyectarDOM();
+    _initDrag();       // activar drag & drop
     // Cargar badge sin abrir panel
     _cargarBadge();
   }
