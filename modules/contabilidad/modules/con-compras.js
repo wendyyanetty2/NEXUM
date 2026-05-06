@@ -65,27 +65,10 @@ async function cargarCompras() {
   const totalBI  = filas.reduce((s,r) => s + Number(r.bi_gravado_dg||0), 0);
   const totalIGV = filas.reduce((s,r) => s + Number(r.igv_ipm_dg||0), 0);
   const totalCP  = filas.reduce((s,r) => s + Number(r.total_cp||0), 0);
-  const resumen  = document.getElementById('c-resumen');
-  if (resumen) resumen.innerHTML = `
-    <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">BI GRAVADO DG</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalBI)}</div>
-    </div>
-    <div style="background:#2C7A7B;color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">IGV / IPM DG</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalIGV)}</div>
-    </div>
-    <div style="background:var(--color-critico);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">TOTAL COMPRAS</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalCP)}</div>
-    </div>
-    <div style="background:#4A5568;color:#fff;padding:12px 16px;border-radius:8px;min-width:120px">
-      <div style="font-size:11px;opacity:.8">COMPROBANTES</div>
-      <div style="font-size:18px;font-weight:700">${filas.length}</div>
-    </div>
-  `;
 
   if (!filas.length) {
+    const resC = document.getElementById('c-resumen');
+    if (resC) resC.innerHTML = '';
     wrap.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin registros en este período.</p>';
     return;
   }
@@ -97,6 +80,47 @@ async function cargarCompras() {
         .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
     : { data: [] };
   const aplicadosMap = new Map((mbdAplicados || []).map(r => [r.nro_factura_doc, r]));
+
+  // Estadísticas de conciliación
+  const _nDocC    = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+  const countAplicC = filas.filter(r => aplicadosMap.has(_nDocC(r))).length;
+  const countPendC  = filas.length - countAplicC;
+  const montoAplicC = filas.filter(r => aplicadosMap.has(_nDocC(r))).reduce((s,r) => s + Number(r.total_cp||0), 0);
+  const montoPendC  = totalCP - montoAplicC;
+  const pctAplicC   = filas.length > 0 ? Math.round(countAplicC / filas.length * 100) : 0;
+
+  const resumen = document.getElementById('c-resumen');
+  if (resumen) resumen.innerHTML = `
+    <div style="width:100%;flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+      padding:8px 12px;background:rgba(128,128,128,.05);border:1px solid var(--color-borde);
+      border-radius:8px;font-size:11px;font-weight:600;box-sizing:border-box">
+      <span style="background:#2F855A;color:#fff;padding:3px 10px;border-radius:12px">✅ APLICADO ${countAplicC}</span>
+      <span style="background:#C53030;color:#fff;padding:3px 10px;border-radius:12px">🔴 PENDIENTE ${countPendC}</span>
+      <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicC}% conciliado</span>
+    </div>
+    <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
+      <div style="font-size:11px;opacity:.8">BI GRAVADO DG</div>
+      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalBI)}</div>
+    </div>
+    <div style="background:#2C7A7B;color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
+      <div style="font-size:11px;opacity:.8">IGV / IPM DG</div>
+      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalIGV)}</div>
+    </div>
+    <div style="background:var(--color-critico);color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
+      <div style="font-size:11px;opacity:.8">TOTAL COMPRAS</div>
+      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalCP)}</div>
+    </div>
+    <div style="background:#276749;color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
+      <div style="font-size:11px;opacity:.8">✅ APLICADOS</div>
+      <div style="font-size:18px;font-weight:700">${countAplicC}</div>
+      <div style="font-size:11px;opacity:.75">${formatearMoneda(montoAplicC)}</div>
+    </div>
+    <div style="background:#C53030;color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
+      <div style="font-size:11px;opacity:.8">🔴 PENDIENTES</div>
+      <div style="font-size:18px;font-weight:700">${countPendC}</div>
+      <div style="font-size:11px;opacity:.75">${formatearMoneda(montoPendC)}</div>
+    </div>
+  `;
 
   wrap.innerHTML = `
     <table class="tabla-nexum">
