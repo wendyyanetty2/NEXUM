@@ -97,15 +97,16 @@ async function registrarHistorial(tabla, registroId, accion, datosAnteriores = n
 
 // Definición de módulos con permisos (OCR eliminado)
 const NEXUM_PERMISOS_MODULOS = {
-  dashboard:    { nombre: 'Dashboard',      icono: '🏠' },
-  admin:        { nombre: 'Administración', icono: '⚙️' },
-  catalogos:    { nombre: 'Catálogos',      icono: '🗂️' },
-  tesoreria:    { nombre: 'Tesorería',      icono: '🏦' },
-  conciliacion: { nombre: 'Conciliación',   icono: '🔗' },
-  planilla:     { nombre: 'Planilla',       icono: '👥' },
-  tributaria:   { nombre: 'Tributaria',     icono: '📋' },
-  reportes:     { nombre: 'Reportes',       icono: '📊' },
-  contabilidad: { nombre: 'Contabilidad',   icono: '📒' },
+  dashboard:          { nombre: 'Dashboard',          icono: '🏠' },
+  admin:              { nombre: 'Administración',     icono: '⚙️' },
+  catalogos:          { nombre: 'Catálogos',          icono: '🗂️' },
+  tesoreria:          { nombre: 'Tesorería',          icono: '🏦' },
+  conciliacion:       { nombre: 'Conciliación',       icono: '🔗' },
+  planilla:           { nombre: 'Planilla',           icono: '👥' },
+  'planilla-movilidad': { nombre: 'Planilla Movilidad', icono: '🚗' },
+  tributaria:         { nombre: 'Tributaria',         icono: '📋' },
+  reportes:           { nombre: 'Reportes',           icono: '📊' },
+  contabilidad:       { nombre: 'Contabilidad',       icono: '📒' },
 };
 
 // Permisos por defecto según rol

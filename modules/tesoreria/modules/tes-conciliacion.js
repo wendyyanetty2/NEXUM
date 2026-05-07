@@ -90,7 +90,7 @@ async function renderTabConciliacion(area) {
           </div>
           <div class="table-wrap" style="max-height:340px;overflow-y:auto">
             <table class="tabla" style="font-size:12px">
-              <thead><tr><th>Fecha</th><th>Descripción</th><th class="text-right">Importe</th><th>Nat.</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Descripción</th><th class="text-right">Importe</th><th>Nat.</th><th title="Buscar comprobante manualmente">📂</th></tr></thead>
               <tbody id="conc-tbody-banco"></tbody>
             </table>
           </div>
@@ -662,6 +662,7 @@ function _concRenderSinMatch() {
     } else {
       tbodyBanco.innerHTML = conc_sin_banco.map(b => {
         const sel = b.id === conc_sel_banco;
+        const nroOp = b.nro_operacion_bancaria || b.id?.slice(0,8) || '';
         return `
           <tr onclick="_concSeleccionarBanco('${b.id}')"
               style="cursor:pointer;${sel?'background:var(--color-primario-claro,#EBF8FF);font-weight:500':''}">
@@ -671,6 +672,11 @@ function _concRenderSinMatch() {
               ${b.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(b.importe, b.moneda)}
             </td>
             <td><span class="badge ${b.naturaleza==='CARGO'?'badge-critico':'badge-activo'}" style="font-size:10px">${b.naturaleza}</span></td>
+            <td style="text-align:center" onclick="event.stopPropagation()">
+              <button title="📂 Buscar comprobante manualmente (Compras, Ventas, RH, Planilla Movilidad)"
+                onclick="_bmBuscarDoc('${b.id}','${escapar(nroOp)}',${b.importe||0},'${b.fecha||''}','tesoreria_mbd')"
+                style="padding:3px 7px;background:rgba(85,60,154,.12);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:12px">📂</button>
+            </td>
           </tr>`;
       }).join('');
     }

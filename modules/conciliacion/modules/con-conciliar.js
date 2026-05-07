@@ -1494,9 +1494,17 @@ async function _abrirPanelManual(movId, monto, fecha, nroOp) {
       <div><strong>Fecha:</strong> ${formatearFecha(fecha)}</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
-      <input type="text" id="pm-q-num" placeholder="N° comprobante (E001-14, F001-...)"
+      <select id="pm-q-tipo"
         style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
-      <input type="text" id="pm-q-prov" placeholder="Proveedor / RUC"
+        <option value="">Todos los tipos</option>
+        <option value="COMPRA">🛒 Compras</option>
+        <option value="VENTA">📄 Ventas</option>
+        <option value="RH">🧾 RH Honorarios</option>
+        <option value="PM">🚗 Planilla Movilidad</option>
+      </select>
+      <input type="text" id="pm-q-num" placeholder="N° comprobante / planilla…"
+        style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
+      <input type="text" id="pm-q-prov" placeholder="Proveedor / Trabajador / RUC / DNI"
         style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
       <button class="btn btn-primario" style="width:100%" onclick="_panelBuscar('${movId}')">🔍 Buscar</button>
     </div>
@@ -1504,56 +1512,86 @@ async function _abrirPanelManual(movId, monto, fecha, nroOp) {
 }
 
 async function _panelBuscar(movId) {
-  const qNum  = (document.getElementById('pm-q-num')?.value  || '').trim().toLowerCase();
-  const qProv = (document.getElementById('pm-q-prov')?.value || '').trim().toLowerCase();
+  const qTipo = (document.getElementById('pm-q-tipo')?.value  || '').trim();
+  const qNum  = (document.getElementById('pm-q-num')?.value   || '').trim().toLowerCase();
+  const qProv = (document.getElementById('pm-q-prov')?.value  || '').trim().toLowerCase();
   const resEl = document.getElementById('pm-resultados');
   if (!resEl) return;
-  if (!qNum && !qProv) { mostrarToast('Ingresa al menos un criterio', 'atencion'); return; }
+  if (!qNum && !qProv) { mostrarToast('Ingresa al menos un criterio de búsqueda', 'atencion'); return; }
 
   resEl.innerHTML = '<div class="spinner" style="margin:10px auto"></div>';
 
   const periodo = _con_periodo_actual;
-  // Construir ventana de 9 meses para búsqueda manual también
-  const periodosVentana = periodo ? _conPeriodosAdyacentes(periodo) : [periodo];
-  const [resC, resV, resR] = await Promise.all([
-    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empresa_activa.id).in('periodo', periodosVentana),
-    _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id', empresa_activa.id).in('periodo', periodosVentana),
-    _supabase.from('rh_registros').select('*, prestadores_servicios(nombre, dni)').eq('empresa_operadora_id', empresa_activa.id).in('periodo', periodosVentana),
-  ]);
+  const periodosVentana = periodo ? _conPeriodosAdyacentes(periodo) : [];
+  const empId = empresa_activa.id;
+
+  // ── Cargar fuentes según tipo seleccionado ──────────────────────
+  const promesas = [];
+  if (!qTipo || qTipo === 'COMPRA')
+    promesas.push(_supabase.from('registro_compras').select('id,serie,numero,nombre_proveedor,ruc_proveedor,total,fecha_emision').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
+  else promesas.push(Promise.resolve({ data: [] }));
+
+  if (!qTipo || qTipo === 'VENTA')
+    promesas.push(_supabase.from('registro_ventas').select('id,serie,numero,nombre_cliente,razon_social,ruc_cliente,total,fecha_emision').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
+  else promesas.push(Promise.resolve({ data: [] }));
+
+  if (!qTipo || qTipo === 'RH')
+    promesas.push(_supabase.from('rh_registros').select('id,numero_rh,monto_neto,fecha_emision,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
+  else promesas.push(Promise.resolve({ data: [] }));
+
+  if (!qTipo || qTipo === 'PM')
+    promesas.push(_supabase.from('planillas_movilidad').select('id,numero_planilla,trabajador_nombre,trabajador_dni,total_gastos,mes,fecha_emision,estado').eq('empresa_operadora_id', empId).in('mes', periodosVentana));
+  else promesas.push(Promise.resolve({ data: [] }));
+
+  const [resC, resV, resR, resPM] = await Promise.all(promesas);
+
+  const tipoBg   = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210', PM:'#553C9A' };
+  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾', PM:'🚗' };
 
   const todos = [
-    ...(resC.data||[]).map(d=>({ ...d, _tipo:'COMPRA', _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_proveedor||'', _total: d.total||0 })),
-    ...(resV.data||[]).map(d=>({ ...d, _tipo:'VENTA',  _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_cliente||d.razon_social||'', _total: d.total||0 })),
-    ...(resR.data||[]).map(d=>({ ...d, _tipo:'RH',     _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _total: d.monto_neto||0 })),
+    ...(resC.data||[]).map(d => ({ _tipo:'COMPRA', _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_proveedor||'', _ruc: d.ruc_proveedor||'', _total: d.total||0, id: d.id })),
+    ...(resV.data||[]).map(d => ({ _tipo:'VENTA',  _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_cliente||d.razon_social||'', _ruc: d.ruc_cliente||'', _total: d.total||0, id: d.id })),
+    ...(resR.data||[]).map(d => ({ _tipo:'RH',     _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, id: d.id })),
+    ...(resPM.data||[]).map(d => ({ _tipo:'PM',   _ndoc: d.numero_planilla||d.id?.slice(0,8), _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, id: d.id, _estado: d.estado })),
   ].filter(d => {
     const ndocL = (d._ndoc||'').toLowerCase();
-    const provL = (d._prov||'').toLowerCase();
+    const provL = [(d._prov||''),(d._ruc||'')].join(' ').toLowerCase();
     if (qNum  && !ndocL.includes(qNum))  return false;
     if (qProv && !provL.includes(qProv)) return false;
     return true;
   });
 
   if (!todos.length) {
-    resEl.innerHTML = '<p style="text-align:center;padding:16px">Sin resultados</p>';
+    resEl.innerHTML = '<p style="text-align:center;padding:16px;color:var(--color-texto-suave)">Sin resultados</p>';
     return;
   }
 
-  resEl.innerHTML = todos.slice(0,10).map(d => `
-    <div style="border:1px solid var(--color-borde);border-radius:6px;padding:10px;margin-bottom:8px">
-      <div style="font-weight:600;color:var(--color-secundario)">${escapar(d._ndoc)}</div>
-      <div style="font-size:11px;color:var(--color-texto-suave)">${escapar(d._prov)} · ${formatearMoneda(d._total)}</div>
-      <div style="margin-top:6px">
-        <button class="btn btn-sm btn-primario" style="font-size:11px"
-          onclick="_vincularManual('${movId}','${d._tipo}','${d.id}')">✓ Vincular</button>
-      </div>
-    </div>`).join('');
+  resEl.innerHTML = `
+    <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:8px">${todos.length} resultado(s)</div>
+    ${todos.slice(0, 12).map(d => `
+      <div style="border:1px solid var(--color-borde);border-radius:6px;padding:9px 10px;margin-bottom:7px;background:var(--color-bg-card)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span style="background:${tipoBg[d._tipo]||'#718096'};color:#fff;padding:2px 5px;border-radius:3px;font-size:9px;font-weight:700">${tipoIcon[d._tipo]||''} ${d._tipo}</span>
+          <strong style="color:var(--color-secundario);font-size:11px">${escapar(d._ndoc||'—')}</strong>
+          ${d._estado ? `<span style="font-size:9px;color:#553C9A">${d._estado}</span>` : ''}
+        </div>
+        <div style="font-size:11px;color:var(--color-texto-suave)">${escapar(d._prov||'—')} ${d._ruc ? `· ${escapar(d._ruc)}` : ''}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+          <span style="font-weight:700;color:var(--color-secundario);font-size:12px">${formatearMoneda(d._total)}</span>
+          <button class="btn btn-sm btn-primario" style="font-size:10px;padding:3px 9px"
+            onclick="_vincularManual('${movId}','${d._tipo}','${d.id}','${escapar(d._ndoc||'')}')">✓ Vincular</button>
+        </div>
+      </div>`).join('')}`;
 }
 
-async function _vincularManual(movId, docTipo, docId) {
-  // Buscar el documento en los resultados para obtener su número legible
-  const todos = [..._con_resultados.exactos, ..._con_resultados.posibles, ..._con_resultados.sin_match];
-  const itemDoc = todos.find(i => i.doc?.id === docId);
-  const nroDoc  = itemDoc?.doc?._ndoc || null;
+async function _vincularManual(movId, docTipo, docId, nDocDirecto) {
+  // Intentar obtener el nroDoc del cache; usar el nDocDirecto si viene del panel de búsqueda
+  let nroDoc = nDocDirecto || null;
+  if (!nroDoc) {
+    const todos = [..._con_resultados.exactos, ..._con_resultados.posibles, ..._con_resultados.sin_match];
+    const itemDoc = todos.find(i => i.doc?.id === docId);
+    nroDoc = itemDoc?.doc?._ndoc || null;
+  }
 
   const { error } = await _supabase.from('tesoreria_mbd')
     .update({

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Planilla de Movilidad — NEXUM</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/assets/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="../../css/main.css">
+  <link rel="stylesheet" href="../../css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="../../js/config.js"></script>
+  <script src="../../js/utils.js"></script>
+  <script src="../../js/auth.js"></script>
+  <script src="../../js/tema.js"></script>
+  <script src="../../js/notas.js?v=2&t=20260510"></script>
+  <script src="../../js/layout.js"></script>
+
+  <style>
+    .tab-btn {
+      padding:10px 16px; border:none; background:none; cursor:pointer;
+      font-family:var(--font); font-size:13px; font-weight:500;
+      color:var(--color-texto-suave); border-bottom:2px solid transparent;
+      margin-bottom:-2px; transition:all 0.2s; white-space:nowrap;
+    }
+    .tab-btn:hover  { color:var(--color-primario); }
+    .tab-btn.activo { color:var(--color-secundario); border-bottom-color:var(--color-secundario); }
+
+    /* Print styles para exportar PDF */
+    @media print {
+      .nexum-layout { display:block !important; }
+      .sidebar, .header-top, .page-header, .tab-btn, #pm-barra-acciones,
+      #pm-filtros, .no-print { display:none !important; }
+      .area-contenido { padding:0 !important; }
+      .contenido-principal { margin:0 !important; }
+      #pm-print-area { display:block !important; }
+    }
+  </style>
+</head>
+<body>
+<div class="nexum-layout">
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="cerrarSidebar()"></div>
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="contenido-principal">
+    <header class="header-top" id="header-top"></header>
+    <main class="area-contenido">
+
+      <div class="page-header">
+        <div>
+          <h1>🚗 Planilla de Movilidad</h1>
+          <p>Gestión de Planillas por Gastos de Movilidad — Por Trabajador</p>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:4px;margin-bottom:24px;border-bottom:2px solid var(--color-borde);overflow-x:auto;">
+        <button class="tab-btn activo" id="tab-pm-lista"  onclick="activarTab('pm-lista')">📋 Listado</button>
+        <button class="tab-btn"        id="tab-pm-nueva"  onclick="activarTab('pm-nueva')">➕ Nueva planilla</button>
+      </div>
+
+      <div id="contenido-tab">
+        <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div id="modal-container"></div>
+<div id="pm-print-area" style="display:none"></div>
+
+<script src="../../modules/planilla-movilidad/modules/pmo-lista.js?v=1&t=20260507"></script>
+<script src="../../modules/planilla-movilidad/modules/pmo-form.js?v=1&t=20260507"></script>
+
+<script>
+let perfil_usuario = null;
+let empresa_activa = null;
+
+(async () => {
+  const r = await inicializarModulo('planilla-movilidad');
+  if (!r) return;
+  perfil_usuario = r.perfil;
+  empresa_activa = r.empresa;
+  setBreadcrumb('Planilla de Movilidad');
+  activarTab('pm-lista');
+})();
+
+function activarTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('activo'));
+  const btn = document.getElementById('tab-' + tab);
+  if (btn) btn.classList.add('activo');
+  const area = document.getElementById('contenido-tab');
+  if (tab === 'pm-lista')  renderTabLista(area);
+  else                     renderTabNueva(area);
+}
+</script>
+</body>
+</html>
