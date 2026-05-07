@@ -22,15 +22,6 @@ async function renderTabNueva(area, planillaData = null, detallesData = []) {
       ${escapar(t.nombre)}
     </option>`).join('');
 
-  const opts_distritos = PM_DISTRITOS.map(d =>
-    `<option value="${escapar(d)}">${escapar(d)}</option>`).join('');
-
-  const opts_motivos = PM_MOTIVOS.map(m =>
-    `<option value="${escapar(m)}">${escapar(m)}</option>`).join('');
-
-  const opts_proyectos = PM_PROYECTOS.map(p =>
-    `<option value="${escapar(p)}">${escapar(p)}</option>`).join('');
-
   area.innerHTML = `
     <div class="fadeIn">
       <div class="card" style="margin-bottom:16px">
@@ -119,14 +110,15 @@ async function renderTabNueva(area, planillaData = null, detallesData = []) {
             <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px">
               <thead style="background:var(--color-primario);color:#fff">
                 <tr>
-                  <th style="padding:8px 10px;white-space:nowrap">#</th>
-                  <th style="padding:8px 10px;white-space:nowrap;min-width:110px">Fecha <span style="color:#fca5a5">*</span></th>
-                  <th style="padding:8px 10px;white-space:nowrap;min-width:200px">Motivo <span style="color:#fca5a5">*</span></th>
-                  <th style="padding:8px 10px;white-space:nowrap;min-width:130px">Origen</th>
-                  <th style="padding:8px 10px;white-space:nowrap;min-width:130px">Destino</th>
-                  <th style="padding:8px 10px;white-space:nowrap;min-width:150px">Proyecto</th>
-                  <th style="padding:8px 10px;white-space:nowrap;min-width:100px;text-align:right">Monto S/ <span style="color:#fca5a5">*</span></th>
-                  <th style="padding:8px 10px">—</th>
+                  <th style="padding:8px 8px;white-space:nowrap">#</th>
+                  <th style="padding:8px 8px;white-space:nowrap;min-width:110px">Fecha <span style="color:#fca5a5">*</span></th>
+                  <th style="padding:8px 8px;white-space:nowrap;min-width:200px">Motivo <span style="color:#fca5a5">*</span></th>
+                  <th style="padding:8px 8px;white-space:nowrap;min-width:120px">Desde</th>
+                  <th style="padding:8px 8px;white-space:nowrap;min-width:120px">Hasta</th>
+                  <th style="padding:8px 8px;white-space:nowrap;min-width:140px">Proyecto</th>
+                  <th style="padding:8px 8px;white-space:nowrap;min-width:140px">Empresa</th>
+                  <th style="padding:8px 8px;white-space:nowrap;min-width:90px;text-align:right">Monto S/ <span style="color:#fca5a5">*</span></th>
+                  <th style="padding:8px 8px">—</th>
                 </tr>
               </thead>
               <tbody id="pmo-tabla-body">
@@ -161,11 +153,12 @@ async function renderTabNueva(area, planillaData = null, detallesData = []) {
       </div>
     </div>
 
-    <!-- Data oculta para las selects de filas dinámicas -->
+    <!-- Data para las selects de filas dinámicas -->
     <script>
-      var _pmoOptsMotivos  = ${JSON.stringify(PM_MOTIVOS)};
-      var _pmoOptsDistritos = ${JSON.stringify(PM_DISTRITOS)};
-      var _pmoOptsProyectos = ${JSON.stringify(PM_PROYECTOS)};
+      var _pmoOptsMotivos    = ${JSON.stringify(PM_MOTIVOS)};
+      var _pmoOptsDistritos  = ${JSON.stringify(PM_DISTRITOS)};
+      var _pmoOptsProyectos  = ${JSON.stringify(PM_PROYECTOS)};
+      var _pmoOptsEmpresas   = ${JSON.stringify(PM_EMPRESAS_CLIENTE)};
     </script>`;
 
   _pmoFilasCount = 0;
@@ -199,14 +192,11 @@ async function _pmoGenerarNumero(mes) {
 
 // ── Actualiza DNI al cambiar trabajador ───────────────────────────
 function _pmoSelTrabajador() {
-  const sel = document.getElementById('pmo-trabajador');
-  const opt = sel?.options[sel.selectedIndex];
+  const sel   = document.getElementById('pmo-trabajador');
   const dniEl = document.getElementById('pmo-dni');
-  if (dniEl) {
-    const t = PM_TRABAJADORES.find(t => t.dni === sel?.value) ||
-              PM_TRABAJADORES.find(t => t.nombre === opt?.dataset.nombre);
-    dniEl.value = t ? t.dni : sel?.value || '';
-  }
+  if (!dniEl || !sel) return;
+  const t = PM_TRABAJADORES.find(t => t.dni === sel.value);
+  dniEl.value = t ? t.dni : sel.value || '';
 }
 
 // ── Actualiza número sugerido al cambiar mes ──────────────────────
@@ -227,25 +217,30 @@ function _pmoAgregarFila(datos = null) {
   const idx  = _pmoFilasCount++;
   const hoy  = new Date().toISOString().slice(0, 10);
 
-  const optsMotivos   = (window._pmoOptsMotivos   || PM_MOTIVOS  ).map(m =>
-    `<option value="${escapar(m)}" ${datos?.motivo===m?'selected':''}>${escapar(m)}</option>`).join('');
-  const optsDistritos = (window._pmoOptsDistritos || PM_DISTRITOS).map(d =>
-    `<option value="${escapar(d)}" ${datos?.origen===d?'selected':''||datos?.destino===d?'selected':''}>${escapar(d)}</option>`).join('');
-  const optsOrigen    = (window._pmoOptsDistritos || PM_DISTRITOS).map(d =>
-    `<option value="${escapar(d)}" ${datos?.origen===d?'selected':''}>${escapar(d)}</option>`).join('');
-  const optsDest      = (window._pmoOptsDistritos || PM_DISTRITOS).map(d =>
-    `<option value="${escapar(d)}" ${datos?.destino===d?'selected':''}>${escapar(d)}</option>`).join('');
-  const optsProyectos = (window._pmoOptsProyectos || PM_PROYECTOS).map(p =>
-    `<option value="${escapar(p)}" ${datos?.proyecto===p?'selected':''}>${escapar(p)}</option>`).join('');
+  const motivos   = window._pmoOptsMotivos   || PM_MOTIVOS;
+  const distritos = window._pmoOptsDistritos || PM_DISTRITOS;
+  const proyectos = window._pmoOptsProyectos || PM_PROYECTOS;
+  const empresas  = window._pmoOptsEmpresas  || PM_EMPRESAS_CLIENTE;
 
-  const tdStyle = 'padding:4px 4px;border-bottom:1px solid var(--color-borde);vertical-align:top';
-  const inputStyle = 'padding:6px 7px;border:1px solid var(--color-borde);border-radius:4px;width:100%;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:11px;box-sizing:border-box';
-  const selStyle   = 'padding:6px 4px;border:1px solid var(--color-borde);border-radius:4px;width:100%;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:11px';
+  const optsMotivos   = motivos.map(m =>
+    `<option value="${escapar(m)}" ${datos?.motivo===m?'selected':''}>${escapar(m)}</option>`).join('');
+  const optsOrigen    = distritos.map(d =>
+    `<option value="${escapar(d)}" ${datos?.origen===d?'selected':''}>${escapar(d)}</option>`).join('');
+  const optsDest      = distritos.map(d =>
+    `<option value="${escapar(d)}" ${datos?.destino===d?'selected':''}>${escapar(d)}</option>`).join('');
+  const optsProyectos = proyectos.map(p =>
+    `<option value="${escapar(p)}" ${datos?.proyecto===p?'selected':''}>${escapar(p)}</option>`).join('');
+  const optsEmpresas  = empresas.map(e =>
+    `<option value="${escapar(e)}" ${datos?.empresa_cliente===e?'selected':''}>${escapar(e)}</option>`).join('');
+
+  const tdStyle   = 'padding:3px 3px;border-bottom:1px solid var(--color-borde);vertical-align:top';
+  const inputStyle = 'padding:5px 6px;border:1px solid var(--color-borde);border-radius:4px;width:100%;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:11px;box-sizing:border-box';
+  const selStyle   = 'padding:5px 4px;border:1px solid var(--color-borde);border-radius:4px;width:100%;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:11px';
 
   const tr = document.createElement('tr');
   tr.id = `pmo-fila-${idx}`;
   tr.innerHTML = `
-    <td style="${tdStyle};text-align:center;color:var(--color-texto-suave);font-size:11px;padding:8px 4px">${idx+1}</td>
+    <td style="${tdStyle};text-align:center;color:var(--color-texto-suave);font-size:11px;padding:7px 4px">${idx+1}</td>
     <td style="${tdStyle};min-width:110px">
       <input type="date" id="pmo-fecha-${idx}" value="${datos?.fecha || hoy}" onchange="_pmoRecalcTotal()" style="${inputStyle}">
     </td>
@@ -254,19 +249,19 @@ function _pmoAgregarFila(datos = null) {
         ${optsMotivos}
       </select>
     </td>
-    <td style="${tdStyle};min-width:130px">
+    <td style="${tdStyle};min-width:120px">
       <select id="pmo-origen-${idx}" style="${selStyle}">
-        <option value="">— Origen —</option>
+        <option value="">— Desde —</option>
         ${optsOrigen}
       </select>
     </td>
-    <td style="${tdStyle};min-width:130px">
+    <td style="${tdStyle};min-width:120px">
       <select id="pmo-destino-${idx}" style="${selStyle}">
-        <option value="">— Destino —</option>
+        <option value="">— Hasta —</option>
         ${optsDest}
       </select>
     </td>
-    <td style="${tdStyle};min-width:150px">
+    <td style="${tdStyle};min-width:140px">
       <select id="pmo-proyecto-${idx}" style="${selStyle}">
         <option value="">— Proyecto —</option>
         ${optsProyectos}
@@ -277,19 +272,25 @@ function _pmoAgregarFila(datos = null) {
         placeholder="Especificar proyecto"
         style="${inputStyle};margin-top:3px;display:${datos?.proyecto && !PM_PROYECTOS.includes(datos.proyecto) ? 'block' : 'none'}">
     </td>
-    <td style="${tdStyle};min-width:100px;text-align:right">
+    <td style="${tdStyle};min-width:140px">
+      <select id="pmo-empresa-${idx}" style="${selStyle}">
+        <option value="">— Empresa —</option>
+        ${optsEmpresas}
+      </select>
+    </td>
+    <td style="${tdStyle};min-width:90px;text-align:right">
       <input type="number" id="pmo-monto-${idx}" value="${datos?.monto || ''}" min="0" step="0.50"
         placeholder="0.00" onchange="_pmoRecalcTotal()" oninput="_pmoRecalcTotal()"
         style="${inputStyle};text-align:right;font-weight:600">
     </td>
-    <td style="${tdStyle};text-align:center;padding:4px">
+    <td style="${tdStyle};text-align:center;padding:3px">
       <button onclick="_pmoEliminarFila(${idx})" title="Eliminar fila"
         style="padding:4px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">✕</button>
     </td>`;
 
   tbody.appendChild(tr);
 
-  // Event: mostrar input libre de proyecto
+  // Mostrar input libre de proyecto
   const selProy = document.getElementById(`pmo-proyecto-${idx}`);
   if (selProy) {
     selProy.addEventListener('change', () => {
@@ -307,8 +308,7 @@ function _pmoEliminarFila(idx) {
   if (tr) tr.remove();
   _pmoRecalcTotal();
   // Re-numerar visualmente
-  const filas = document.querySelectorAll('#pmo-tabla-body tr');
-  filas.forEach((tr, i) => {
+  document.querySelectorAll('#pmo-tabla-body tr').forEach((tr, i) => {
     const td = tr.querySelector('td:first-child');
     if (td) td.textContent = i + 1;
   });
@@ -347,13 +347,16 @@ function _pmoRecolectarFilas() {
       proyecto = document.getElementById(`pmo-proyecto-txt-${i}`)?.value.trim() || '';
     }
 
+    const empresa_cliente = document.getElementById(`pmo-empresa-${i}`)?.value || null;
+
     filas.push({
       orden,
       fecha,
       motivo,
-      origen:  document.getElementById(`pmo-origen-${i}`)?.value  || null,
-      destino: document.getElementById(`pmo-destino-${i}`)?.value || null,
-      proyecto: proyecto || null,
+      origen:          document.getElementById(`pmo-origen-${i}`)?.value  || null,
+      destino:         document.getElementById(`pmo-destino-${i}`)?.value || null,
+      proyecto:        proyecto || null,
+      empresa_cliente: empresa_cliente || null,
       monto,
     });
     orden++;
@@ -420,15 +423,15 @@ async function _pmoGuardar(estado) {
 
     // Insertar filas de detalle
     const detallesPayload = filas.map(f => ({
-      planilla_id:    planillaId,
-      orden:          f.orden,
-      fecha:          f.fecha,
-      motivo:         f.motivo,
-      origen:         f.origen,
-      destino:        f.destino,
-      proyecto:       f.proyecto,
-      empresa_cliente: null,
-      monto:          f.monto,
+      planilla_id:     planillaId,
+      orden:           f.orden,
+      fecha:           f.fecha,
+      motivo:          f.motivo,
+      origen:          f.origen,
+      destino:         f.destino,
+      proyecto:        f.proyecto,
+      empresa_cliente: f.empresa_cliente,
+      monto:           f.monto,
     }));
 
     if (detallesPayload.length) {

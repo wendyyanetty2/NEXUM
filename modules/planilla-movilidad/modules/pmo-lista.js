@@ -1,30 +1,35 @@
 // ═══════════════════════════════════════════════════════════════
-// Planilla de Movilidad — Tab Listado
+// Planilla de Movilidad — Tab Listado + catálogos compartidos
 // ═══════════════════════════════════════════════════════════════
 
-// ── Catálogos constantes ──────────────────────────────────────────
+// ── Catálogos (sincronizados con hoja "Base de Datos" del Excel) ──
+const PM_EMPRESAS = [
+  { nombre: 'PEVAL CORPORACION E.I.R.L.',    ruc: '20611965479' },
+  { nombre: 'JVÑ GENERAL SERVICES S.A.C.',   ruc: '20603607342' },
+];
+
 const PM_TRABAJADORES = [
-  { nombre: 'Segundo Alexis Valencia Ñañez',      dni: '73093007' },
-  { nombre: 'Jorge Samuel Segura Ramos',           dni: '74918847' },
-  { nombre: 'Jeiber Vargas Tuesta',                dni: '73766403' },
-  { nombre: 'Segundo Jacobo Valencia Lozada',      dni: '16752234' },
-  { nombre: 'Edver Johanys Valencia Ñañez',        dni: '73093007' },
-  { nombre: 'Jose Augusto Fernandez Lozada',       dni: '17622309' },
-  { nombre: 'Jhon Kenedi Romaina Tangoa',          dni: '60128333' },
-  { nombre: 'Jose Alfonso Cornejo Quispitongo',    dni: '16735292' },
-  { nombre: 'Manuel Luis Lizarraga Lizarraga',     dni: '40492603' },
+  { nombre: 'Segundo Alexis Valencia Ñañez',         dni: '73093007' },
+  { nombre: 'Jorge Samuel Segura Ramos',              dni: '74918847' },
+  { nombre: 'Jeiber Vargas Tuesta',                   dni: '73766403' },
+  { nombre: 'Segundo Jacobo Valencia Lozada',         dni: '16752234' },
+  { nombre: 'Edver Johanys Valencia Ñañez',           dni: '73093008' },
+  { nombre: 'Jose Augusto Fernandez Lozada',          dni: '17622309' },
+  { nombre: 'Jhon Kenedi Romaina Tangoa',             dni: '60128333' },
+  { nombre: 'Jose Alfonso Cornejo Quispitongo',       dni: '16735292' },
+  { nombre: 'Manuel Luis Lizarraga Lizarraga',        dni: '40492603' },
   { nombre: 'Wendy Jannette Karina Ortega Gutierrez', dni: '75130993' },
 ];
 
 const PM_MOTIVOS = [
   'Desplazamiento por servicio a ejecutar',
-  'Compra de materiales',
-  'Desplazamiento a reuniones con clientes',
-  'Desplazamiento a reuniones o proveedores',
-  'Traslado para entrega de documentos',
-  'Traslado para recepción de documentos',
-  'Trámites administrativos',
+  'Desplazamiento a reuniones con clientes.',
+  'Desplazamiento a reuniones o proveedores.',
+  'Traslado para entrega de documentos.',
+  'Traslado para recepción de documentos.',
+  'Trámites administrativos.',
   'Visitas Técnicas',
+  'Compra de materiales',
 ];
 
 const PM_DISTRITOS = [
@@ -41,10 +46,24 @@ const PM_DISTRITOS = [
 ];
 
 const PM_PROYECTOS = [
-  'Mall Bellavista','Clínica La Victoria','Clínica San Pablo',
-  'Clínica San Gabriel','Clinica Santa Martha','Clinica San Juan Bautista',
-  'Clinica Jesus del Norte','Instituto San Pablo','Clínica San Pablo - Huaraz',
-  'Supermercados Peruanos','Torre - San Pablo','JVÑ GENERAL SERVICES SAC',
+  'Mall Bellavista',
+  'Clínica La Victoria',
+  'Clínica San Pablo',
+  'Clínica San Gabriel',
+  'Clínica Santa Martha',
+  'Clínica San Juan Bautista',
+  'Clínica Jesús del Norte',
+  'Instituto San Pablo',
+  'Clínica San Pablo - Huaraz',
+  'Supermercados Peruanos',
+  'Torre - San Pablo',
+  'JVÑ GENERAL SERVICES SAC',
+];
+
+// Empresas/clientes disponibles para la columna "Empresa Cliente" de cada fila
+const PM_EMPRESAS_CLIENTE = [
+  'JVÑ GENERAL SERVICES SAC',
+  'PEVAL CORPORACION E.I.R.L.',
 ];
 
 const PM_ESTADOS_COLOR = {
@@ -126,9 +145,9 @@ async function cargarListaPlanillas() {
   if (!wrap) return;
   wrap.innerHTML = '<div class="cargando" style="padding:32px"><div class="spinner"></div><span>Cargando…</span></div>';
 
-  const mes       = document.getElementById('pml-mes')?.value        || '';
+  const mes        = document.getElementById('pml-mes')?.value        || '';
   const trabajador = document.getElementById('pml-trabajador')?.value || '';
-  const estado    = document.getElementById('pml-estado')?.value     || '';
+  const estado     = document.getElementById('pml-estado')?.value     || '';
 
   let q = _supabase
     .from('planillas_movilidad')
@@ -202,7 +221,9 @@ async function cargarListaPlanillas() {
                   ${r.estado === 'BORRADOR' ? `
                   <button onclick="_pmlEditar('${r.id}')" title="Editar"
                     style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>` : ''}
-                  <button onclick="_pmlExportarPDF('${r.id}')" title="Exportar PDF"
+                  <button onclick="_pmlExportarWord('${r.id}')" title="Exportar Word (.doc)"
+                    style="padding:4px 8px;background:rgba(44,82,130,.12);color:#2C5282;border:none;border-radius:4px;cursor:pointer;font-size:13px">📝</button>
+                  <button onclick="_pmlExportarPDF('${r.id}')" title="Exportar PDF (imprimir)"
                     style="padding:4px 8px;background:rgba(197,134,48,.1);color:#b7791f;border:none;border-radius:4px;cursor:pointer;font-size:13px">📄</button>
                   ${r.estado !== 'APROBADO' ? `
                   <button onclick="_pmlCambiarEstado('${r.id}','${r.estado}')" title="Avanzar estado"
@@ -234,7 +255,7 @@ async function _pmlVerDetalle(id) {
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:12px';
   overlay.innerHTML = `
-    <div style="background:var(--color-bg-card);border-radius:12px;max-width:820px;width:100%;
+    <div style="background:var(--color-bg-card);border-radius:12px;max-width:900px;width:100%;
       max-height:calc(100vh - 24px);display:flex;flex-direction:column;overflow:hidden;
       box-shadow:0 20px 60px rgba(0,0,0,.4);border:1px solid var(--color-borde)">
 
@@ -273,11 +294,12 @@ async function _pmlVerDetalle(id) {
             <tr>
               <th style="padding:8px 10px;text-align:left">N°</th>
               <th style="padding:8px 10px;text-align:left">Fecha</th>
-              <th style="padding:8px 10px;text-align:left">Motivo</th>
-              <th style="padding:8px 10px;text-align:left">Origen</th>
-              <th style="padding:8px 10px;text-align:left">Destino</th>
+              <th style="padding:8px 10px;text-align:left">Motivo del Desplazamiento</th>
+              <th style="padding:8px 10px;text-align:left">Desde</th>
+              <th style="padding:8px 10px;text-align:left">Hasta</th>
               <th style="padding:8px 10px;text-align:left">Proyecto</th>
-              <th style="padding:8px 10px;text-align:right">Monto</th>
+              <th style="padding:8px 10px;text-align:left">Empresa</th>
+              <th style="padding:8px 10px;text-align:right">Monto S/</th>
             </tr>
           </thead>
           <tbody>
@@ -289,6 +311,7 @@ async function _pmlVerDetalle(id) {
                 <td style="padding:7px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(d.origen||'—')}</td>
                 <td style="padding:7px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(d.destino||'—')}</td>
                 <td style="padding:7px 10px;font-size:11px">${escapar(d.proyecto||'—')}</td>
+                <td style="padding:7px 10px;font-size:11px">${escapar(d.empresa_cliente||'—')}</td>
                 <td style="padding:7px 10px;text-align:right;font-weight:600;color:var(--color-secundario)">${formatearMoneda(d.monto)}</td>
               </tr>`).join('')}
           </tbody>
@@ -301,8 +324,12 @@ async function _pmlVerDetalle(id) {
           <span style="font-size:12px;color:var(--color-texto-suave)">${detalles.length} fila(s) · Firma: ${p.firma_trabajador ? '✅ Sí' : '⬜ No'}</span>
           ${p.notas ? `<div style="font-size:11px;color:var(--color-texto-suave);margin-top:2px">📝 ${escapar(p.notas)}</div>` : ''}
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <span style="font-weight:700;font-size:15px;color:var(--color-secundario)">Total: ${formatearMoneda(total)}</span>
+          <button onclick="_pmlExportarWord('${p.id}');this.closest('[style*=fixed]').remove()"
+            style="padding:7px 14px;border:none;border-radius:6px;background:#2C5282;color:#fff;cursor:pointer;font-size:12px;font-family:var(--font);font-weight:500">
+            📝 Exportar Word
+          </button>
           <button onclick="_pmlExportarPDF('${p.id}');this.closest('[style*=fixed]').remove()"
             style="padding:7px 14px;border:none;border-radius:6px;background:#b7791f;color:#fff;cursor:pointer;font-size:12px;font-family:var(--font)">
             📄 Exportar PDF
@@ -327,7 +354,6 @@ async function _pmlEditar(id) {
   ]);
   if (!resP.data) { mostrarToast('No se encontró la planilla', 'error'); return; }
 
-  // Cambiar al tab Nueva y cargar datos
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('activo'));
   const btn = document.getElementById('tab-pm-nueva');
   if (btn) btn.classList.add('activo');
@@ -363,6 +389,150 @@ async function _pmlEliminar(id, numPlanilla) {
   cargarListaPlanillas();
 }
 
+// ── Exportar Word (.doc) ──────────────────────────────────────────
+async function _pmlExportarWord(id) {
+  const [resP, resD] = await Promise.all([
+    _supabase.from('planillas_movilidad').select('*').eq('id', id).single(),
+    _supabase.from('planilla_movilidad_detalles').select('*').eq('planilla_id', id).order('orden'),
+  ]);
+  const p = resP.data;
+  const detalles = resD.data || [];
+  if (!p) { mostrarToast('No se pudo cargar la planilla', 'error'); return; }
+
+  const total   = detalles.reduce((s, d) => s + Number(d.monto || 0), 0);
+  const empresa = empresa_activa;
+
+  // Filas vacías para completar hasta al menos 10 líneas
+  const filaVacia = '<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+  const filasDetalle = detalles.map((d, i) => `
+    <tr>
+      <td style="text-align:center">${i+1}</td>
+      <td style="text-align:center">${d.fecha ? new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-PE', {day:'2-digit',month:'2-digit',year:'numeric'}) : ''}</td>
+      <td>${(d.motivo||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</td>
+      <td style="text-align:center">${(d.origen||'').replace(/&/g,'&amp;')}</td>
+      <td style="text-align:center">${(d.destino||'').replace(/&/g,'&amp;')}</td>
+      <td>${(d.proyecto||'').replace(/&/g,'&amp;')}</td>
+      <td style="text-align:right">${Number(d.monto||0).toFixed(2)}</td>
+    </tr>`).join('');
+  const filasRelleno = Array.from({length: Math.max(0, 10 - detalles.length)}, () => filaVacia).join('');
+
+  const html = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta charset="UTF-8">
+  <xml><w:WordDocument><w:View>Print</w:View><w:Zoom>90</w:Zoom></w:WordDocument></xml>
+  <style>
+    @page { size:21.0cm 29.7cm; margin:1.5cm 1.8cm; }
+    body { font-family:Arial,Helvetica,sans-serif; font-size:11pt; color:#000; margin:0; }
+    .encabezado { border:2pt solid #1a3a5c; padding:10pt 14pt; text-align:center; margin-bottom:8pt; }
+    .encabezado .empresa  { font-size:13pt; font-weight:bold; margin:0 0 2pt; }
+    .encabezado .ruc      { font-size:10pt; margin:0 0 6pt; }
+    .encabezado .titulo   { font-size:12pt; font-weight:bold; text-transform:uppercase; margin:0 0 2pt; }
+    .encabezado .nro      { font-size:10pt; font-weight:bold; margin:0; }
+    .datos { width:100%; border-collapse:collapse; margin-bottom:8pt; border:1pt solid #999; }
+    .datos td { padding:5pt 8pt; border:1pt solid #ccc; font-size:10pt; vertical-align:top; }
+    .datos td.lbl { font-weight:bold; background:#eef2f7; width:100pt; white-space:nowrap; }
+    table.detalle { width:100%; border-collapse:collapse; margin-bottom:6pt; }
+    table.detalle th { background:#1a3a5c; color:#fff; padding:5pt 6pt; font-size:9pt; border:1pt solid #1a3a5c; text-align:center; }
+    table.detalle td { padding:4pt 6pt; border:1pt solid #ccc; font-size:9pt; vertical-align:middle; }
+    table.detalle tr:nth-child(even) td { background:#f0f4f8; }
+    .total-row { text-align:right; font-weight:bold; font-size:12pt; border:2pt solid #1a3a5c;
+                 padding:6pt 10pt; margin-bottom:20pt; background:#eef2f7; }
+    .firmas { width:100%; border-collapse:collapse; margin-top:28pt; }
+    .firmas td { width:50%; text-align:center; padding:0 24pt; vertical-align:bottom; }
+    .linea-firma { border-top:1pt solid #000; padding-top:4pt; font-size:9pt; margin-top:40pt; }
+    .notas { font-size:9pt; color:#555; margin-top:10pt; }
+  </style>
+</head>
+<body>
+
+  <div class="encabezado">
+    <p class="empresa">${(empresa.nombre||'').replace(/&/g,'&amp;')}</p>
+    <p class="ruc">RUC: ${(empresa.ruc||'').replace(/&/g,'&amp;')}</p>
+    <p class="titulo">PLANILLA POR GASTOS DE MOVILIDAD - POR TRABAJADOR</p>
+    <p class="nro">N° ${(p.numero_planilla||'').replace(/&/g,'&amp;')}</p>
+  </div>
+
+  <table class="datos">
+    <tr>
+      <td class="lbl">Trabajador:</td>
+      <td>${(p.trabajador_nombre||'').replace(/&/g,'&amp;')}</td>
+      <td class="lbl">DNI:</td>
+      <td>${(p.trabajador_dni||'').replace(/&/g,'&amp;')}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Período:</td>
+      <td>${(p.mes||'').replace(/&/g,'&amp;')}</td>
+      <td class="lbl">Fecha emisión:</td>
+      <td>${p.fecha_emision ? new Date(p.fecha_emision+'T00:00:00').toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit',year:'numeric'}) : ''}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Estado:</td>
+      <td>${(p.estado||'').replace(/&/g,'&amp;')}</td>
+      <td class="lbl">Firma:</td>
+      <td>${p.firma_trabajador ? 'SÍ — Firmado' : 'Pendiente'}</td>
+    </tr>
+  </table>
+
+  <table class="detalle">
+    <thead>
+      <tr>
+        <th style="width:24pt">N°</th>
+        <th style="width:60pt">Fecha</th>
+        <th style="width:auto">Motivo del Desplazamiento</th>
+        <th style="width:70pt">Desde</th>
+        <th style="width:70pt">Hasta</th>
+        <th style="width:90pt">Proyecto</th>
+        <th style="width:55pt;text-align:right">Monto S/</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${filasDetalle}
+      ${filasRelleno}
+    </tbody>
+  </table>
+
+  <div class="total-row">TOTAL GASTOS: &nbsp;&nbsp; S/ ${Number(total).toFixed(2)}</div>
+
+  <table class="firmas">
+    <tr>
+      <td>
+        <div class="linea-firma">
+          <strong>${(p.trabajador_nombre||'').replace(/&/g,'&amp;')}</strong><br>
+          DNI: ${(p.trabajador_dni||'').replace(/&/g,'&amp;')}<br>
+          Firma del Trabajador
+        </div>
+      </td>
+      <td>
+        <div class="linea-firma">
+          <strong>V°B° Autorización</strong><br>
+          <br>
+          Jefe / Responsable
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  ${p.notas ? `<p class="notas"><strong>Notas:</strong> ${(p.notas||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>` : ''}
+
+</body>
+</html>`;
+
+  const blob = new Blob(['﻿' + html], { type: 'application/msword' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const nombre = (p.trabajador_nombre || 'Trabajador').split(' ').slice(0, 2).join('-');
+  a.href     = url;
+  a.download = `Planilla-Movilidad-${(p.numero_planilla||'').replace(/\//g,'-')}-${nombre}.doc`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  mostrarToast('📝 Documento Word descargado', 'exito');
+}
+
 // ── Exportar PDF (print) ──────────────────────────────────────────
 async function _pmlExportarPDF(id) {
   const [resP, resD] = await Promise.all([
@@ -387,88 +557,91 @@ async function _pmlExportarPDF(id) {
         #pm-print-area { position: absolute; top: 0; left: 0; width: 100%; }
       }
       .pm-doc { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
-      .pm-header { text-align: center; border: 2px solid #000; padding: 10px; margin-bottom: 8px; }
-      .pm-header h2 { font-size: 13px; font-weight: bold; margin: 0 0 4px; }
+      .pm-header { text-align: center; border: 2px solid #1a3a5c; padding: 10px; margin-bottom: 8px; }
+      .pm-header h2 { font-size: 13px; font-weight: bold; margin: 0 0 2px; }
       .pm-header h3 { font-size: 11px; font-weight: bold; margin: 0; }
-      .pm-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; border: 1px solid #999; padding: 8px; }
-      .pm-info-row { display: flex; gap: 6px; }
-      .pm-info-lbl { font-weight: bold; min-width: 80px; }
+      .pm-info { width:100%; border-collapse: collapse; margin-bottom: 8px; border: 1px solid #999; }
+      .pm-info td { padding: 4px 8px; border: 1px solid #ccc; font-size: 10px; }
+      .pm-info td.lbl { font-weight: bold; background: #eef2f7; width: 80px; }
       .pm-tabla { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-      .pm-tabla th { background: #2C5282; color: #fff; padding: 6px 8px; text-align: left; font-size: 10px; border: 1px solid #2C5282; }
-      .pm-tabla td { padding: 5px 8px; border: 1px solid #ccc; font-size: 10px; }
-      .pm-tabla tr:nth-child(even) td { background: #f5f5f5; }
-      .pm-total { text-align: right; font-size: 13px; font-weight: bold; border: 2px solid #2C5282; padding: 8px; margin-bottom: 16px; }
+      .pm-tabla th { background: #1a3a5c; color: #fff; padding: 5px 6px; text-align: left; font-size: 9px; border: 1px solid #1a3a5c; }
+      .pm-tabla td { padding: 4px 6px; border: 1px solid #ccc; font-size: 9px; vertical-align: middle; }
+      .pm-tabla tr:nth-child(even) td { background: #f0f4f8; }
+      .pm-total { text-align: right; font-size: 12px; font-weight: bold; border: 2px solid #1a3a5c; padding: 6px 10px; margin-bottom: 16px; background: #eef2f7; }
       .pm-firma { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 24px; }
-      .pm-firma-box { border-top: 1px solid #000; padding-top: 6px; text-align: center; font-size: 10px; }
-      .pm-numero { position: absolute; top: 16px; right: 16px; font-size: 10px; color: #666; }
+      .pm-firma-box { border-top: 1px solid #000; padding-top: 6px; text-align: center; font-size: 9px; }
     </style>
     <div class="pm-doc">
-      <div style="position:relative">
-        <div class="pm-header">
-          <h2>${escapar(empresa_activa.nombre)}</h2>
-          <h2>RUC: ${escapar(empresa_activa.ruc || '—')}</h2>
-          <h3 style="margin-top:6px">PLANILLA POR GASTOS DE MOVILIDAD - POR TRABAJADOR</h3>
-          <div style="font-size:11px;margin-top:2px">N° ${escapar(p.numero_planilla)}</div>
-        </div>
-
-        <div class="pm-info">
-          <div>
-            <div class="pm-info-row"><span class="pm-info-lbl">Trabajador:</span> <span>${escapar(p.trabajador_nombre)}</span></div>
-            <div class="pm-info-row"><span class="pm-info-lbl">DNI:</span> <span>${escapar(p.trabajador_dni)}</span></div>
-          </div>
-          <div>
-            <div class="pm-info-row"><span class="pm-info-lbl">Período:</span> <span>${escapar(p.mes)}</span></div>
-            <div class="pm-info-row"><span class="pm-info-lbl">Fecha emisión:</span> <span>${formatearFecha(p.fecha_emision)}</span></div>
-          </div>
-        </div>
-
-        <table class="pm-tabla">
-          <thead>
-            <tr>
-              <th style="width:24px">N°</th>
-              <th style="width:72px">Fecha</th>
-              <th>Motivo del Desplazamiento</th>
-              <th style="width:90px">Origen</th>
-              <th style="width:90px">Destino</th>
-              <th>Proyecto</th>
-              <th style="width:72px;text-align:right">Monto S/</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${detalles.map((d, i) => `
-              <tr>
-                <td>${i+1}</td>
-                <td>${formatearFecha(d.fecha)}</td>
-                <td>${escapar(d.motivo)}</td>
-                <td>${escapar(d.origen||'')}</td>
-                <td>${escapar(d.destino||'')}</td>
-                <td>${escapar(d.proyecto||'')}</td>
-                <td style="text-align:right">${Number(d.monto||0).toFixed(2)}</td>
-              </tr>`).join('')}
-            ${Array.from({length: Math.max(0, 10 - detalles.length)}, () =>
-              '<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'
-            ).join('')}
-          </tbody>
-        </table>
-
-        <div class="pm-total">TOTAL GASTOS: S/ ${Number(total).toFixed(2)}</div>
-
-        <div class="pm-firma">
-          <div class="pm-firma-box">
-            <div style="margin-bottom:40px"></div>
-            <strong>${escapar(p.trabajador_nombre)}</strong><br>
-            DNI: ${escapar(p.trabajador_dni)}<br>
-            Firma del Trabajador
-          </div>
-          <div class="pm-firma-box">
-            <div style="margin-bottom:40px"></div>
-            <strong>V°B° Autorización</strong><br>
-            Jefe / Responsable
-          </div>
-        </div>
-
-        ${p.notas ? `<div style="margin-top:12px;font-size:10px;color:#666"><strong>Notas:</strong> ${escapar(p.notas)}</div>` : ''}
+      <div class="pm-header">
+        <h2>${escapar(empresa_activa.nombre)}</h2>
+        <h2>RUC: ${escapar(empresa_activa.ruc || '—')}</h2>
+        <h3 style="margin-top:4px">PLANILLA POR GASTOS DE MOVILIDAD - POR TRABAJADOR</h3>
+        <div style="font-size:11px;margin-top:2px;font-weight:bold">N° ${escapar(p.numero_planilla)}</div>
       </div>
+
+      <table class="pm-info">
+        <tr>
+          <td class="lbl">Trabajador:</td>
+          <td>${escapar(p.trabajador_nombre)}</td>
+          <td class="lbl">DNI:</td>
+          <td>${escapar(p.trabajador_dni)}</td>
+        </tr>
+        <tr>
+          <td class="lbl">Período:</td>
+          <td>${escapar(p.mes)}</td>
+          <td class="lbl">Fecha emisión:</td>
+          <td>${formatearFecha(p.fecha_emision)}</td>
+        </tr>
+      </table>
+
+      <table class="pm-tabla">
+        <thead>
+          <tr>
+            <th style="width:18px">N°</th>
+            <th style="width:56px">Fecha</th>
+            <th>Motivo del Desplazamiento</th>
+            <th style="width:70px">Desde</th>
+            <th style="width:70px">Hasta</th>
+            <th style="width:90px">Proyecto</th>
+            <th style="width:80px">Empresa</th>
+            <th style="width:55px;text-align:right">Monto S/</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${detalles.map((d, i) => `
+            <tr>
+              <td>${i+1}</td>
+              <td>${formatearFecha(d.fecha)}</td>
+              <td>${escapar(d.motivo)}</td>
+              <td>${escapar(d.origen||'')}</td>
+              <td>${escapar(d.destino||'')}</td>
+              <td>${escapar(d.proyecto||'')}</td>
+              <td>${escapar(d.empresa_cliente||'')}</td>
+              <td style="text-align:right">${Number(d.monto||0).toFixed(2)}</td>
+            </tr>`).join('')}
+          ${Array.from({length: Math.max(0, 10 - detalles.length)}, () =>
+            '<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'
+          ).join('')}
+        </tbody>
+      </table>
+
+      <div class="pm-total">TOTAL GASTOS: S/ ${Number(total).toFixed(2)}</div>
+
+      <div class="pm-firma">
+        <div class="pm-firma-box">
+          <div style="margin-bottom:40px"></div>
+          <strong>${escapar(p.trabajador_nombre)}</strong><br>
+          DNI: ${escapar(p.trabajador_dni)}<br>
+          Firma del Trabajador
+        </div>
+        <div class="pm-firma-box">
+          <div style="margin-bottom:40px"></div>
+          <strong>V°B° Autorización</strong><br>
+          Jefe / Responsable
+        </div>
+      </div>
+
+      ${p.notas ? `<div style="margin-top:10px;font-size:9px;color:#666"><strong>Notas:</strong> ${escapar(p.notas)}</div>` : ''}
     </div>`;
 
   printArea.style.display = 'block';
