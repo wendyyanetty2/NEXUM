@@ -32,10 +32,10 @@
     const root = document.createElement('div');
     root.id = 'nexum-notas-root';
     root.innerHTML = `
-      <!-- Botón flotante — arrastrable, posición por defecto esquina inferior derecha -->
+      <!-- Botón flotante — arrastrable, posición por defecto esquina superior derecha -->
       <div id="nexum-notas-fab"
         title="📝 Notas — Arrastrar para mover"
-        style="position:fixed;bottom:20px;right:20px;z-index:9000;cursor:grab;
+        style="position:fixed;top:68px;right:16px;z-index:9000;cursor:grab;
                background:var(--color-secundario,#2B6CB0);color:#fff;border-radius:50px;
                padding:7px 14px;font-size:13px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.4);
                display:flex;align-items:center;gap:6px;user-select:none;transition:box-shadow .15s">
@@ -407,14 +407,14 @@
     const fab = document.getElementById('nexum-notas-fab');
     if (!fab) return;
 
-    // Restaurar posición guardada
+    // Restaurar posición guardada (solo si top >= 60px para no quedar debajo del header)
     try {
       const saved = JSON.parse(localStorage.getItem('nexum_notas_pos') || 'null');
-      if (saved) {
+      if (saved && saved.top && parseInt(saved.top) >= 60) {
         fab.style.left   = saved.left   || 'auto';
         fab.style.top    = saved.top    || 'auto';
-        fab.style.right  = saved.right  || 'auto';
-        fab.style.bottom = saved.bottom || 'auto';
+        fab.style.right  = saved.right  || '16px';
+        fab.style.bottom = 'auto';
       }
     } catch(e) {}
 

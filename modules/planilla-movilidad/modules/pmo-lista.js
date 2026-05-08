@@ -533,6 +533,228 @@ async function _pmlExportarWord(id) {
   mostrarToast('📝 Documento Word descargado', 'exito');
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Importar desde JSON
+// ═══════════════════════════════════════════════════════════════
+
+let _pmiDatosPendientes = null;  // datos parseados del archivo
+
+function renderTabImportarJSON(area) {
+  area.innerHTML = `
+    <div class="fadeIn">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+          <h3 style="margin:0">📥 Importar planilla desde JSON</h3>
+          <button onclick="activarTab('pm-lista')"
+            style="padding:6px 12px;background:none;border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-size:12px;color:var(--color-texto)">
+            ← Volver al listado
+          </button>
+        </div>
+
+        <div style="padding:14px 16px;background:rgba(44,82,130,.06);border-radius:8px;border:1px solid rgba(44,82,130,.2);margin-bottom:20px;font-size:13px">
+          <div style="font-weight:700;color:var(--color-secundario);margin-bottom:8px">ℹ️ Instrucciones</div>
+          <ul style="margin:0;padding-left:18px;line-height:1.8;color:var(--color-texto-suave)">
+            <li>El archivo debe ser un <strong>.json</strong> con la estructura de <em>Plantilla_Formato de Movilidad</em></li>
+            <li>Campos requeridos: <code>documento_metadata</code>, <code>trabajador</code>, <code>detalle_movilidad</code></li>
+            <li>Verás una vista previa antes de importar — podrás editar todos los datos antes de guardar</li>
+          </ul>
+        </div>
+
+        <div id="pm-import-zona"
+          style="border:2px dashed var(--color-borde);border-radius:10px;padding:44px 20px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;background:var(--color-fondo-2)"
+          onclick="document.getElementById('pm-import-file').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--color-secundario)';this.style.background='rgba(44,82,130,.06)'"
+          ondragleave="this.style.borderColor='var(--color-borde)';this.style.background='var(--color-fondo-2)'"
+          ondrop="_pmiOnDrop(event)">
+          <div style="font-size:48px;margin-bottom:12px">📂</div>
+          <div style="font-size:14px;font-weight:600;color:var(--color-texto);margin-bottom:4px">Arrastra tu archivo .json aquí</div>
+          <div style="font-size:12px;color:var(--color-texto-suave)">o haz clic para seleccionarlo</div>
+          <input type="file" id="pm-import-file" accept=".json,application/json"
+            style="display:none" onchange="_pmiCargarArchivo(this.files[0])">
+        </div>
+
+        <div id="pm-import-preview" style="margin-top:20px"></div>
+      </div>
+    </div>`;
+}
+
+function _pmiOnDrop(e) {
+  e.preventDefault();
+  const zona = document.getElementById('pm-import-zona');
+  if (zona) { zona.style.borderColor = 'var(--color-borde)'; zona.style.background = 'var(--color-fondo-2)'; }
+  const file = e.dataTransfer?.files?.[0];
+  if (file) _pmiCargarArchivo(file);
+}
+
+function _pmiCargarArchivo(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.json')) {
+    mostrarToast('Solo se aceptan archivos .json', 'atencion');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      _pmiDatosPendientes = data;
+      _pmiMostrarPreview(data);
+    } catch(err) {
+      mostrarToast('Error al parsear el JSON: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function _pmiMostrarPreview(data) {
+  const preview = document.getElementById('pm-import-preview');
+  if (!preview) return;
+
+  const meta     = data.documento_metadata || {};
+  const empresa  = data.empresa            || {};
+  const trab     = data.trabajador         || {};
+  const detalles = Array.isArray(data.detalle_movilidad) ? data.detalle_movilidad : [];
+  const firma    = !!(data.estado_validacion?.firma_trabajador_presente);
+  const total    = detalles.reduce((s, d) => s + Number(d.monto || 0), 0);
+  const trabNombre = trab.nombre_completo || trab.nombre || '';
+
+  if (!trabNombre) {
+    preview.innerHTML = `<div class="alerta-error" style="margin-top:4px">⚠️ El JSON no tiene "trabajador.nombre_completo". Verifica la estructura del archivo.</div>`;
+    return;
+  }
+  if (!detalles.length) {
+    preview.innerHTML = `<div class="alerta-error" style="margin-top:4px">⚠️ El JSON no contiene filas en "detalle_movilidad".</div>`;
+    return;
+  }
+
+  preview.innerHTML = `
+    <div style="border:1px solid var(--color-borde);border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+
+      <!-- Header -->
+      <div style="background:var(--color-secundario);padding:12px 18px;color:#fff;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-weight:700;font-size:14px">Vista previa — Planilla ${escapar(meta.numero_planilla || '(sin número)')}</div>
+          <div style="font-size:11px;opacity:.85">Fecha: ${escapar(meta.fecha_emision || '—')}</div>
+        </div>
+        <span style="background:rgba(255,255,255,.22);padding:3px 12px;border-radius:10px;font-size:11px;font-weight:700">JSON IMPORTADO</span>
+      </div>
+
+      <!-- Info cabecera -->
+      <div style="padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;border-bottom:1px solid var(--color-borde);font-size:12px">
+        <div>
+          <div style="color:var(--color-texto-suave);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Trabajador</div>
+          <div style="font-weight:600">${escapar(trabNombre)}</div>
+          <div style="color:var(--color-texto-suave)">DNI: ${escapar(trab.dni || '—')}</div>
+        </div>
+        <div>
+          <div style="color:var(--color-texto-suave);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Empresa emisora</div>
+          <div style="font-weight:600">${escapar(empresa.razon_social || empresa_activa?.nombre || '—')}</div>
+          <div style="color:var(--color-texto-suave)">RUC: ${escapar(empresa.ruc || empresa_activa?.ruc || '—')}</div>
+        </div>
+      </div>
+
+      <!-- Tabla detalles -->
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead style="background:var(--color-primario);color:#fff">
+            <tr>
+              <th style="padding:7px 8px;text-align:center">#</th>
+              <th style="padding:7px 8px;text-align:left;white-space:nowrap">Fecha</th>
+              <th style="padding:7px 8px;text-align:left">Motivo</th>
+              <th style="padding:7px 8px;text-align:left">Desde</th>
+              <th style="padding:7px 8px;text-align:left">Hasta</th>
+              <th style="padding:7px 8px;text-align:left">Proyecto</th>
+              <th style="padding:7px 8px;text-align:left">Empresa</th>
+              <th style="padding:7px 8px;text-align:right;white-space:nowrap">Monto S/</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${detalles.map((d, i) => `
+              <tr style="border-bottom:1px solid var(--color-borde);${i%2===0?'':'background:var(--color-fondo-2)'}">
+                <td style="padding:5px 8px;text-align:center;color:var(--color-texto-suave)">${i+1}</td>
+                <td style="padding:5px 8px;white-space:nowrap">${escapar(d.fecha || '—')}</td>
+                <td style="padding:5px 8px;max-width:180px">${escapar(d.motivo || '—')}</td>
+                <td style="padding:5px 8px">${escapar(d.origen || '—')}</td>
+                <td style="padding:5px 8px">${escapar(d.destino || '—')}</td>
+                <td style="padding:5px 8px">${escapar(d.proyecto || '—')}</td>
+                <td style="padding:5px 8px">${escapar(d.empresa_cliente || '—')}</td>
+                <td style="padding:5px 8px;text-align:right;font-weight:600;color:var(--color-secundario)">${Number(d.monto||0).toFixed(2)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Footer: total + botón importar -->
+      <div style="padding:14px 18px;border-top:1px solid var(--color-borde);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div style="font-size:12px;color:var(--color-texto-suave)">
+          ${detalles.length} fila(s) &nbsp;·&nbsp; Firma: ${firma ? '✅ Sí' : '⬜ No'}
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:15px;font-weight:700;color:var(--color-secundario)">Total: S/ ${Number(total).toFixed(2)}</span>
+          <button onclick="_pmiImportarAlFormulario()"
+            style="padding:9px 22px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-family:var(--font);font-weight:600">
+            ✅ Importar y editar planilla
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _pmiImportarAlFormulario() {
+  const data = _pmiDatosPendientes;
+  if (!data) { mostrarToast('No hay datos para importar', 'atencion'); return; }
+
+  const meta     = data.documento_metadata || {};
+  const trab     = data.trabajador         || {};
+  const detalles = Array.isArray(data.detalle_movilidad) ? data.detalle_movilidad : [];
+  const firma    = !!(data.estado_validacion?.firma_trabajador_presente);
+
+  // Resolver DNI: primero del JSON, luego buscar por nombre exacto
+  const dniDirecto = (trab.dni || '').toString().trim();
+  const trabMatch  = PM_TRABAJADORES.find(t => t.dni === dniDirecto) ||
+                     PM_TRABAJADORES.find(t =>
+                       t.nombre.toLowerCase() === (trab.nombre_completo || '').toLowerCase().trim()
+                     );
+  const trabDni    = trabMatch?.dni || dniDirecto;
+  const trabNombre = trab.nombre_completo || trab.nombre || '';
+
+  // Determinar período desde fecha_emision
+  const fechaStr = (meta.fecha_emision || '').slice(0, 10);
+  const mes      = fechaStr.slice(0, 7);
+
+  const planillaData = {
+    id:               null,          // siempre crea nueva
+    numero_planilla:  meta.numero_planilla || '',
+    mes,
+    fecha_emision:    fechaStr || new Date().toISOString().slice(0, 10),
+    trabajador_nombre: trabNombre,
+    trabajador_dni:   trabDni,
+    firma_trabajador: firma,
+    notas:            null,
+    estado:           'BORRADOR',
+  };
+
+  const detallesData = detalles.map((d, i) => ({
+    orden:           i + 1,
+    fecha:           (d.fecha || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
+    motivo:          d.motivo          || '',
+    origen:          d.origen          || null,
+    destino:         d.destino         || null,
+    proyecto:        d.proyecto        || null,
+    empresa_cliente: d.empresa_cliente || null,
+    monto:           Number(d.monto    || 0),
+  }));
+
+  // Activar el tab "Nueva planilla" con los datos pre-cargados
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('activo'));
+  const btn = document.getElementById('tab-pm-nueva');
+  if (btn) btn.classList.add('activo');
+
+  _pmiDatosPendientes = null;
+  const area = document.getElementById('contenido-tab');
+  renderTabNueva(area, planillaData, detallesData);
+  mostrarToast('✓ Datos importados — revisa los campos y guarda la planilla', 'exito');
+}
+
 // ── Exportar PDF (print) ──────────────────────────────────────────
 async function _pmlExportarPDF(id) {
   const [resP, resD] = await Promise.all([
