@@ -559,6 +559,239 @@ async function _pmlExportarWord(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Tab Reporte de Planilla de Movilidad
+// ═══════════════════════════════════════════════════════════════
+
+async function renderTabReporte(area) {
+  area.innerHTML = `
+    <div class="fadeIn">
+      <div class="card" style="margin-bottom:16px;padding:14px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--color-texto-suave);margin-bottom:10px">🔍 Filtros del reporte</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;align-items:end">
+          <div>
+            <label class="label-filtro">Desde</label>
+            <input type="month" id="prep-desde" class="input-buscar w-full" value="${new Date().getFullYear()}-01">
+          </div>
+          <div>
+            <label class="label-filtro">Hasta</label>
+            <input type="month" id="prep-hasta" class="input-buscar w-full" value="${new Date().toISOString().slice(0,7)}">
+          </div>
+          <div>
+            <label class="label-filtro">Estado</label>
+            <select id="prep-estado" class="input-buscar w-full">
+              <option value="">Todos</option>
+              <option value="BORRADOR">Borrador</option>
+              <option value="ENVIADO">Enviado</option>
+              <option value="APROBADO">Aprobado</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button onclick="_prepCargar()" class="btn btn-primario w-full">🔍 Generar</button>
+            <button onclick="_prepExportar()" class="btn btn-secundario" title="Exportar Excel">⬇</button>
+          </div>
+        </div>
+      </div>
+      <div id="prep-contenido">
+        <div class="text-center text-muted" style="padding:48px">
+          Selecciona el rango y haz clic en <strong>Generar</strong>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function _prepCargar() {
+  const desde  = document.getElementById('prep-desde')?.value  || '';
+  const hasta  = document.getElementById('prep-hasta')?.value  || '';
+  const estado = document.getElementById('prep-estado')?.value || '';
+  const cont   = document.getElementById('prep-contenido');
+  if (!cont) return;
+
+  cont.innerHTML = '<div class="cargando" style="padding:32px"><div class="spinner"></div><span>Cargando…</span></div>';
+
+  let q = _supabase
+    .from('planillas_movilidad')
+    .select('*, planilla_movilidad_detalles(*)')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .order('mes');
+  if (desde)  q = q.gte('mes', desde);
+  if (hasta)  q = q.lte('mes', hasta);
+  if (estado) q = q.eq('estado', estado);
+
+  const { data, error } = await q;
+  if (error) { cont.innerHTML = `<div class="alerta-error" style="margin:16px">${escapar(error.message)}</div>`; return; }
+  const lista = data || [];
+
+  if (!lista.length) {
+    cont.innerHTML = `<div style="text-align:center;padding:48px;color:var(--color-texto-suave)">
+      <div style="font-size:40px;margin-bottom:12px">🚗</div>
+      <p>Sin planillas para el período seleccionado</p></div>`;
+    return;
+  }
+
+  // KPIs
+  const totalGastos  = lista.reduce((s,p) => s + Number(p.total_gastos||0), 0);
+  const totalFilas   = lista.reduce((s,p) => s + (p.planilla_movilidad_detalles||[]).length, 0);
+  const aprobadas    = lista.filter(p => p.estado === 'APROBADO').length;
+  const enviadas     = lista.filter(p => p.estado === 'ENVIADO').length;
+  const borradores   = lista.filter(p => p.estado === 'BORRADOR').length;
+
+  // Agrupar por trabajador
+  const porTrab = {};
+  lista.forEach(p => {
+    const key = p.trabajador_dni || p.trabajador_nombre;
+    if (!porTrab[key]) porTrab[key] = { nombre: p.trabajador_nombre, dni: p.trabajador_dni, total: 0, planillas: 0, filas: 0 };
+    porTrab[key].total    += Number(p.total_gastos||0);
+    porTrab[key].planillas += 1;
+    porTrab[key].filas    += (p.planilla_movilidad_detalles||[]).length;
+  });
+  const trabRows = Object.values(porTrab).sort((a,b) => b.total - a.total);
+
+  // Agrupar por mes
+  const porMes = {};
+  lista.forEach(p => {
+    if (!porMes[p.mes]) porMes[p.mes] = { total: 0, planillas: 0 };
+    porMes[p.mes].total    += Number(p.total_gastos||0);
+    porMes[p.mes].planillas += 1;
+  });
+
+  cont.innerHTML = `
+    <!-- KPIs -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px">
+      <div class="card" style="padding:14px;text-align:center">
+        <div style="font-size:22px;font-weight:700;color:var(--color-secundario)">${formatearMoneda(totalGastos)}</div>
+        <div style="font-size:11px;color:var(--color-texto-suave);margin-top:2px">Total gastos</div>
+      </div>
+      <div class="card" style="padding:14px;text-align:center">
+        <div style="font-size:22px;font-weight:700;color:var(--color-texto)">${lista.length}</div>
+        <div style="font-size:11px;color:var(--color-texto-suave);margin-top:2px">Planillas</div>
+      </div>
+      <div class="card" style="padding:14px;text-align:center">
+        <div style="font-size:22px;font-weight:700;color:var(--color-texto)">${totalFilas}</div>
+        <div style="font-size:11px;color:var(--color-texto-suave);margin-top:2px">Desplazamientos</div>
+      </div>
+      <div class="card" style="padding:14px;text-align:center">
+        <div style="font-size:20px;font-weight:700">
+          <span style="color:#276749">✅${aprobadas}</span>
+          <span style="color:#2C5282;margin:0 4px">📨${enviadas}</span>
+          <span style="color:#718096">📝${borradores}</span>
+        </div>
+        <div style="font-size:11px;color:var(--color-texto-suave);margin-top:2px">Aprobadas / Enviadas / Borradores</div>
+      </div>
+    </div>
+
+    <!-- Por trabajador -->
+    <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--color-borde);font-weight:600;font-size:13px">
+        👤 Gastos por trabajador
+      </div>
+      <div style="overflow-x:auto">
+        <table class="tabla" style="font-size:12px">
+          <thead>
+            <tr>
+              <th>Trabajador</th><th>DNI</th>
+              <th style="text-align:center">Planillas</th>
+              <th style="text-align:center">Desplazamientos</th>
+              <th style="text-align:right">Total S/</th>
+              <th style="text-align:right">Promedio/planilla</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${trabRows.map(t => `
+              <tr>
+                <td style="font-weight:500">${escapar(t.nombre)}</td>
+                <td style="font-family:monospace;font-size:11px">${escapar(t.dni)}</td>
+                <td style="text-align:center">${t.planillas}</td>
+                <td style="text-align:center">${t.filas}</td>
+                <td style="text-align:right;font-weight:700;color:var(--color-secundario)">${formatearMoneda(t.total)}</td>
+                <td style="text-align:right;color:var(--color-texto-suave)">${formatearMoneda(t.total / t.planillas)}</td>
+              </tr>`).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="background:var(--color-primario);color:#fff">
+              <td colspan="4" style="padding:8px 12px;font-weight:700">TOTAL GENERAL</td>
+              <td style="padding:8px 12px;text-align:right;font-weight:700">${formatearMoneda(totalGastos)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Por mes -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--color-borde);font-weight:600;font-size:13px">
+        📅 Gastos por mes
+      </div>
+      <div style="overflow-x:auto">
+        <table class="tabla" style="font-size:12px">
+          <thead>
+            <tr>
+              <th>Mes</th>
+              <th style="text-align:center">N° Planillas</th>
+              <th style="text-align:right">Total S/</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${Object.entries(porMes).sort((a,b)=>a[0].localeCompare(b[0])).map(([mes,v]) => `
+              <tr>
+                <td style="font-weight:500">${escapar(mes)}</td>
+                <td style="text-align:center">${v.planillas}</td>
+                <td style="text-align:right;font-weight:700;color:var(--color-secundario)">${formatearMoneda(v.total)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  // Guardar datos para exportar
+  window._prepDatosUltimos = lista;
+}
+
+async function _prepExportar() {
+  const lista = window._prepDatosUltimos;
+  if (!lista?.length) { mostrarToast('Primero genera el reporte', 'atencion'); return; }
+
+  const hojaResumen = lista.map(p => ({
+    'N° Planilla': p.numero_planilla, 'Mes': p.mes,
+    'F. Emisión': p.fecha_emision || '', 'Trabajador': p.trabajador_nombre,
+    'DNI': p.trabajador_dni, 'Total S/': Number(p.total_gastos||0),
+    'Estado': p.estado, 'Firma': p.firma_trabajador ? 'Sí' : 'No',
+    'Filas': (p.planilla_movilidad_detalles||[]).length,
+  }));
+
+  const hojaDetalle = [];
+  lista.forEach(p => {
+    (p.planilla_movilidad_detalles||[]).forEach(d => {
+      hojaDetalle.push({
+        'N° Planilla': p.numero_planilla, 'Trabajador': p.trabajador_nombre,
+        'DNI': p.trabajador_dni, 'Mes': p.mes, 'Fecha': d.fecha,
+        'Motivo': d.motivo||'', 'Desde': d.origen||'', 'Hasta': d.destino||'',
+        'Proyecto': d.proyecto||'', 'Empresa Cliente': d.empresa_cliente||'',
+        'Monto S/': Number(d.monto||0), 'Estado Planilla': p.estado,
+      });
+    });
+  });
+
+  const wb = typeof XLSX !== 'undefined' ? XLSX.utils.book_new() : null;
+  if (!wb) { mostrarToast('Librería Excel no disponible', 'error'); return; }
+
+  [
+    { nombre: 'Resumen', datos: hojaResumen },
+    { nombre: 'Detalle Desplazamientos', datos: hojaDetalle },
+  ].forEach(h => {
+    if (h.datos.length) {
+      const ws = XLSX.utils.json_to_sheet(h.datos);
+      XLSX.utils.book_append_sheet(wb, ws, h.nombre.slice(0,31));
+    }
+  });
+
+  const desde = document.getElementById('prep-desde')?.value || 'todo';
+  const hasta = document.getElementById('prep-hasta')?.value || '';
+  XLSX.writeFile(wb, `planilla_movilidad_${empresa_activa.nombre.replace(/\s+/g,'_')}_${desde}${hasta?'_'+hasta:''}.xlsx`);
+  mostrarToast('✓ Excel exportado', 'exito');
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Importar desde Word (.docx) o JSON
 // ═══════════════════════════════════════════════════════════════
 

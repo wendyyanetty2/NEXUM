@@ -57,6 +57,7 @@
         <button class="tab-btn activo" id="tab-pm-lista"    onclick="activarTab('pm-lista')">📋 Listado</button>
         <button class="tab-btn"        id="tab-pm-nueva"    onclick="activarTab('pm-nueva')">➕ Nueva planilla</button>
         <button class="tab-btn"        id="tab-pm-importar" onclick="activarTab('pm-importar')">📥 Importar</button>
+        <button class="tab-btn"        id="tab-pm-reporte"  onclick="activarTab('pm-reporte')">📊 Reporte</button>
       </div>
 
       <div id="contenido-tab">
@@ -70,7 +71,7 @@
 <div id="modal-container"></div>
 <div id="pm-print-area" style="display:none"></div>
 
-<script src="../../modules/planilla-movilidad/modules/pmo-lista.js?v=5&t=20260508c"></script>
+<script src="../../modules/planilla-movilidad/modules/pmo-lista.js?v=6&t=20260508d"></script>
 <script src="../../modules/planilla-movilidad/modules/pmo-form.js?v=3&t=20260508c"></script>
 
 <script>
@@ -93,6 +94,7 @@ function activarTab(tab) {
   const area = document.getElementById('contenido-tab');
   if      (tab === 'pm-lista')    renderTabLista(area);
   else if (tab === 'pm-importar') renderTabImportarJSON(area);
+  else if (tab === 'pm-reporte')  renderTabReporte(area);
   else                            renderTabNueva(area);
 }
 </script>
