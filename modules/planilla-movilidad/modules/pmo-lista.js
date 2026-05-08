@@ -534,17 +534,18 @@ async function _pmlExportarWord(id) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Importar desde JSON
+// Importar desde Word (.docx) o JSON
 // ═══════════════════════════════════════════════════════════════
 
 let _pmiDatosPendientes = null;  // datos parseados del archivo
+let _pmiFuenteArchivo   = '';    // 'word' | 'json'
 
 function renderTabImportarJSON(area) {
   area.innerHTML = `
     <div class="fadeIn">
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-          <h3 style="margin:0">📥 Importar planilla desde JSON</h3>
+          <h3 style="margin:0">📥 Importar planilla</h3>
           <button onclick="activarTab('pm-lista')"
             style="padding:6px 12px;background:none;border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-size:12px;color:var(--color-texto)">
             ← Volver al listado
@@ -554,9 +555,10 @@ function renderTabImportarJSON(area) {
         <div style="padding:14px 16px;background:rgba(44,82,130,.06);border-radius:8px;border:1px solid rgba(44,82,130,.2);margin-bottom:20px;font-size:13px">
           <div style="font-weight:700;color:var(--color-secundario);margin-bottom:8px">ℹ️ Instrucciones</div>
           <ul style="margin:0;padding-left:18px;line-height:1.8;color:var(--color-texto-suave)">
-            <li>El archivo debe ser un <strong>.json</strong> con la estructura de <em>Plantilla_Formato de Movilidad</em></li>
-            <li>Campos requeridos: <code>documento_metadata</code>, <code>trabajador</code>, <code>detalle_movilidad</code></li>
-            <li>Verás una vista previa antes de importar — podrás editar todos los datos antes de guardar</li>
+            <li>Se aceptan archivos <strong>.docx</strong> (Word) y <strong>.json</strong></li>
+            <li>El nombre del archivo Word debe seguir el formato:<br>
+                <code>N° 001-12-25 Nombre Completo Trabajador.docx</code></li>
+            <li>Verás una vista previa antes de importar — podrás editar todos los campos</li>
           </ul>
         </div>
 
@@ -567,9 +569,10 @@ function renderTabImportarJSON(area) {
           ondragleave="this.style.borderColor='var(--color-borde)';this.style.background='var(--color-fondo-2)'"
           ondrop="_pmiOnDrop(event)">
           <div style="font-size:48px;margin-bottom:12px">📂</div>
-          <div style="font-size:14px;font-weight:600;color:var(--color-texto);margin-bottom:4px">Arrastra tu archivo .json aquí</div>
-          <div style="font-size:12px;color:var(--color-texto-suave)">o haz clic para seleccionarlo</div>
-          <input type="file" id="pm-import-file" accept=".json,application/json"
+          <div style="font-size:14px;font-weight:600;color:var(--color-texto);margin-bottom:4px">Arrastra tu archivo aquí</div>
+          <div style="font-size:12px;color:var(--color-texto-suave)">o haz clic para seleccionar &nbsp;·&nbsp; Formatos: <strong>.docx</strong> o .json</div>
+          <input type="file" id="pm-import-file"
+            accept=".docx,.json,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             style="display:none" onchange="_pmiCargarArchivo(this.files[0])">
         </div>
 
@@ -588,57 +591,253 @@ function _pmiOnDrop(e) {
 
 function _pmiCargarArchivo(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith('.json')) {
-    mostrarToast('Solo se aceptan archivos .json', 'atencion');
-    return;
+  const nombre = file.name.toLowerCase();
+  if (nombre.endsWith('.docx')) {
+    _pmiFuenteArchivo = 'word';
+    _pmiLeerDocx(file);
+  } else if (nombre.endsWith('.json')) {
+    _pmiFuenteArchivo = 'json';
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        _pmiDatosPendientes = data;
+        _pmiMostrarPreview(data);
+      } catch(err) {
+        mostrarToast('Error al parsear el JSON: ' + err.message, 'error');
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  } else {
+    mostrarToast('Solo se aceptan archivos .docx (Word) o .json', 'atencion');
   }
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      const data = JSON.parse(ev.target.result);
-      _pmiDatosPendientes = data;
-      _pmiMostrarPreview(data);
-    } catch(err) {
-      mostrarToast('Error al parsear el JSON: ' + err.message, 'error');
-    }
-  };
-  reader.readAsText(file, 'UTF-8');
 }
 
+// ── Leer Word (.docx) con mammoth.js ─────────────────────────────
+async function _pmiLeerDocx(file) {
+  const preview = document.getElementById('pm-import-preview');
+  if (preview) preview.innerHTML = `
+    <div class="cargando" style="padding:28px">
+      <div class="spinner"></div><span>Procesando documento Word…</span>
+    </div>`;
+
+  try {
+    // Cargar mammoth.js dinámicamente si no está disponible
+    if (!window.mammoth) {
+      await new Promise((resolve, reject) => {
+        const s    = document.createElement('script');
+        s.src      = 'https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js';
+        s.onload   = resolve;
+        s.onerror  = () => reject(new Error('No se pudo cargar el lector de Word (mammoth.js). Verifica tu conexión.'));
+        document.head.appendChild(s);
+      });
+    }
+
+    const ab     = await file.arrayBuffer();
+    const result = await window.mammoth.convertToHtml({ arrayBuffer: ab });
+    const data   = _pmiParsearDocxHtml(result.value, file.name);
+
+    _pmiDatosPendientes = data;
+    _pmiMostrarPreview(data);
+
+  } catch (err) {
+    if (preview) preview.innerHTML =
+      `<div class="alerta-error" style="margin-top:4px">⚠️ ${escapar(err.message)}</div>`;
+    mostrarToast('Error al leer el Word: ' + err.message, 'error');
+  }
+}
+
+// ── Parsear HTML generado por mammoth ────────────────────────────
+function _pmiParsearDocxHtml(html, fileName) {
+  const div   = document.createElement('div');
+  div.innerHTML = html;
+  const texto = div.textContent || '';
+
+  // ── Metadata desde el nombre del archivo ────────────────────────
+  // Formato: "N° 001-12-25 Nombre Completo Trabajador.docx"
+  let numPlanilla = '';
+  let trabNombre  = '';
+  const fnBase    = fileName.replace(/\.docx$/i, '').replace(/^N[°o]?\s*/i, '').trim();
+  const fnMatch   = fnBase.match(/^(\d{3}-\d{2}-\d{2})\s+(.+)$/);
+  if (fnMatch) {
+    numPlanilla = fnMatch[1];
+    trabNombre  = fnMatch[2].trim();
+  }
+
+  // ── Metadata desde el cuerpo del documento ───────────────────────
+  let trabDni   = '';
+  let fechaEmis = '';
+  let mes       = '';
+  let firma     = false;
+
+  // DNI: 8 dígitos tras la palabra "DNI"
+  const dniMatch = texto.match(/DNI[:\s]*(\d{8})/i);
+  if (dniMatch) trabDni = dniMatch[1];
+
+  // Trabajador (fallback si no vino del filename)
+  if (!trabNombre) {
+    const tm = texto.match(/[Tt]rabajador[:\s]+([A-ZÁÉÍÓÚÑ][^\n\r]{4,60})/);
+    if (tm) trabNombre = tm[1].trim();
+  }
+
+  // Fecha emisión DD/MM/YYYY
+  const fEmisMatch = texto.match(/[Ff]echa\s+emisi[oó]n[:\s]*(\d{2})\/(\d{2})\/(\d{4})/);
+  if (fEmisMatch) fechaEmis = `${fEmisMatch[3]}-${fEmisMatch[2]}-${fEmisMatch[1]}`;
+
+  // Período YYYY-MM o YYYY-MM-DD
+  const mesMatch = texto.match(/[Pp]er[ií]odo[:\s]*(\d{4}-\d{2})/);
+  if (mesMatch) mes = mesMatch[1];
+  if (!mes && fechaEmis) mes = fechaEmis.slice(0, 7);
+
+  // Firma
+  firma = /S[IÍ].*[Ff]irmado|[Ff]irmado.*S[IÍ]/i.test(texto);
+
+  // ── Parsear tabla de detalles ─────────────────────────────────────
+  const tables  = Array.from(div.querySelectorAll('table'));
+  let detalles  = [];
+
+  for (const table of tables) {
+    const rows = Array.from(table.querySelectorAll('tr'));
+    if (rows.length < 2) continue;
+
+    // Detectar fila cabecera: debe tener "motivo" o "desplazamiento" y "fecha"
+    const headerCells = Array.from(rows[0].querySelectorAll('th,td'))
+      .map(td => td.textContent.trim().toLowerCase());
+
+    const esTablaDetalle =
+      headerCells.some(h => h.includes('motivo') || h.includes('desplazamiento')) &&
+      headerCells.some(h => h.includes('fecha'));
+
+    if (!esTablaDetalle) continue;
+
+    // Mapear columnas por keywords
+    const col = { fecha: -1, motivo: -1, origen: -1, destino: -1, proyecto: -1, empresa: -1, monto: -1 };
+    headerCells.forEach((h, i) => {
+      if (h.includes('fecha'))                                       col.fecha    = i;
+      if (h.includes('motivo') || h.includes('desplazamiento'))     col.motivo   = i;
+      if (h.includes('desde')  || h === 'origen')                   col.origen   = i;
+      if (h.includes('hasta')  || h === 'destino')                  col.destino  = i;
+      if (h.includes('proyecto'))                                    col.proyecto = i;
+      if (h.includes('empresa') || h.includes('cliente'))           col.empresa  = i;
+      if (h.includes('monto')  || h.includes('s/') || h.includes('importe')) col.monto = i;
+    });
+    // Monto por defecto: última columna
+    if (col.monto < 0) col.monto = headerCells.length - 1;
+
+    // Filas de datos
+    for (let r = 1; r < rows.length; r++) {
+      const cells = Array.from(rows[r].querySelectorAll('td')).map(td => td.textContent.trim());
+      if (cells.length < 2) continue;
+
+      const montoRaw = cells[col.monto] || '';
+      if (/total/i.test(montoRaw)) continue;               // fila de total
+      const monto = parseFloat(montoRaw.replace(/[^\d.]/g, ''));
+      if (isNaN(monto) || monto === 0) continue;           // fila vacía
+
+      // Parsear fecha (DD/MM/YYYY → YYYY-MM-DD)
+      let fecha = col.fecha >= 0 ? cells[col.fecha] || '' : '';
+      const fmatch = fecha.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      if (fmatch) fecha = `${fmatch[3]}-${fmatch[2]}-${fmatch[1]}`;
+      const isoMatch = fecha.match(/(\d{4}-\d{2}-\d{2})/);
+      if (!isoMatch && !fmatch) continue; // fecha no reconocida
+
+      detalles.push({
+        fecha,
+        motivo:          col.motivo   >= 0 ? (cells[col.motivo]   || '').trim() : '',
+        origen:          col.origen   >= 0 ? (cells[col.origen]   || '').trim() || null : null,
+        destino:         col.destino  >= 0 ? (cells[col.destino]  || '').trim() || null : null,
+        proyecto:        col.proyecto >= 0 ? (cells[col.proyecto] || '').trim() || null : null,
+        empresa_cliente: col.empresa  >= 0 ? (cells[col.empresa]  || '').trim() || null : null,
+        monto,
+        moneda: 'PEN',
+      });
+    }
+
+    if (detalles.length) break;
+  }
+
+  // Fallback: buscar fechas + monto en texto plano
+  if (!detalles.length) {
+    const re = /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+(\d+(?:[.,]\d{1,2})?)(?:\s|$)/gm;
+    let m;
+    while ((m = re.exec(texto)) !== null) {
+      const [d, mo, y] = m[1].split('/');
+      detalles.push({
+        fecha:  `${y}-${mo}-${d}`,
+        motivo: m[2].trim(),
+        origen: null, destino: null, proyecto: null, empresa_cliente: null,
+        monto:  parseFloat(m[3].replace(',', '.')), moneda: 'PEN',
+      });
+    }
+  }
+
+  // Si no encontramos DNI, buscar en catálogo por nombre
+  if (!trabDni && trabNombre) {
+    const nombreLow = trabNombre.toLowerCase();
+    const mt = PM_TRABAJADORES.find(t => t.nombre.toLowerCase() === nombreLow) ||
+               PM_TRABAJADORES.find(t => nombreLow.includes(t.nombre.split(' ')[0].toLowerCase()));
+    if (mt) trabDni = mt.dni;
+  }
+
+  return {
+    documento_metadata: {
+      titulo:          'PLANILLA POR GASTOS DE MOVILIDAD - POR TRABAJADOR',
+      numero_planilla: numPlanilla,
+      fecha_emision:   fechaEmis || new Date().toISOString().slice(0, 10),
+    },
+    empresa: {
+      razon_social: empresa_activa?.nombre || '',
+      ruc:          empresa_activa?.ruc    || '',
+    },
+    trabajador: {
+      nombre_completo: trabNombre,
+      dni:             trabDni,
+    },
+    detalle_movilidad: detalles,
+    resumen_financiero: {
+      total_gastos: detalles.reduce((s, d) => s + d.monto, 0),
+      moneda: 'PEN',
+    },
+    estado_validacion: {
+      firma_trabajador_presente: firma,
+    },
+  };
+}
+
+// ── Vista previa (genérica: JSON y Word) ──────────────────────────
 function _pmiMostrarPreview(data) {
   const preview = document.getElementById('pm-import-preview');
   if (!preview) return;
 
-  const meta     = data.documento_metadata || {};
-  const empresa  = data.empresa            || {};
-  const trab     = data.trabajador         || {};
-  const detalles = Array.isArray(data.detalle_movilidad) ? data.detalle_movilidad : [];
-  const firma    = !!(data.estado_validacion?.firma_trabajador_presente);
-  const total    = detalles.reduce((s, d) => s + Number(d.monto || 0), 0);
+  const meta      = data.documento_metadata || {};
+  const empresa   = data.empresa            || {};
+  const trab      = data.trabajador         || {};
+  const detalles  = Array.isArray(data.detalle_movilidad) ? data.detalle_movilidad : [];
+  const firma     = !!(data.estado_validacion?.firma_trabajador_presente);
+  const total     = detalles.reduce((s, d) => s + Number(d.monto || 0), 0);
   const trabNombre = trab.nombre_completo || trab.nombre || '';
+  const etiqueta  = _pmiFuenteArchivo === 'word' ? '📄 WORD IMPORTADO' : '📋 JSON IMPORTADO';
 
   if (!trabNombre) {
-    preview.innerHTML = `<div class="alerta-error" style="margin-top:4px">⚠️ El JSON no tiene "trabajador.nombre_completo". Verifica la estructura del archivo.</div>`;
+    preview.innerHTML = `<div class="alerta-error" style="margin-top:4px">⚠️ No se pudo detectar el trabajador. Verifica el nombre del archivo o la estructura del documento.</div>`;
     return;
   }
   if (!detalles.length) {
-    preview.innerHTML = `<div class="alerta-error" style="margin-top:4px">⚠️ El JSON no contiene filas en "detalle_movilidad".</div>`;
+    preview.innerHTML = `<div class="alerta-error" style="margin-top:4px">⚠️ No se encontraron filas de desplazamiento en el documento. Asegúrate de que la tabla tenga encabezados con "Fecha" y "Motivo".</div>`;
     return;
   }
 
   preview.innerHTML = `
     <div style="border:1px solid var(--color-borde);border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
 
-      <!-- Header -->
       <div style="background:var(--color-secundario);padding:12px 18px;color:#fff;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>
           <div style="font-weight:700;font-size:14px">Vista previa — Planilla ${escapar(meta.numero_planilla || '(sin número)')}</div>
           <div style="font-size:11px;opacity:.85">Fecha: ${escapar(meta.fecha_emision || '—')}</div>
         </div>
-        <span style="background:rgba(255,255,255,.22);padding:3px 12px;border-radius:10px;font-size:11px;font-weight:700">JSON IMPORTADO</span>
+        <span style="background:rgba(255,255,255,.22);padding:3px 12px;border-radius:10px;font-size:11px;font-weight:700">${etiqueta}</span>
       </div>
 
-      <!-- Info cabecera -->
       <div style="padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;border-bottom:1px solid var(--color-borde);font-size:12px">
         <div>
           <div style="color:var(--color-texto-suave);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Trabajador</div>
@@ -646,13 +845,12 @@ function _pmiMostrarPreview(data) {
           <div style="color:var(--color-texto-suave)">DNI: ${escapar(trab.dni || '—')}</div>
         </div>
         <div>
-          <div style="color:var(--color-texto-suave);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Empresa emisora</div>
+          <div style="color:var(--color-texto-suave);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Empresa</div>
           <div style="font-weight:600">${escapar(empresa.razon_social || empresa_activa?.nombre || '—')}</div>
           <div style="color:var(--color-texto-suave)">RUC: ${escapar(empresa.ruc || empresa_activa?.ruc || '—')}</div>
         </div>
       </div>
 
-      <!-- Tabla detalles -->
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:11px">
           <thead style="background:var(--color-primario);color:#fff">
@@ -672,7 +870,7 @@ function _pmiMostrarPreview(data) {
               <tr style="border-bottom:1px solid var(--color-borde);${i%2===0?'':'background:var(--color-fondo-2)'}">
                 <td style="padding:5px 8px;text-align:center;color:var(--color-texto-suave)">${i+1}</td>
                 <td style="padding:5px 8px;white-space:nowrap">${escapar(d.fecha || '—')}</td>
-                <td style="padding:5px 8px;max-width:180px">${escapar(d.motivo || '—')}</td>
+                <td style="padding:5px 8px;max-width:200px">${escapar(d.motivo || '—')}</td>
                 <td style="padding:5px 8px">${escapar(d.origen || '—')}</td>
                 <td style="padding:5px 8px">${escapar(d.destino || '—')}</td>
                 <td style="padding:5px 8px">${escapar(d.proyecto || '—')}</td>
@@ -683,7 +881,6 @@ function _pmiMostrarPreview(data) {
         </table>
       </div>
 
-      <!-- Footer: total + botón importar -->
       <div style="padding:14px 18px;border-top:1px solid var(--color-borde);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div style="font-size:12px;color:var(--color-texto-suave)">
           ${detalles.length} fila(s) &nbsp;·&nbsp; Firma: ${firma ? '✅ Sí' : '⬜ No'}
@@ -708,29 +905,28 @@ function _pmiImportarAlFormulario() {
   const detalles = Array.isArray(data.detalle_movilidad) ? data.detalle_movilidad : [];
   const firma    = !!(data.estado_validacion?.firma_trabajador_presente);
 
-  // Resolver DNI: primero del JSON, luego buscar por nombre exacto
+  // Resolver DNI: catálogo → JSON → fallback vacío
   const dniDirecto = (trab.dni || '').toString().trim();
+  const trabNombre = (trab.nombre_completo || trab.nombre || '').trim();
   const trabMatch  = PM_TRABAJADORES.find(t => t.dni === dniDirecto) ||
-                     PM_TRABAJADORES.find(t =>
-                       t.nombre.toLowerCase() === (trab.nombre_completo || '').toLowerCase().trim()
-                     );
+                     PM_TRABAJADORES.find(t => t.nombre.toLowerCase() === trabNombre.toLowerCase()) ||
+                     PM_TRABAJADORES.find(t => trabNombre.toLowerCase().startsWith(t.nombre.split(' ')[0].toLowerCase()));
   const trabDni    = trabMatch?.dni || dniDirecto;
-  const trabNombre = trab.nombre_completo || trab.nombre || '';
 
-  // Determinar período desde fecha_emision
+  // Período desde fecha_emision
   const fechaStr = (meta.fecha_emision || '').slice(0, 10);
   const mes      = fechaStr.slice(0, 7);
 
   const planillaData = {
-    id:               null,          // siempre crea nueva
-    numero_planilla:  meta.numero_planilla || '',
+    id:                null,
+    numero_planilla:   meta.numero_planilla || '',
     mes,
-    fecha_emision:    fechaStr || new Date().toISOString().slice(0, 10),
+    fecha_emision:     fechaStr || new Date().toISOString().slice(0, 10),
     trabajador_nombre: trabNombre,
-    trabajador_dni:   trabDni,
-    firma_trabajador: firma,
-    notas:            null,
-    estado:           'BORRADOR',
+    trabajador_dni:    trabDni,
+    firma_trabajador:  firma,
+    notas:             null,
+    estado:            'BORRADOR',
   };
 
   const detallesData = detalles.map((d, i) => ({
@@ -744,7 +940,6 @@ function _pmiImportarAlFormulario() {
     monto:           Number(d.monto    || 0),
   }));
 
-  // Activar el tab "Nueva planilla" con los datos pre-cargados
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('activo'));
   const btn = document.getElementById('tab-pm-nueva');
   if (btn) btn.classList.add('activo');
