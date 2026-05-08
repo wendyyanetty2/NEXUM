@@ -17,8 +17,11 @@ async function renderTabNueva(area, planillaData = null, detallesData = []) {
   let numSugerido = planillaData?.numero_planilla || '';
   if (!numSugerido) numSugerido = await _pmoGenerarNumero(mesD);
 
-  const opts_trabajadores = PM_TRABAJADORES.map(t =>
-    `<option value="${t.dni}" data-nombre="${escapar(t.nombre)}" ${planillaData?.trabajador_dni === t.dni ? 'selected' : ''}>
+  // Cargar trabajadores desde Catálogos (DB), fallback al array estático
+  const trabajadoresDB = await _pmoObtenerTrabajadores();
+
+  const opts_trabajadores = trabajadoresDB.map(t =>
+    `<option value="${escapar(t.dni)}" data-nombre="${escapar(t.nombre)}" ${planillaData?.trabajador_dni === t.dni ? 'selected' : ''}>
       ${escapar(t.nombre)}
     </option>`).join('');
 
@@ -222,6 +225,14 @@ function _pmoAgregarFila(datos = null) {
   const proyectos = window._pmoOptsProyectos || PM_PROYECTOS;
   const empresas  = window._pmoOptsEmpresas  || PM_EMPRESAS_CLIENTE;
 
+  // Empresa por defecto: la que coincida con empresa_activa, o la primera de la lista
+  const _empActNorm = (empresa_activa?.nombre || '').replace(/[\s.,]/g,'').toLowerCase();
+  const empresaDefault = datos?.empresa_cliente ||
+    empresas.find(e => {
+      const eNorm = e.replace(/[\s.,]/g,'').toLowerCase();
+      return eNorm.startsWith(_empActNorm.slice(0,8)) || _empActNorm.startsWith(eNorm.slice(0,8));
+    }) || empresas[0] || '';
+
   const optsMotivos   = motivos.map(m =>
     `<option value="${escapar(m)}" ${datos?.motivo===m?'selected':''}>${escapar(m)}</option>`).join('');
   const optsOrigen    = distritos.map(d =>
@@ -231,7 +242,7 @@ function _pmoAgregarFila(datos = null) {
   const optsProyectos = proyectos.map(p =>
     `<option value="${escapar(p)}" ${datos?.proyecto===p?'selected':''}>${escapar(p)}</option>`).join('');
   const optsEmpresas  = empresas.map(e =>
-    `<option value="${escapar(e)}" ${datos?.empresa_cliente===e?'selected':''}>${escapar(e)}</option>`).join('');
+    `<option value="${escapar(e)}" ${e===empresaDefault?'selected':''}>${escapar(e)}</option>`).join('');
 
   const tdStyle   = 'padding:3px 3px;border-bottom:1px solid var(--color-borde);vertical-align:top';
   const inputStyle = 'padding:5px 6px;border:1px solid var(--color-borde);border-radius:4px;width:100%;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:11px;box-sizing:border-box';

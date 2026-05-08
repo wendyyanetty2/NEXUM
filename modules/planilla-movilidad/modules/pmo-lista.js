@@ -72,10 +72,35 @@ const PM_ESTADOS_COLOR = {
   APROBADO: { bg:'#276749', label:'APROBADO' },
 };
 
+// ── Trabajadores desde Catálogos (DB) ────────────────────────────
+let _pmoCachedTrabajadores = null;
+
+async function _pmoObtenerTrabajadores() {
+  if (_pmoCachedTrabajadores) return _pmoCachedTrabajadores;
+  try {
+    const { data } = await _supabase
+      .from('trabajadores')
+      .select('nombre, apellido_paterno, apellido_materno, dni')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .order('apellido_paterno');
+    if (data && data.length) {
+      _pmoCachedTrabajadores = data.map(t => ({
+        nombre: [t.nombre, t.apellido_paterno, t.apellido_materno]
+                  .filter(Boolean).join(' ').trim(),
+        dni: (t.dni || '').toString().trim(),
+      }));
+      return _pmoCachedTrabajadores;
+    }
+  } catch(e) { console.warn('pmo: no se pudo cargar trabajadores desde DB', e); }
+  // Fallback al catálogo estático
+  return PM_TRABAJADORES;
+}
+
 // ── Render principal del listado ──────────────────────────────────
 async function renderTabLista(area) {
   const hoy  = new Date();
   const mesD = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+  const trabajadores = await _pmoObtenerTrabajadores();
 
   area.innerHTML = `
     <div class="fadeIn">
@@ -99,7 +124,7 @@ async function renderTabLista(area) {
             <label class="label-filtro">Trabajador</label>
             <select id="pml-trabajador" class="input-buscar w-full">
               <option value="">Todos</option>
-              ${PM_TRABAJADORES.map(t => `<option value="${t.dni}">${escapar(t.nombre.split(' ').slice(0,2).join(' '))}</option>`).join('')}
+              ${trabajadores.map(t => `<option value="${escapar(t.dni)}">${escapar(t.nombre.split(' ').slice(0,2).join(' '))}</option>`).join('')}
             </select>
           </div>
           <div>

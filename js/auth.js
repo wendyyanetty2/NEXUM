@@ -138,7 +138,14 @@ function _permisosBaseDeRol(rol) {
 function obtenerPermisosActivos() {
   const stored = sessionStorage.getItem('nexum_permisos');
   if (stored) {
-    try { return JSON.parse(stored); } catch(e) {}
+    try {
+      const parsed = JSON.parse(stored);
+      // Auto-invalidar si el caché no contiene todos los módulos actuales
+      const ids = Object.keys(NEXUM_PERMISOS_MODULOS);
+      if (ids.every(id => id in (parsed?.modulos || {}))) return parsed;
+    } catch(e) {}
+    // caché desactualizado → limpiarlo
+    sessionStorage.removeItem('nexum_permisos');
   }
   const empresa = obtenerEmpresaActiva();
   const rol     = empresa?.rol || 'CONSULTA';
