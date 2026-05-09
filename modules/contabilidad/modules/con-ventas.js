@@ -75,8 +75,8 @@ async function cargarVentas() {
   // MEJORA 7: verificar qué ventas tienen movimiento bancario aplicado
   const numerosV = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicadosV } = numerosV.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id')
-        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numerosV)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc')
+        .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numerosV)
     : { data: [] };
   const aplicadosMapV = new Map((mbdAplicadosV || []).map(r => [r.nro_factura_doc, r]));
 
@@ -139,7 +139,7 @@ async function cargarVentas() {
             ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
                  title="Click para ver movimiento bancario vinculado"
                  onclick="_verMovBancarioLink('${escapar(nDoc)}','VENTA')">
-                <span style="background:#2F855A;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">✅ APLIC.</span>
+                <span style="background:${movLinkV.entrega_doc==='OBSERVADO'?'#D97706':'#2F855A'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">${movLinkV.entrega_doc==='OBSERVADO'?'⚠️ OBSERV.':'✅ APLIC.'}</span>
                 <span style="font-family:monospace;font-size:9px;color:#22c55e;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(movLinkV.nro_operacion_bancaria||'')}</span>
               </div>`
             : `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
@@ -662,7 +662,20 @@ async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmi
     .order('fecha_deposito', { ascending: false })
     .limit(30);
 
-  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || []);
+  // Buscar movimientos parciales para detectar multi-transferencias
+  const { data: movsParciales } = await _supabase
+    .from('tesoreria_mbd')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,descripcion,proveedor_empresa_personal,entrega_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .neq('entrega_doc', 'EMITIDO')
+    .gt('monto', 0)
+    .lt('monto', total * 0.99)
+    .order('fecha_deposito', { ascending: false })
+    .limit(50);
+
+  const multiTransfers = _encontrarMultiTransfer(movsParciales || [], total, margen);
+
+  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || [], multiTransfers);
 }
 
 async function _conciliarLoteVentas() {
@@ -692,7 +705,7 @@ async function _conciliarLoteVentas() {
 
   const numeros = ventas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: yaAplic } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const aplicadosSet = new Set((yaAplic || []).map(r => r.nro_factura_doc));
   const pendientes   = ventas.filter(r => {
@@ -805,7 +818,7 @@ async function _vAplicarLoteConciliacion(items) {
     if (!item) continue;
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
-      entrega_doc:          'EMITIDO',
+      entrega_doc:          'OBSERVADO',
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'VENTA',
       estado_conciliacion:  'conciliado',

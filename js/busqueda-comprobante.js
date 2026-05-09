@@ -249,7 +249,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
 
   // Actualizar movimiento bancario
   const updatePayload = {
-    entrega_doc:         'EMITIDO',
+    entrega_doc:         'OBSERVADO',
     estado_conciliacion: 'conciliado',
     nro_factura_doc:     nDoc || null,
     tipo_doc:            docTipo,

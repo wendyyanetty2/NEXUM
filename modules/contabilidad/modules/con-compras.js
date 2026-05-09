@@ -76,8 +76,8 @@ async function cargarCompras() {
   // MEJORA 7: verificar qué comprobantes tienen movimiento bancario aplicado
   const numeros = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicados } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id')
-        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc')
+        .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const aplicadosMap = new Map((mbdAplicados || []).map(r => [r.nro_factura_doc, r]));
 
@@ -140,7 +140,7 @@ async function cargarCompras() {
             ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
                  title="Click para ver movimiento bancario vinculado"
                  onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA')">
-                <span style="background:#2F855A;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">✅ APLIC.</span>
+                <span style="background:${movLink.entrega_doc==='OBSERVADO'?'#D97706':'#2F855A'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">${movLink.entrega_doc==='OBSERVADO'?'⚠️ OBSERV.':'✅ APLIC.'}</span>
                 <span style="font-family:monospace;font-size:9px;color:#22c55e;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(movLink.nro_operacion_bancaria||'')}</span>
               </div>`
             : `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
@@ -668,7 +668,20 @@ async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fech
     .order('fecha_deposito', { ascending: false })
     .limit(30);
 
-  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || []);
+  // Buscar movimientos parciales para detectar multi-transferencias
+  const { data: movsParciales } = await _supabase
+    .from('tesoreria_mbd')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,descripcion,proveedor_empresa_personal,entrega_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .neq('entrega_doc', 'EMITIDO')
+    .gt('monto', 0)
+    .lt('monto', total * 0.99)
+    .order('fecha_deposito', { ascending: false })
+    .limit(50);
+
+  const multiTransfers = _encontrarMultiTransfer(movsParciales || [], total, margen);
+
+  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || [], multiTransfers);
 }
 
 // ── Conciliar lote — todos los PEND. del periodo actual ──────────
@@ -700,7 +713,7 @@ async function _conciliarLoteCompras() {
 
   const numeros = compras.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: yaAplic } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const aplicadosSet = new Set((yaAplic || []).map(r => r.nro_factura_doc));
 
@@ -810,9 +823,37 @@ async function _conciliarLoteCompras() {
     </div>`;
 }
 
-// ── Conciliar compra individual — modal de búsqueda ───────────────
-function _cAbrirModalConciliar(compra, movs) {
+// ── Conciliar compra/venta individual — modal de búsqueda ─────────
+function _cAbrirModalConciliar(compra, movs, multiTransfers = []) {
   const mc = document.getElementById('modal-container');
+
+  // Sección multi-transferencia
+  let multiHtml = '';
+  if (multiTransfers.length) {
+    multiHtml = '<div style="margin-top:14px;border-top:2px solid rgba(113,71,224,.3);padding-top:12px">' +
+      '<p style="font-size:12px;font-weight:700;color:#7147e0;margin-bottom:6px">🔀 Posibles multi-transferencias (' + multiTransfers.length + ' combinación/es encontrada/s)</p>' +
+      '<p style="font-size:11px;color:var(--color-texto-suave);margin-bottom:10px">El total de ' + (formatearMoneda ? formatearMoneda(compra.total) : 'S/'+Number(compra.total).toFixed(2)) + ' podría cubrirse con la suma de estos grupos de movimientos:</p>' +
+      multiTransfers.map(function(grupo, gi) {
+        const suma = grupo.reduce(function(s, m) { return s + Math.abs(Number(m.monto)); }, 0);
+        const ids  = grupo.map(function(m) { return m.id; }).join(',');
+        const difGrupo = Math.abs(suma - compra.total);
+        return '<div style="border:1px dashed rgba(113,71,224,.4);border-radius:8px;padding:11px;margin-bottom:8px;background:rgba(113,71,224,.03)">' +
+          '<div style="font-size:11px;font-weight:700;color:#7147e0;margin-bottom:6px">🔀 Grupo ' + (gi+1) + ' — ' + grupo.length + ' movimientos — Suma: ' + (formatearMoneda ? formatearMoneda(suma) : 'S/'+suma.toFixed(2)) + (difGrupo > 0.01 ? ' <span style="font-weight:400;color:#f59e0b">(dif: ' + (formatearMoneda ? formatearMoneda(difGrupo) : 'S/'+difGrupo.toFixed(2)) + ')</span>' : ' <span style="font-weight:400;color:#22c55e">✓ exacto</span>') + '</div>' +
+          grupo.map(function(m) {
+            return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid rgba(113,71,224,.1);font-size:11px">' +
+              '<div><span style="font-family:monospace;color:var(--color-secundario);font-weight:600">' + escapar(m.nro_operacion_bancaria||'—') + '</span>' +
+              ' · <span style="color:var(--color-texto-suave)">' + (m.fecha_deposito||'') + '</span>' +
+              ' · ' + escapar(truncar(m.descripcion||m.proveedor_empresa_personal||'—', 30)) + '</div>' +
+              '<strong style="color:#7147e0;white-space:nowrap;flex-shrink:0">' + (formatearMoneda ? formatearMoneda(Math.abs(Number(m.monto))) : 'S/'+Math.abs(Number(m.monto)).toFixed(2)) + '</strong></div>';
+          }).join('') +
+          '<div style="text-align:right;margin-top:8px">' +
+          '<button onclick="_cVincularMultiTransfer(\'' + escapar(String(compra.id)) + '\',\'' + escapar(compra.nDoc) + '\',\'' + escapar(compra.tipo||'COMPRA') + '\',\'' + ids + '\')"' +
+          ' style="padding:5px 14px;background:#7147e0;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font);font-weight:600">🔀 Vincular este grupo</button>' +
+          '</div></div>';
+      }).join('') +
+      '</div>';
+  }
+
   const movHtml = movs.length
     ? movs.slice(0, 15).map(m => {
         const diff = Math.abs(Number(m.monto) - compra.total);
@@ -832,7 +873,7 @@ function _cAbrirModalConciliar(compra, movs) {
             <div style="font-size:11px;color:var(--color-texto);margin-bottom:2px">${escapar(truncar(m.descripcion||'—',60))}</div>
             ${m.proveedor_empresa_personal ? `<div style="font-size:11px;color:var(--color-texto-suave)">${escapar(m.proveedor_empresa_personal)}</div>` : ''}
             <div style="margin-top:8px;text-align:right">
-              <span style="font-size:10px;padding:2px 6px;border-radius:4px;${m.entrega_doc==='EMITIDO'?'background:#2F855A;color:#fff':'background:#C53030;color:#fff'}">${escapar(m.entrega_doc||'PENDIENTE')}</span>
+              <span style="font-size:10px;padding:2px 6px;border-radius:4px;${m.entrega_doc==='EMITIDO'?'background:#2F855A;color:#fff':m.entrega_doc==='OBSERVADO'?'background:#D97706;color:#fff':'background:#C53030;color:#fff'}">${escapar(m.entrega_doc||'PENDIENTE')}</span>
               <button onclick="_cVincularMovimiento('${compra.id}','${m.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}')"
                 style="margin-left:8px;padding:4px 12px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:var(--font)">
                 🔗 Vincular
@@ -862,6 +903,7 @@ function _cAbrirModalConciliar(compra, movs) {
             ${movs.length} movimiento(s) bancario(s) con monto similar encontrado(s):
           </p>
           ${movHtml}
+          ${multiHtml}
           <div style="margin-top:14px;border-top:1px solid var(--color-borde);padding-top:12px">
             <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:8px">¿No encuentras el movimiento? Búsqueda manual:</p>
             <div style="display:flex;gap:8px">
@@ -915,7 +957,7 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc) {
 async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc) {
   const hoy = new Date().toISOString().slice(0, 10);
   const { error } = await _supabase.from('tesoreria_mbd').update({
-    entrega_doc:          'EMITIDO',
+    entrega_doc:          'OBSERVADO',
     nro_factura_doc:      nDoc,
     tipo_doc:             tipoDoc,
     estado_conciliacion:  'conciliado',
@@ -952,7 +994,7 @@ async function _cAplicarLoteConciliacion(items) {
     if (!item) continue;
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
-      entrega_doc:          'EMITIDO',
+      entrega_doc:          'OBSERVADO',
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'COMPRA',
       estado_conciliacion:  'conciliado',
@@ -1082,4 +1124,78 @@ async function _desvincularmovLink(idx, nDoc, tipo) {
   document.getElementById('modal-container').innerHTML = '';
   if (tipo === 'VENTA') cargarVentas();
   else cargarCompras();
+}
+
+// ── Multi-transferencia: detectar combinaciones de movimientos ─────
+function _encontrarMultiTransfer(movs, total, margen) {
+  const candidatos = movs.filter(function(m) {
+    const a = Math.abs(Number(m.monto));
+    return a > 0.01 && a < total * 0.99;
+  });
+  const resultado = [];
+  const max = Math.min(candidatos.length, 20);
+  // Pares
+  for (let i = 0; i < max - 1; i++) {
+    for (let j = i + 1; j < max; j++) {
+      const suma = Math.abs(Number(candidatos[i].monto)) + Math.abs(Number(candidatos[j].monto));
+      if (Math.abs(suma - total) <= margen) {
+        resultado.push([candidatos[i], candidatos[j]]);
+        if (resultado.length >= 5) return resultado;
+      }
+    }
+  }
+  // Triples (solo si se necesitan más resultados)
+  if (resultado.length < 3) {
+    const max3 = Math.min(candidatos.length, 15);
+    for (let i = 0; i < max3 - 2; i++) {
+      for (let j = i + 1; j < max3 - 1; j++) {
+        for (let k = j + 1; k < max3; k++) {
+          const suma = Math.abs(Number(candidatos[i].monto)) + Math.abs(Number(candidatos[j].monto)) + Math.abs(Number(candidatos[k].monto));
+          if (Math.abs(suma - total) <= margen) {
+            resultado.push([candidatos[i], candidatos[j], candidatos[k]]);
+            if (resultado.length >= 5) return resultado;
+          }
+        }
+      }
+    }
+  }
+  return resultado;
+}
+
+// ── Multi-transferencia: vincular grupo de movimientos ────────────
+async function _cVincularMultiTransfer(docId, nDoc, tipoDoc, movIdsStr) {
+  const movIds = movIdsStr.split(',').filter(Boolean);
+  const hoy    = new Date().toISOString().slice(0, 10);
+  let ok = 0, errores = 0;
+
+  for (const movId of movIds) {
+    const { error } = await _supabase.from('tesoreria_mbd').update({
+      entrega_doc:          'OBSERVADO',
+      nro_factura_doc:      nDoc,
+      tipo_doc:             tipoDoc,
+      estado_conciliacion:  'conciliado',
+      fecha_actualizacion:  hoy,
+    }).eq('id', movId);
+    if (error) { errores++; continue; }
+
+    await _supabase.from('conciliaciones').insert({
+      empresa_operadora_id: empresa_activa.id,
+      movimiento_id:        movId,
+      doc_tipo:             tipoDoc,
+      doc_id:               docId,
+      score:                0,
+      tipo_match:           'MULTI_TRANSFER',
+      estado:               'APROBADO',
+      usuario_id:           perfil_usuario?.id || null,
+    });
+    ok++;
+  }
+
+  document.querySelector('.modal-overlay')?.remove();
+  mostrarToast(
+    '✅ ' + ok + ' movimiento(s) vinculados como multi-transferencia' + (errores ? ' · ' + errores + ' con error' : ''),
+    ok > 0 ? 'exito' : 'error'
+  );
+  if (typeof cargarCompras === 'function') cargarCompras();
+  if (typeof cargarVentas  === 'function') cargarVentas();
 }

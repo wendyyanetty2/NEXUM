@@ -1595,7 +1595,7 @@ async function _vincularManual(movId, docTipo, docId, nDocDirecto) {
 
   const { error } = await _supabase.from('tesoreria_mbd')
     .update({
-      entrega_doc:     'EMITIDO',
+      entrega_doc:     'OBSERVADO',
       nro_factura_doc: nroDoc,
       tipo_doc:        docTipo,
     }).eq('id', movId);
