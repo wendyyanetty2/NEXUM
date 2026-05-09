@@ -301,6 +301,9 @@ function renderTablaMovimientos() {
           <button onclick="_abrirModalDividirMBD('${r.id}')"
             title="Dividir este movimiento en varios comprobantes"
             style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✂️</button>
+          <button onclick="_bmBuscarDoc('${r.id}','${escapar(r.nro_operacion_bancaria||'')}',${r.monto},'${r.fecha_deposito}','tesoreria_mbd')"
+            title="Vincular con comprobante (Compras / Ventas / RH)"
+            style="padding:4px 7px;background:rgba(85,60,154,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px">📂</button>
           <button onclick="eliminarMovimiento('${r.id}')"
             title="Eliminar solo este movimiento"
             style="padding:4px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>

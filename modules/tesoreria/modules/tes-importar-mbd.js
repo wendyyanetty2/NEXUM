@@ -318,6 +318,9 @@ async function abrirModalMBD(id = null) {
     item = data;
   }
 
+  const nroOps = (item?.nro_operacion_bancaria || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!nroOps.length) nroOps.push('');
+
   const mc = document.getElementById('modal-container');
   mc.innerHTML = `
     <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)cerrarModalMBD()">
@@ -345,8 +348,17 @@ async function abrirModalMBD(id = null) {
               </select>
             </div>
             <div class="campo">
-              <label>N° Operación Bancaria</label>
-              <input type="text" id="mbd-nro-op" value="${item?.nro_operacion_bancaria||''}" placeholder="Opcional">
+              <label style="display:flex;align-items:center;justify-content:space-between">
+                N° Operación Bancaria
+                <button type="button" onclick="_mbdAgregarNroOp()" title="Agregar N° adicional"
+                  style="padding:1px 8px;font-size:11px;background:var(--color-secundario);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:var(--font)">+ Agregar</button>
+              </label>
+              <div id="mbd-nro-ops-container" style="display:flex;flex-direction:column;gap:4px">
+                ${nroOps.map((n, i) => i === 0
+                  ? `<input type="text" class="mbd-nro-op-input" value="${escapar(n)}" placeholder="Opcional" style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:13px;width:100%;box-sizing:border-box">`
+                  : `<div style="display:flex;gap:4px"><input type="text" class="mbd-nro-op-input" value="${escapar(n)}" placeholder="N° adicional" style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:13px"><button type="button" onclick="_mbdQuitarNroOp(this)" style="padding:4px 9px;background:rgba(197,48,48,.12);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px;flex-shrink:0">×</button></div>`
+                ).join('')}
+              </div>
             </div>
             <div class="campo" style="grid-column:span 2">
               <label>Descripción</label>
@@ -478,7 +490,7 @@ async function guardarMBD(id) {
     fecha_deposito:           fecha,
     monto,
     moneda:                   document.getElementById('mbd-moneda').value,
-    nro_operacion_bancaria:   document.getElementById('mbd-nro-op').value.trim()||null,
+    nro_operacion_bancaria:   Array.from(document.querySelectorAll('#mbd-nro-ops-container .mbd-nro-op-input')).map(el=>el.value.trim()).filter(Boolean).join(', ')||null,
     descripcion:              document.getElementById('mbd-descripcion').value.trim()||null,
     proveedor_empresa_personal: document.getElementById('mbd-proveedor').value.trim()||null,
     ruc_dni:                  document.getElementById('mbd-ruc-dni').value.trim()||null,
@@ -513,6 +525,21 @@ async function guardarMBD(id) {
   // Refrescar el panel activo: Movimientos o importar-MBD según el tab abierto
   if (document.getElementById('tbody-movimientos')) cargarMovimientos();
   if (document.getElementById('mbd-tabla-wrap')) cargarMBD();
+}
+
+function _mbdAgregarNroOp() {
+  const container = document.getElementById('mbd-nro-ops-container');
+  if (!container) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;gap:4px';
+  wrap.innerHTML = '<input type="text" class="mbd-nro-op-input" placeholder="N° adicional" style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:13px"><button type="button" onclick="_mbdQuitarNroOp(this)" style="padding:4px 9px;background:rgba(197,48,48,.12);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px;flex-shrink:0">×</button>';
+  container.appendChild(wrap);
+  wrap.querySelector('input').focus();
+}
+
+function _mbdQuitarNroOp(btn) {
+  const wrap = btn.closest('div');
+  if (wrap && wrap.parentElement?.id === 'mbd-nro-ops-container') wrap.remove();
 }
 
 async function eliminarMBD(id) {
