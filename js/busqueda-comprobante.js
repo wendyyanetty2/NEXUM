@@ -337,6 +337,18 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
     <div id="bm2-resultados" style="flex:1;overflow-y:auto;padding:12px 16px;font-size:12px;color:var(--color-texto-suave)">
       <p style="text-align:center;padding:20px">Presiona Buscar para encontrar movimientos bancarios…</p>
     </div>
+    <div style="border-top:1px solid var(--color-borde);padding:12px 16px;flex-shrink:0;background:var(--color-bg-card)">
+      <p style="font-size:12px;color:var(--color-texto-suave);margin:0 0 8px 0">¿No encuentras el movimiento? Búsqueda manual:</p>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="bm2-manual-q" placeholder="N° operación o proveedor"
+          style="${_bmInputStyle};flex:1">
+        <button id="bm2-manual-btn"
+          style="padding:7px 14px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:12px;font-weight:600;white-space:nowrap">
+          🔍 Buscar
+        </button>
+      </div>
+      <div id="bm2-manual-res" style="margin-top:8px"></div>
+    </div>
     </div>`;
 
   overlay.querySelectorAll('[data-bm-close]').forEach(b => b.onclick = () => overlay.remove());
@@ -357,6 +369,10 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
     overlay.querySelector('#bm2-resultados').innerHTML = '<p style="text-align:center;padding:20px">Presiona Buscar para encontrar movimientos bancarios…</p>';
   };
   overlay.querySelector('#bm2-desc')?.addEventListener('keydown', e => { if(e.key==='Enter') doSearch(); });
+
+  const doManual = () => _bmBuscarMovManual(overlay, docTipo, docId, nDoc);
+  overlay.querySelector('#bm2-manual-btn').onclick = doManual;
+  overlay.querySelector('#bm2-manual-q')?.addEventListener('keydown', e => { if(e.key==='Enter') doManual(); });
 
   // Auto-buscar al abrir si hay datos
   if (montoRef || proveedor) setTimeout(doSearch, 100);
@@ -444,6 +460,63 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
       const nrop  = btn.dataset.nrop;
       await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd');
       mostrarToast(`✓ Movimiento ${nrop} vinculado al comprobante ${nDoc}`, 'exito');
+      overlay.remove();
+    };
+  });
+}
+
+async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
+  const q   = (overlay.querySelector('#bm2-manual-q')?.value || '').trim();
+  const res = overlay.querySelector('#bm2-manual-res');
+  if (!q || !res) return;
+  res.innerHTML = '<div class="spinner" style="margin:8px auto"></div>';
+
+  const { data: movs } = await _supabase
+    .from('tesoreria_mbd')
+    .select('id,nro_operacion_bancaria,fecha_deposito,descripcion,proveedor_empresa_personal,monto,moneda,entrega_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .or(`nro_operacion_bancaria.ilike.%${q}%,proveedor_empresa_personal.ilike.%${q}%,descripcion.ilike.%${q}%`)
+    .order('fecha_deposito', { ascending: false })
+    .limit(10);
+
+  if (!movs?.length) {
+    res.innerHTML = '<p style="font-size:12px;color:var(--color-texto-suave);margin:4px 0">Sin resultados para ese criterio.</p>';
+    return;
+  }
+
+  res.innerHTML = movs.map(m => {
+    const estadoBadge = m.entrega_doc === 'EMITIDO'
+      ? '<span style="background:#2F855A;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700">EMITIDO</span>'
+      : m.entrega_doc === 'PENDIENTE'
+        ? '<span style="background:#C53030;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700">PENDIENTE</span>'
+        : `<span style="background:#718096;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700">${escapar(m.entrega_doc||'')}</span>`;
+    return `
+    <div style="border:1px solid var(--color-borde);border-radius:6px;padding:8px 10px;margin-bottom:6px;
+      display:flex;align-items:center;gap:10px;background:var(--color-bg-card)">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span style="font-family:monospace;font-size:11px;font-weight:600;color:var(--color-secundario)">${escapar(m.nro_operacion_bancaria||'—')}</span>
+          ${estadoBadge}
+          <span style="font-size:11px;color:var(--color-texto-suave)">${m.fecha_deposito||''}</span>
+        </div>
+        <div style="font-size:12px;margin-top:2px">${escapar((m.proveedor_empresa_personal||m.descripcion||'—').slice(0,45))}</div>
+      </div>
+      <div style="flex-shrink:0;text-align:right">
+        <div style="font-weight:700;color:${Number(m.monto||0)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda?formatearMoneda(m.monto,m.moneda||'PEN'):'S/'+Number(m.monto||0).toFixed(2)}</div>
+        <button data-bm2m-id="${m.id}" data-bm2m-nrop="${escapar(m.nro_operacion_bancaria||'')}"
+          style="margin-top:4px;padding:3px 10px;background:var(--color-secundario);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font);font-weight:600">
+          🔗 Vincular
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+
+  res.querySelectorAll('[data-bm2m-id]').forEach(btn => {
+    btn.onclick = async () => {
+      const movId = btn.dataset.bm2mId;
+      const nrop  = btn.dataset.bm2mNrop;
+      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd');
+      mostrarToast(`✓ Movimiento ${nrop} vinculado a ${nDoc}`, 'exito');
       overlay.remove();
     };
   });
