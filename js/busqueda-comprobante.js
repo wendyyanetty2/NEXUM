@@ -383,18 +383,20 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
 
   if (desde) q = q.gte('fecha_deposito', desde);
   if (hasta) q = q.lte('fecha_deposito', hasta);
-  if (nat)   q = q.eq('naturaleza', nat);
 
-  const { data, error } = await q.limit(100);
+  const { data, error } = await q.limit(200);
   if (error) {
     resEl.innerHTML = `<p style="color:var(--color-critico);padding:16px">Error: ${escapar(error.message)}</p>`;
     return;
   }
 
   let filtrados = (data || []).filter(m => {
-    const absM = Math.abs(Number(m.monto||0));
+    const monto = Number(m.monto||0);
+    const absM = Math.abs(monto);
     if (montoMin > 0 && absM < montoMin) return false;
     if (montoMax > 0 && absM > montoMax) return false;
+    if (nat === 'CARGO'  && monto >= 0) return false;
+    if (nat === 'ABONO'  && monto <  0) return false;
     if (qDesc) {
       const haystack = [(m.descripcion||''),(m.proveedor_empresa_personal||'')].join(' ').toLowerCase();
       if (!haystack.includes(qDesc)) return false;
