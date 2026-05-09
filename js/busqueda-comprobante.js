@@ -247,9 +247,9 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
 async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco) {
   const hoy = new Date().toISOString().slice(0,10);
 
-  // Actualizar movimiento bancario
+  // Actualizar movimiento bancario — OBSERVADO hasta que se confirme en Conciliación
   const updatePayload = {
-    entrega_doc:         'EMITIDO',
+    entrega_doc:         'OBSERVADO',
     estado_conciliacion: 'conciliado',
     nro_factura_doc:     nDoc || null,
     tipo_doc:            docTipo,
@@ -394,7 +394,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
     .from('tesoreria_mbd')
     .select('id,nro_operacion_bancaria,fecha_deposito,descripcion,proveedor_empresa_personal,monto,moneda,entrega_doc')
     .eq('empresa_id', empresa_activa.id)
-    .eq('entrega_doc', 'PENDIENTE')
+    .in('entrega_doc', ['PENDIENTE', 'OBSERVADO'])
     .order('fecha_deposito', { ascending: false });
 
   if (desde) q = q.gte('fecha_deposito', desde);
