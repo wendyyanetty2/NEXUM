@@ -62,8 +62,30 @@ function renderTabRHRecibidas(area) {
   cargarRHRecibidas();
 }
 
-// ── Estado calculado desde rh_movimiento_links ────────────────────
+// ── Estado calculado desde tesoreria_mbd (prioritario) y rh_movimiento_links ──
 async function _estadoCalculado(rh) {
+  const montoNeto = parseFloat(rh.monto_neto || 0);
+
+  // Sistema nuevo: tesoreria_mbd con nro_factura_doc = numero_rh
+  if (rh.numero_rh) {
+    const { data: mbdLinks } = await _supabase
+      .from('tesoreria_mbd')
+      .select('id,monto,moneda,entrega_doc,nro_operacion_bancaria,fecha_deposito')
+      .eq('empresa_id', empresa_activa.id)
+      .eq('tipo_doc', 'RH')
+      .eq('nro_factura_doc', rh.numero_rh);
+
+    const mbdValidos = (mbdLinks || []).filter(l => ['OBSERVADO','EMITIDO'].includes(l.entrega_doc));
+    if (mbdValidos.length > 0) {
+      const montoPagadoMBD = mbdValidos.reduce((s, l) => s + Math.abs(Number(l.monto||0)), 0);
+      if (montoPagadoMBD >= montoNeto - 0.01) {
+        return { estado: 'APLICADO', color: '#2F855A', etiqueta: '✅ APLICADO', links: mbdValidos, confirmados: mbdValidos, esMBD: true };
+      }
+      return { estado: 'PARCIAL', color: '#DD6B20', etiqueta: `🔶 PARCIAL (${formatearMoneda(montoPagadoMBD)})`, links: mbdValidos, confirmados: mbdValidos, montoPagado: montoPagadoMBD, esMBD: true };
+    }
+  }
+
+  // Sistema antiguo: rh_movimiento_links (fallback)
   const { data: links } = await _supabase
     .from('rh_movimiento_links')
     .select('id, nivel_confianza, es_parcial, monto_parcial, confirmado_en, movimiento_id, movimientos(fecha, importe, descripcion, numero_operacion)')
@@ -199,7 +221,7 @@ async function cargarRHRecibidas() {
             <td style="text-align:center;white-space:nowrap">
               ${tienePosible ? `<button onclick="rhConfirmarPosible('${r.id}')" title="Confirmar match posible" style="padding:4px 8px;background:rgba(214,158,46,.2);color:#D69E2E;border:1px solid #D69E2E;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">✓</button>` : ''}
               ${tieneLinks ? `<button onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Ver movimientos vinculados" style="padding:4px 8px;background:rgba(44,82,130,.1);color:#3182CE;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">🔗</button>` : ''}
-              <button onclick="rhVincularManual('${r.id}','${escapar(nombre)}')" title="Vincular manualmente" style="padding:4px 8px;background:rgba(44,82,130,.05);color:var(--color-texto-suave);border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">🔍</button>
+              <button onclick="_bmBuscarMov('RH','${r.id}','${escapar(r.numero_rh||'')}','${escapar(nombre)}',${Number(r.monto_neto||0)},'${r.fecha_emision||''}')" title="Buscar y vincular operación(es) bancaria(s)" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px;margin-right:2px">🔍</button>
               <button onclick="abrirModalRHR('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
               <button onclick="eliminarRHR('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
             </td>

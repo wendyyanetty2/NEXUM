@@ -61,7 +61,7 @@ async function renderTabMovimientos(area) {
           <div>
             <label class="label-filtro">Buscar</label>
             <input type="text" id="mov-buscar" oninput="filtrarMovimientos()" class="input-buscar w-full"
-                   placeholder="Descripción, proveedor, 15/01/2026…">
+                   placeholder="Buscar en cualquier columna…">
           </div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -200,9 +200,14 @@ function filtrarMovimientos() {
         if (!_fechaCoincide(r.fecha_deposito, fechaFiltro)) return false;
       } else {
         // Búsqueda de texto normal
-        const haystack = [r.nro_operacion_bancaria,r.descripcion,r.proveedor_empresa_personal,
-          r.ruc_dni,r.concepto,r.empresa,r.proyecto,r.nro_factura_doc,r.autorizacion,r.observaciones]
-          .map(v=>(v||'').toLowerCase()).join(' ');
+        const haystack = [
+          r.nro_operacion_bancaria, r.descripcion, r.proveedor_empresa_personal,
+          r.ruc_dni, r.concepto, r.empresa, r.proyecto, r.nro_factura_doc,
+          r.autorizacion, r.observaciones, r.observaciones_2,
+          r.cotizacion, r.oc, r.moneda, r.entrega_doc, r.tipo_doc,
+          r.detalles_compra_servicio,
+          r.monto != null ? String(r.monto) : ''
+        ].map(v=>(v||'').toLowerCase()).join(' ');
         if (!haystack.includes(q)) return false;
       }
     }

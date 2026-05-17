@@ -280,6 +280,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
   if (typeof cargarListaPlanillas === 'function')  cargarListaPlanillas();
   if (typeof cargarCompras === 'function')         cargarCompras();
   if (typeof cargarVentas  === 'function')         cargarVentas();
+  if (typeof cargarRHRecibidas === 'function')     cargarRHRecibidas();
   if (typeof _concCargarDatos === 'function')      _concCargarDatos();
 }
 
@@ -296,6 +297,13 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
     `${docTipo === 'PM' ? '🚗' : docTipo === 'RH' ? '🧾' : docTipo === 'VENTA' ? '📄' : '🛒'} ${nDoc} · ${proveedor || ''} · ${formatearMoneda ? formatearMoneda(total) : 'S/ '+Number(total).toFixed(2)}`,
     docTipo === 'VENTA' ? '#276749' : docTipo === 'RH' ? '#744210' : docTipo === 'PM' ? '#553C9A' : '#2C5282'
   ) + `
+    ${docTipo === 'RH' ? `
+    <div id="bm2-links-rh" style="padding:10px 16px;background:rgba(44,82,130,.06);border-bottom:1px solid var(--color-borde);flex-shrink:0;max-height:130px;overflow-y:auto">
+      <div style="font-size:11px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">
+        Operaciones bancarias ya vinculadas — <span id="bm2-links-count" style="color:var(--color-secundario)">…</span>
+      </div>
+      <div id="bm2-links-lista" style="font-size:12px;color:var(--color-texto-suave);font-style:italic">Cargando…</div>
+    </div>` : ''}
     ${_bmFiltroWrap(`
       <div>
         <label style="font-size:11px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">Descripción / Proveedor</label>
@@ -349,6 +357,13 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
       </div>
       <div id="bm2-manual-res" style="margin-top:8px"></div>
     </div>
+    ${docTipo === 'RH' ? `
+    <div style="border-top:1px solid var(--color-borde);padding:10px 16px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;background:var(--color-bg-card)">
+      <span id="bm2-rh-total" style="font-size:12px;color:var(--color-texto-suave)"></span>
+      <button id="bm2-btn-cerrar-rh" style="padding:8px 22px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:600">
+        ✓ Cerrar
+      </button>
+    </div>` : ''}
     </div>`;
 
   overlay.querySelectorAll('[data-bm-close]').forEach(b => b.onclick = () => overlay.remove());
@@ -373,6 +388,15 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
   const doManual = () => _bmBuscarMovManual(overlay, docTipo, docId, nDoc);
   overlay.querySelector('#bm2-manual-btn').onclick = doManual;
   overlay.querySelector('#bm2-manual-q')?.addEventListener('keydown', e => { if(e.key==='Enter') doManual(); });
+
+  // RH: cargar links existentes y manejar cierre
+  if (docTipo === 'RH') {
+    _bmCargarLinksRH(overlay, nDoc);
+    overlay.querySelector('#bm2-btn-cerrar-rh')?.addEventListener('click', () => {
+      overlay.remove();
+      if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
+    });
+  }
 
   // Auto-buscar al abrir si hay datos
   if (montoRef || proveedor) setTimeout(doSearch, 100);
@@ -458,9 +482,17 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
     btn.onclick = async () => {
       const movId = btn.dataset.movid;
       const nrop  = btn.dataset.nrop;
+      btn.disabled = true;
+      btn.textContent = '…';
       await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd');
       mostrarToast(`✓ Movimiento ${nrop} vinculado al comprobante ${nDoc}`, 'exito');
-      overlay.remove();
+      if (docTipo === 'RH') {
+        btn.textContent = '✓ Vinculado';
+        btn.style.background = '#2F855A';
+        _bmCargarLinksRH(overlay, nDoc);
+      } else {
+        overlay.remove();
+      }
     };
   });
 }
@@ -515,11 +547,56 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
     btn.onclick = async () => {
       const movId = btn.dataset.bm2mId;
       const nrop  = btn.dataset.bm2mNrop;
+      btn.disabled = true;
+      btn.textContent = '…';
       await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd');
       mostrarToast(`✓ Movimiento ${nrop} vinculado a ${nDoc}`, 'exito');
-      overlay.remove();
+      if (docTipo === 'RH') {
+        btn.textContent = '✓ Vinculado';
+        btn.style.background = '#2F855A';
+        _bmCargarLinksRH(overlay, nDoc);
+      } else {
+        overlay.remove();
+      }
     };
   });
+}
+
+// ── Panel de operaciones vinculadas (RH multi-link) ───────────────
+async function _bmCargarLinksRH(overlay, numeroRH) {
+  const el  = overlay.querySelector('#bm2-links-lista');
+  const cnt = overlay.querySelector('#bm2-links-count');
+  const tot = overlay.querySelector('#bm2-rh-total');
+  if (!el || !numeroRH) return;
+
+  const { data: links } = await _supabase
+    .from('tesoreria_mbd')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .eq('tipo_doc', 'RH')
+    .eq('nro_factura_doc', numeroRH)
+    .order('fecha_deposito', { ascending: false });
+
+  if (!links?.length) {
+    el.innerHTML = '<span style="font-style:italic;font-size:12px">Sin operaciones vinculadas aún.</span>';
+    if (cnt) cnt.textContent = '0 operaciones';
+    if (tot) tot.textContent = '';
+    return;
+  }
+
+  const totalAbs = links.reduce((s, l) => s + Math.abs(Number(l.monto||0)), 0);
+  if (cnt) cnt.textContent = `${links.length} operación(es)`;
+  if (tot) tot.textContent = `Total vinculado: ${formatearMoneda ? formatearMoneda(totalAbs) : 'S/ '+totalAbs.toFixed(2)}`;
+
+  el.innerHTML = links.map(l => {
+    const badgeColor = l.entrega_doc === 'EMITIDO' ? '#2F855A' : l.entrega_doc === 'OBSERVADO' ? '#744210' : '#718096';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0">
+      <span style="font-family:monospace;font-size:11px;color:var(--color-secundario);font-weight:600">${escapar(l.nro_operacion_bancaria||'—')}</span>
+      <span style="font-size:11px;color:var(--color-texto-suave)">${l.fecha_deposito||''}</span>
+      <span style="font-weight:700;font-size:12px;color:${Number(l.monto||0)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda?formatearMoneda(l.monto,l.moneda||'PEN'):'S/'+Number(l.monto||0).toFixed(2)}</span>
+      <span style="font-size:10px;background:${badgeColor};color:#fff;padding:1px 5px;border-radius:8px;font-weight:600">${escapar(l.entrega_doc||'')}</span>
+    </div>`;
+  }).join('');
 }
 
 // ── Helpers de fecha ──────────────────────────────────────────────
