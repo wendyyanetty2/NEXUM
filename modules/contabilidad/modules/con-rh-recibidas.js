@@ -190,7 +190,7 @@ async function cargarRHRecibidas() {
     <table class="tabla-nexum">
       <thead><tr>
         <th>Fecha</th><th>N° RH</th><th>N° Doc</th>
-        <th>Emisor</th><th>Concepto</th><th>Mon.</th>
+        <th>Emisor</th><th>Concepto</th><th>Observaciones</th><th>Mon.</th>
         <th style="text-align:right">Renta Bruta</th>
         <th style="text-align:right">Retención</th>
         <th style="text-align:right">Renta Neta</th>
@@ -211,6 +211,7 @@ async function cargarRHRecibidas() {
             <td>${escapar(docNum)}</td>
             <td>${escapar(truncar(nombre,25))}</td>
             <td>${escapar(truncar(r.concepto||'—',28))}</td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--color-texto-suave)" title="${escapar(r.observaciones||'')}">${escapar(r.observaciones||'—')}</td>
             <td>${escapar(r.moneda||'PEN')}</td>
             <td style="text-align:right">${formatearMoneda(r.monto_bruto, mon)}</td>
             <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.monto_retencion, mon)}</td>
