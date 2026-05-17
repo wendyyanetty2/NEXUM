@@ -345,7 +345,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
     <div id="bm2-resultados" style="flex:1;overflow-y:auto;padding:12px 16px;font-size:12px;color:var(--color-texto-suave)">
       <p style="text-align:center;padding:20px">Presiona Buscar para encontrar movimientos bancarios…</p>
     </div>
-    <div style="border-top:1px solid var(--color-borde);padding:12px 16px;flex-shrink:0;background:var(--color-bg-card)">
+    <div style="border-top:1px solid var(--color-borde);padding:10px 16px 0;flex-shrink:0;background:var(--color-bg-card)">
       <p style="font-size:12px;color:var(--color-texto-suave);margin:0 0 8px 0">¿No encuentras el movimiento? Búsqueda manual:</p>
       <div style="display:flex;gap:8px">
         <input type="text" id="bm2-manual-q" placeholder="N° operación o proveedor"
@@ -355,7 +355,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
           🔍 Buscar
         </button>
       </div>
-      <div id="bm2-manual-res" style="margin-top:8px"></div>
+      <div id="bm2-manual-res" style="margin-top:8px;max-height:280px;overflow-y:auto;padding-bottom:10px"></div>
     </div>
     ${docTipo === 'RH' ? `
     <div style="border-top:1px solid var(--color-borde);padding:10px 16px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;background:var(--color-bg-card)">
