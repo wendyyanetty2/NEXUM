@@ -193,7 +193,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     if (qProv && ![(d._prov||''),(d._ruc||'')].join(' ').toLowerCase().includes(qProv)) return false;
     if (qMonto > 0 && Math.abs(Number(d._total||0) - qMonto) > 1) return false;
     return true;
-  }).slice(0, 20);
+  }).slice(0, 100);
 
   if (!filtrados.length) {
     resEl.innerHTML = '<p style="text-align:center;padding:24px;color:var(--color-texto-suave)">Sin resultados. Ajusta los filtros.</p>';
@@ -442,7 +442,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
       if (!haystack.includes(qDesc)) return false;
     }
     return true;
-  }).slice(0, 20);
+  }).slice(0, 100);
 
   if (!filtrados.length) {
     resEl.innerHTML = '<p style="text-align:center;padding:24px;color:var(--color-texto-suave)">Sin movimientos bancarios para los filtros indicados.<br><small>Prueba ampliar el rango de fechas o monto.</small></p>';
@@ -509,7 +509,7 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
     .eq('empresa_id', empresa_activa.id)
     .or(`nro_operacion_bancaria.ilike.%${q}%,proveedor_empresa_personal.ilike.%${q}%,descripcion.ilike.%${q}%`)
     .order('fecha_deposito', { ascending: false })
-    .limit(10);
+    .limit(200);
 
   if (!movs?.length) {
     res.innerHTML = '<p style="font-size:12px;color:var(--color-texto-suave);margin:4px 0">Sin resultados para ese criterio.</p>';
