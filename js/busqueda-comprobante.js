@@ -268,10 +268,14 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     }
   }
 
+  // Para RH usamos el UUID del registro (docId) como clave única en nro_factura_doc,
+  // ya que varios emisores distintos pueden compartir el mismo número (ej. E001-18).
+  const nroFacturaKey = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
+
   const updatePayload = {
     entrega_doc:         entregaDoc,
     estado_conciliacion: 'conciliado',
-    nro_factura_doc:     nDoc || null,
+    nro_factura_doc:     nroFacturaKey,
     tipo_doc:            docTipo,
     fecha_actualizacion: hoy,
   };
@@ -407,8 +411,11 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
   overlay.querySelector('#bm2-manual-btn').onclick = doManual;
   overlay.querySelector('#bm2-manual-q')?.addEventListener('keydown', e => { if(e.key==='Enter') doManual(); });
 
+  // Para RH la clave en BD es el UUID (docId), no el numero visible (nDoc)
+  const docKey = docTipo === 'RH' ? docId : nDoc;
+
   // Cargar links existentes y manejar cierre (todos los tipos)
-  _bmCargarLinks(overlay, nDoc, docTipo);
+  _bmCargarLinks(overlay, docKey, docTipo);
   overlay.querySelector('#bm2-btn-cerrar')?.addEventListener('click', () => {
     overlay.remove();
     if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
@@ -507,7 +514,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
         btn.style.background = '#2F855A';
-        _bmCargarLinks(overlay, nDoc, docTipo);
+        _bmCargarLinks(overlay, docTipo === 'RH' ? docId : nDoc, docTipo);
       } else {
         overlay.remove();
       }
@@ -572,7 +579,7 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
         btn.style.background = '#2F855A';
-        _bmCargarLinks(overlay, nDoc, docTipo);
+        _bmCargarLinks(overlay, docTipo === 'RH' ? docId : nDoc, docTipo);
       } else {
         overlay.remove();
       }

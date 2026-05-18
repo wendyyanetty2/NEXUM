@@ -66,14 +66,15 @@ function renderTabRHRecibidas(area) {
 async function _estadoCalculado(rh) {
   const montoNeto = parseFloat(rh.monto_neto || 0);
 
-  // Sistema nuevo: tesoreria_mbd con nro_factura_doc = numero_rh
-  if (rh.numero_rh) {
+  // Sistema nuevo: tesoreria_mbd usa rh.id (UUID) como clave única en nro_factura_doc.
+  // No usamos numero_rh porque distintos emisores pueden tener el mismo número (ej. E001-18).
+  {
     const { data: mbdLinks } = await _supabase
       .from('tesoreria_mbd')
       .select('id,monto,moneda,entrega_doc,nro_operacion_bancaria,fecha_deposito')
       .eq('empresa_id', empresa_activa.id)
       .eq('tipo_doc', 'RH')
-      .eq('nro_factura_doc', rh.numero_rh);
+      .eq('nro_factura_doc', rh.id);
 
     const mbdValidos = (mbdLinks || []).filter(l => ['OBSERVADO','EMITIDO'].includes(l.entrega_doc));
     if (mbdValidos.length > 0) {
