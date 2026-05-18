@@ -754,29 +754,40 @@ async function _confirmarDividirMBD() {
   if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
 
   // Construir las N filas hijas
-  const nuevasFilas = _dividirFilas.map((f, i) => ({
-    empresa_id:                 r.empresa_id,
-    nro_operacion_bancaria:     r.nro_operacion_bancaria,
-    fecha_deposito:             r.fecha_deposito,
-    moneda:                     r.moneda,
-    monto:                      parseFloat(f.monto),
-    descripcion:                (r.descripcion || '') + (n > 1 ? ` (${i+1}/${n})` : ''),
-    proveedor_empresa_personal: f.proveedor || r.proveedor_empresa_personal || null,
-    ruc_dni:                    f.ruc || null,
-    tipo_doc:                   f.tipodoc,
-    nro_factura_doc:            f.nrodoc,
-    entrega_doc:                'EMITIDO',
-    concepto:                   r.concepto,
-    empresa:                    r.empresa,
-    proyecto:                   r.proyecto,
-    autorizacion:               r.autorizacion,
-    cotizacion:                 r.cotizacion,
-    oc:                         r.oc,
-    observaciones:              r.observaciones,
-    detalles_compra_servicio:   r.detalles_compra_servicio,
-    observaciones_2:            r.observaciones_2,
-    fecha_actualizacion:        new Date().toISOString(),
-  }));
+  const _ok = v => !!(v && String(v).trim());
+  const nuevasFilas = _dividirFilas.map((f, i) => {
+    const proveedor = f.proveedor || r.proveedor_empresa_personal || null;
+    const cotizacion = r.cotizacion;
+    const oc = r.oc;
+    const proyecto = r.proyecto;
+    const concepto = r.concepto;
+    const empresa = r.empresa;
+    const estadoDoc = (_ok(proveedor) && (_ok(cotizacion) || _ok(oc)) && _ok(proyecto) && _ok(concepto) && _ok(empresa))
+      ? 'EMITIDO' : 'OBSERVADO';
+    return {
+      empresa_id:                 r.empresa_id,
+      nro_operacion_bancaria:     r.nro_operacion_bancaria,
+      fecha_deposito:             r.fecha_deposito,
+      moneda:                     r.moneda,
+      monto:                      parseFloat(f.monto),
+      descripcion:                (r.descripcion || '') + (n > 1 ? ` (${i+1}/${n})` : ''),
+      proveedor_empresa_personal: proveedor,
+      ruc_dni:                    f.ruc || null,
+      tipo_doc:                   f.tipodoc,
+      nro_factura_doc:            f.nrodoc,
+      entrega_doc:                estadoDoc,
+      concepto,
+      empresa,
+      proyecto,
+      autorizacion:               r.autorizacion,
+      cotizacion,
+      oc,
+      observaciones:              r.observaciones,
+      detalles_compra_servicio:   r.detalles_compra_servicio,
+      observaciones_2:            r.observaciones_2,
+      fecha_actualizacion:        new Date().toISOString(),
+    };
+  });
 
   // 1. Insertar las filas nuevas
   const { error: errIns } = await _supabase.from('tesoreria_mbd').insert(nuevasFilas);
@@ -795,7 +806,7 @@ async function _confirmarDividirMBD() {
     return;
   }
 
-  mostrarToast(`✅ Transferencia dividida en ${n} comprobantes registrados como EMITIDO.`, 'exito');
+  mostrarToast(`✅ Transferencia dividida en ${n} comprobantes. Estado asignado según completitud de campos.`, 'exito');
   _cerrarModalDividir();
   cargarMBD();
 }
