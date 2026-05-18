@@ -245,18 +245,36 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
 }
 
 async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco) {
-  const hoy = new Date().toISOString().slice(0,10);
+  const hoy   = new Date().toISOString().slice(0,10);
+  const tabla = tablaBanco || 'tesoreria_mbd';
 
-  // Actualizar movimiento bancario — OBSERVADO hasta que se confirme en Conciliación
+  // Para RH (y en general): determinar estado según campos completos en tesoreria_mbd
+  let entregaDoc = 'OBSERVADO';
+  if (tabla === 'tesoreria_mbd') {
+    const { data: mov } = await _supabase
+      .from('tesoreria_mbd')
+      .select('proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa')
+      .eq('id', movBancoId)
+      .single();
+    if (mov) {
+      const tieneProveedor  = !!(mov.proveedor_empresa_personal?.trim());
+      const tieneCotOC      = !!(mov.cotizacion?.trim() || mov.oc?.trim());
+      const tieneProyecto   = !!(mov.proyecto?.trim());
+      const tieneConcepto   = !!(mov.concepto?.trim());
+      const tieneEmpresa    = !!(mov.empresa?.trim());
+      entregaDoc = (tieneProveedor && tieneCotOC && tieneProyecto && tieneConcepto && tieneEmpresa)
+        ? 'EMITIDO' : 'OBSERVADO';
+    }
+  }
+
   const updatePayload = {
-    entrega_doc:         'OBSERVADO',
+    entrega_doc:         entregaDoc,
     estado_conciliacion: 'conciliado',
     nro_factura_doc:     nDoc || null,
     tipo_doc:            docTipo,
     fecha_actualizacion: hoy,
   };
 
-  const tabla = tablaBanco || 'tesoreria_mbd';
   const { error: errMov } = await _supabase.from(tabla).update(updatePayload).eq('id', movBancoId);
   if (errMov) { mostrarToast('Error al vincular: ' + errMov.message, 'error'); return; }
 
@@ -274,7 +292,8 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     }).maybeSingle();
   }
 
-  mostrarToast('✓ Comprobante vinculado correctamente', 'exito');
+  const estadoLabel = entregaDoc === 'EMITIDO' ? '✓ Vinculado y EMITIDO' : '✓ Vinculado (OBSERVADO — faltan campos)';
+  mostrarToast(estadoLabel, 'exito');
 
   // Refrescar lista si hay función disponible
   if (typeof cargarListaPlanillas === 'function')  cargarListaPlanillas();
