@@ -23,6 +23,7 @@ function renderTabCompras(area) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="_conciliarLoteCompras()" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔗 Conciliar con banco</button>
+          <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔄 Consolidar estados</button>
           <button onclick="exportarExcelCompras()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar PLE</button>
           <button onclick="document.getElementById('c-sunat-file').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📊 Importar SUNAT</button>
           <input type="file" id="c-sunat-file" accept=".xlsx,.xls" style="display:none" onchange="_cSunatHandleFile(this)">
