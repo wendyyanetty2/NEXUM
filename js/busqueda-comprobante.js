@@ -13,6 +13,7 @@
 // ── Utilidad interna ──────────────────────────────────────────────
 function _bmOverlay() {
   const el = document.createElement('div');
+  el.id = 'bm2-overlay-modal';
   el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9998;padding:12px';
   document.body.appendChild(el);
   el.addEventListener('click', e => { if (e.target === el) el.remove(); });
@@ -316,13 +317,12 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
     `${docTipo === 'PM' ? '🚗' : docTipo === 'RH' ? '🧾' : docTipo === 'VENTA' ? '📄' : '🛒'} ${nDoc} · ${proveedor || ''} · ${formatearMoneda ? formatearMoneda(total) : 'S/ '+Number(total).toFixed(2)}`,
     docTipo === 'VENTA' ? '#276749' : docTipo === 'RH' ? '#744210' : docTipo === 'PM' ? '#553C9A' : '#2C5282'
   ) + `
-    ${docTipo === 'RH' ? `
-    <div id="bm2-links-rh" style="padding:10px 16px;background:rgba(44,82,130,.06);border-bottom:1px solid var(--color-borde);flex-shrink:0;max-height:130px;overflow-y:auto">
+    <div id="bm2-links-panel" style="padding:10px 16px;background:rgba(44,82,130,.06);border-bottom:1px solid var(--color-borde);flex-shrink:0;max-height:140px;overflow-y:auto">
       <div style="font-size:11px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">
         Operaciones bancarias ya vinculadas — <span id="bm2-links-count" style="color:var(--color-secundario)">…</span>
       </div>
       <div id="bm2-links-lista" style="font-size:12px;color:var(--color-texto-suave);font-style:italic">Cargando…</div>
-    </div>` : ''}
+    </div>
     ${_bmFiltroWrap(`
       <div>
         <label style="font-size:11px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">Descripción / Proveedor</label>
@@ -376,13 +376,12 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
       </div>
       <div id="bm2-manual-res" style="margin-top:8px;max-height:280px;overflow-y:auto;padding-bottom:10px"></div>
     </div>
-    ${docTipo === 'RH' ? `
     <div style="border-top:1px solid var(--color-borde);padding:10px 16px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;background:var(--color-bg-card)">
-      <span id="bm2-rh-total" style="font-size:12px;color:var(--color-texto-suave)"></span>
-      <button id="bm2-btn-cerrar-rh" style="padding:8px 22px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:600">
+      <span id="bm2-links-total" style="font-size:12px;color:var(--color-texto-suave)"></span>
+      <button id="bm2-btn-cerrar" style="padding:8px 22px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:600">
         ✓ Cerrar
       </button>
-    </div>` : ''}
+    </div>
     </div>`;
 
   overlay.querySelectorAll('[data-bm-close]').forEach(b => b.onclick = () => overlay.remove());
@@ -408,14 +407,14 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
   overlay.querySelector('#bm2-manual-btn').onclick = doManual;
   overlay.querySelector('#bm2-manual-q')?.addEventListener('keydown', e => { if(e.key==='Enter') doManual(); });
 
-  // RH: cargar links existentes y manejar cierre
-  if (docTipo === 'RH') {
-    _bmCargarLinksRH(overlay, nDoc);
-    overlay.querySelector('#bm2-btn-cerrar-rh')?.addEventListener('click', () => {
-      overlay.remove();
-      if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
-    });
-  }
+  // Cargar links existentes y manejar cierre (todos los tipos)
+  _bmCargarLinks(overlay, nDoc, docTipo);
+  overlay.querySelector('#bm2-btn-cerrar')?.addEventListener('click', () => {
+    overlay.remove();
+    if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
+    if (typeof cargarCompras     === 'function') cargarCompras();
+    if (typeof cargarVentas      === 'function') cargarVentas();
+  });
 
   // Auto-buscar al abrir si hay datos
   if (montoRef || proveedor) setTimeout(doSearch, 100);
@@ -508,7 +507,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
         btn.style.background = '#2F855A';
-        _bmCargarLinksRH(overlay, nDoc);
+        _bmCargarLinks(overlay, nDoc, docTipo);
       } else {
         overlay.remove();
       }
@@ -573,7 +572,7 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
         btn.style.background = '#2F855A';
-        _bmCargarLinksRH(overlay, nDoc);
+        _bmCargarLinks(overlay, nDoc, docTipo);
       } else {
         overlay.remove();
       }
@@ -581,19 +580,19 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
   });
 }
 
-// ── Panel de operaciones vinculadas (RH multi-link) ───────────────
-async function _bmCargarLinksRH(overlay, numeroRH) {
+// ── Panel de operaciones ya vinculadas (todos los tipos) ─────────
+async function _bmCargarLinks(overlay, nDoc, docTipo) {
   const el  = overlay.querySelector('#bm2-links-lista');
   const cnt = overlay.querySelector('#bm2-links-count');
-  const tot = overlay.querySelector('#bm2-rh-total');
-  if (!el || !numeroRH) return;
+  const tot = overlay.querySelector('#bm2-links-total');
+  if (!el || !nDoc) return;
 
   const { data: links } = await _supabase
     .from('tesoreria_mbd')
     .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc')
     .eq('empresa_id', empresa_activa.id)
-    .eq('tipo_doc', 'RH')
-    .eq('nro_factura_doc', numeroRH)
+    .eq('tipo_doc', docTipo)
+    .eq('nro_factura_doc', nDoc)
     .order('fecha_deposito', { ascending: false });
 
   if (!links?.length) {
@@ -609,13 +608,48 @@ async function _bmCargarLinksRH(overlay, numeroRH) {
 
   el.innerHTML = links.map(l => {
     const badgeColor = l.entrega_doc === 'EMITIDO' ? '#2F855A' : l.entrega_doc === 'OBSERVADO' ? '#744210' : '#718096';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0">
+    return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)">
       <span style="font-family:monospace;font-size:11px;color:var(--color-secundario);font-weight:600">${escapar(l.nro_operacion_bancaria||'—')}</span>
       <span style="font-size:11px;color:var(--color-texto-suave)">${l.fecha_deposito||''}</span>
       <span style="font-weight:700;font-size:12px;color:${Number(l.monto||0)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda?formatearMoneda(l.monto,l.moneda||'PEN'):'S/'+Number(l.monto||0).toFixed(2)}</span>
       <span style="font-size:10px;background:${badgeColor};color:#fff;padding:1px 5px;border-radius:8px;font-weight:600">${escapar(l.entrega_doc||'')}</span>
+      <button onclick="_bmDesvincularmovLink('${l.id}','${escapar(nDoc)}','${docTipo}')"
+        title="Desvincular esta operación"
+        style="margin-left:auto;padding:2px 8px;background:rgba(197,48,48,.12);color:#C53030;border:1px solid rgba(197,48,48,.3);border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font);flex-shrink:0">
+        🔓
+      </button>
     </div>`;
   }).join('');
+}
+
+// ── Desvincular operación bancaria de un comprobante ─────────────
+async function _bmDesvincularmovLink(movId, nDoc, docTipo) {
+  const ok = await confirmar(
+    `¿Desvincular este movimiento del comprobante ${nDoc}? Volverá a estado PENDIENTE.`,
+    { btnOk: 'Desvincular', btnColor: '#C53030' }
+  );
+  if (!ok) return;
+
+  const { error } = await _supabase.from('tesoreria_mbd').update({
+    entrega_doc:         'PENDIENTE',
+    nro_factura_doc:     null,
+    tipo_doc:            null,
+    estado_conciliacion: null,
+    fecha_actualizacion: new Date().toISOString().slice(0, 10),
+  }).eq('id', movId);
+
+  if (error) { mostrarToast('Error al desvincular: ' + error.message, 'error'); return; }
+  mostrarToast('✅ Operación desvinculada correctamente', 'exito');
+
+  // Refrescar panel dentro del modal
+  const overlayEl = document.getElementById('bm2-overlay-modal');
+  if (overlayEl) _bmCargarLinks(overlayEl, nDoc, docTipo);
+
+  // Refrescar listas
+  if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
+  if (typeof cargarCompras     === 'function') cargarCompras();
+  if (typeof cargarVentas      === 'function') cargarVentas();
+  if (typeof _concCargarDatos  === 'function') _concCargarDatos();
 }
 
 // ── Helpers de fecha ──────────────────────────────────────────────
