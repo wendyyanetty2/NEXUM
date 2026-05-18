@@ -154,6 +154,18 @@ async function cargarMovimientos() {
   movimientos_lista = data || [];
   movimientos_pag   = 1;
   mov_seleccionados = new Set();
+
+  // Resolver UUID → numero_rh para movimientos vinculados a RH
+  const rhIds = (data || [])
+    .filter(r => r.tipo_doc === 'RH' && r.nro_factura_doc)
+    .map(r => r.nro_factura_doc);
+  window._rhUuidMap = {};
+  if (rhIds.length) {
+    const { data: rhData } = await _supabase
+      .from('rh_registros').select('id,numero_rh').in('id', rhIds);
+    (rhData || []).forEach(rh => { window._rhUuidMap[rh.id] = rh.numero_rh; });
+  }
+
   _movActualizarBarra();
   filtrarMovimientos();
 }
@@ -200,9 +212,11 @@ function filtrarMovimientos() {
         if (!_fechaCoincide(r.fecha_deposito, fechaFiltro)) return false;
       } else {
         // Búsqueda de texto normal
+        const nroDocDisplay = (r.tipo_doc === 'RH' && window._rhUuidMap?.[r.nro_factura_doc])
+          || r.nro_factura_doc;
         const haystack = [
           r.nro_operacion_bancaria, r.descripcion, r.proveedor_empresa_personal,
-          r.ruc_dni, r.concepto, r.empresa, r.proyecto, r.nro_factura_doc,
+          r.ruc_dni, r.concepto, r.empresa, r.proyecto, nroDocDisplay,
           r.autorizacion, r.observaciones, r.observaciones_2,
           r.cotizacion, r.oc, r.moneda, r.entrega_doc, r.tipo_doc,
           r.detalles_compra_servicio,
@@ -291,7 +305,7 @@ function renderTablaMovimientos() {
         <td style="${_TD}">
           <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBg[est]||'#718096'};color:#fff;white-space:nowrap">${est}</span>
         </td>
-        <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.nro_factura_doc||'—')}</td>
+        <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar((r.tipo_doc==='RH'&&window._rhUuidMap?.[r.nro_factura_doc])||r.nro_factura_doc||'—')}</td>
         <td style="${_TD}text-align:center">
           ${r.tipo_doc?`<span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(r.tipo_doc)}</span>`:'—'}
         </td>
@@ -432,7 +446,7 @@ async function exportarMovimientosExcel() {
     r.concepto || null,
     r.empresa || null,
     r.entrega_doc || 'PENDIENTE',
-    r.nro_factura_doc || null,
+    (r.tipo_doc === 'RH' && window._rhUuidMap?.[r.nro_factura_doc]) || r.nro_factura_doc || null,
     r.tipo_doc || null,
     r.autorizacion || null,
     r.observaciones || null,
