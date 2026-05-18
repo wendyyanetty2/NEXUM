@@ -494,13 +494,15 @@ async function _dashCargarProgreso() {
   const anio = document.getElementById('dash-anio')?.value;
   if (!mes || !anio || !empresa_activa) return;
 
-  const periodo = `${anio}-${mes}`;
+  const desde = `${anio}-${String(mes).padStart(2,'0')}-01`;
+  const hasta  = `${anio}-${String(mes).padStart(2,'0')}-${new Date(anio, mes, 0).getDate()}`;
 
   const { data: filas } = await _supabase
     .from('tesoreria_mbd')
     .select('entrega_doc')
     .eq('empresa_id', empresa_activa.id)
-    .like('fecha_deposito', `${periodo}%`);
+    .gte('fecha_deposito', desde)
+    .lte('fecha_deposito', hasta);
 
   const card    = document.getElementById('dashboard-progreso-mes');
   const pctEl   = document.getElementById('dash-prog-pct');
