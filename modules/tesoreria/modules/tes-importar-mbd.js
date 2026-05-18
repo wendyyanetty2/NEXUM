@@ -318,6 +318,14 @@ async function abrirModalMBD(id = null) {
     item = data;
   }
 
+  // Resolver UUID → número legible para tipo RH
+  let _nroFacturaDisplay = item?.nro_factura_doc || '';
+  let _nroFacturaIsRhUuid = false;
+  if (item?.tipo_doc === 'RH' && item?.nro_factura_doc && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(item.nro_factura_doc)) {
+    const { data: rhReg } = await _supabase.from('rh_registros').select('numero_rh').eq('id', item.nro_factura_doc).single();
+    if (rhReg?.numero_rh) { _nroFacturaDisplay = rhReg.numero_rh; _nroFacturaIsRhUuid = true; }
+  }
+
   const nroOps = (item?.nro_operacion_bancaria || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!nroOps.length) nroOps.push('');
 
@@ -409,7 +417,10 @@ async function abrirModalMBD(id = null) {
             </div>
             <div class="campo">
               <label>N° Factura / DOC</label>
-              <input type="text" id="mbd-nro-factura" value="${escapar(item?.nro_factura_doc||'')}" placeholder="Serie-Número">
+              <input type="hidden" id="mbd-nro-factura" value="${escapar(item?.nro_factura_doc||'')}">
+              <input type="text" id="mbd-nro-factura-display" value="${escapar(_nroFacturaDisplay)}"
+                placeholder="Serie-Número"
+                ${_nroFacturaIsRhUuid ? 'readonly style="background:rgba(128,128,128,.08);cursor:default" title="Vinculado a RH — para cambiar usar función de vinculación"' : 'oninput="document.getElementById(\'mbd-nro-factura\').value=this.value"'}>
             </div>
             <div class="campo">
               <label>Autorización</label>
@@ -672,7 +683,7 @@ function _renderModalDividir() {
                 </div>
                 <div class="campo" style="margin:0">
                   <label>Monto (${moneda}) <span style="color:var(--color-critico)">*</span></label>
-                  <input type="number" id="div-monto-${i}" value="${escapar(String(f.monto))}" placeholder="0.00" step="0.01" min="0.01" oninput="_actualizarSumaDividir()" style="text-align:right">
+                  <input type="number" id="div-monto-${i}" value="${escapar(String(f.monto))}" placeholder="0.00" step="0.01" oninput="_actualizarSumaDividir()" style="text-align:right">
                 </div>
                 <div class="campo" style="margin:0;grid-column:span 2">
                   <label>Proveedor / Trabajador / Personal</label>
@@ -734,8 +745,8 @@ async function _confirmarDividirMBD() {
       if (alerta) { alerta.textContent = `Comprobante ${i+1}: ingresa el número del comprobante.`; alerta.classList.add('visible'); }
       return;
     }
-    if (!parseFloat(f.monto) || parseFloat(f.monto) <= 0) {
-      if (alerta) { alerta.textContent = `Comprobante ${i+1}: ingresa un monto válido mayor a cero.`; alerta.classList.add('visible'); }
+    if (!parseFloat(f.monto)) {
+      if (alerta) { alerta.textContent = `Comprobante ${i+1}: ingresa un monto válido distinto de cero.`; alerta.classList.add('visible'); }
       return;
     }
   }
