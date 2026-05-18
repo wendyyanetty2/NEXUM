@@ -66,8 +66,37 @@ function renderTabRHRecibidas(area) {
 async function _estadoCalculado(rh) {
   const montoNeto = parseFloat(rh.monto_neto || 0);
 
-  // Sistema nuevo: tesoreria_mbd usa rh.id (UUID) como clave única en nro_factura_doc.
-  // No usamos numero_rh porque distintos emisores pueden tener el mismo número (ej. E001-18).
+  // Sistema nuevo v2: buscar via conciliaciones.doc_id (UUID) → movimiento_id (tesoreria_mbd).
+  // Esto garantiza unicidad aunque varios emisores compartan el mismo numero_rh.
+  {
+    const { data: concLinks } = await _supabase
+      .from('conciliaciones')
+      .select('movimiento_id')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('doc_tipo', 'RH')
+      .eq('doc_id', rh.id)
+      .eq('estado', 'APROBADO');
+
+    const movIds = (concLinks || []).map(l => l.movimiento_id).filter(Boolean);
+    if (movIds.length > 0) {
+      const { data: mbdLinks } = await _supabase
+        .from('tesoreria_mbd')
+        .select('id,monto,moneda,entrega_doc,nro_operacion_bancaria,fecha_deposito')
+        .eq('empresa_id', empresa_activa.id)
+        .in('id', movIds);
+
+      const mbdValidos = (mbdLinks || []).filter(l => ['OBSERVADO','EMITIDO'].includes(l.entrega_doc));
+      if (mbdValidos.length > 0) {
+        const montoPagadoMBD = mbdValidos.reduce((s, l) => s + Math.abs(Number(l.monto||0)), 0);
+        if (montoPagadoMBD >= montoNeto - 0.01) {
+          return { estado: 'APLICADO', color: '#2F855A', etiqueta: '✅ APLICADO', links: mbdValidos, confirmados: mbdValidos, esMBD: true };
+        }
+        return { estado: 'PARCIAL', color: '#DD6B20', etiqueta: `🔶 PARCIAL (${formatearMoneda(montoPagadoMBD)})`, links: mbdValidos, confirmados: mbdValidos, montoPagado: montoPagadoMBD, esMBD: true };
+      }
+    }
+  }
+
+  // Fallback: nro_factura_doc = UUID (links creados con versión anterior del código).
   {
     const { data: mbdLinks } = await _supabase
       .from('tesoreria_mbd')

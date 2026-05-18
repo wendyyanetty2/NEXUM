@@ -268,9 +268,9 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     }
   }
 
-  // Para RH usamos el UUID del registro (docId) como clave única en nro_factura_doc,
-  // ya que varios emisores distintos pueden compartir el mismo número (ej. E001-18).
-  const nroFacturaKey = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
+  // Guardar siempre el número legible (E001-17) en nro_factura_doc para display.
+  // La unicidad se garantiza via conciliaciones.doc_id = docId (UUID del RH).
+  const nroFacturaKey = nDoc || null;
 
   const updatePayload = {
     entrega_doc:         entregaDoc,
@@ -287,7 +287,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
   if (typeof empresa_activa !== 'undefined' && empresa_activa?.id) {
     await _supabase.from('conciliaciones').insert({
       empresa_operadora_id: empresa_activa.id,
-      movimiento_id:        tabla === 'movimientos' ? movBancoId : null,
+      movimiento_id:        movBancoId,
       doc_tipo:             docTipo,
       doc_id:               docId || null,
       score:                0,

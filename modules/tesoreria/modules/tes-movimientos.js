@@ -155,9 +155,11 @@ async function cargarMovimientos() {
   movimientos_pag   = 1;
   mov_seleccionados = new Set();
 
-  // Resolver UUID → numero_rh para movimientos vinculados a RH
+  // Resolver UUID → numero_rh solo para links ANTIGUOS donde nro_factura_doc es un UUID.
+  // Los links nuevos ya guardan el número legible directamente (ej. "E001-17").
+  const _uuidRx = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const rhIds = (data || [])
-    .filter(r => r.tipo_doc === 'RH' && r.nro_factura_doc)
+    .filter(r => r.tipo_doc === 'RH' && r.nro_factura_doc && _uuidRx.test(r.nro_factura_doc))
     .map(r => r.nro_factura_doc);
   window._rhUuidMap = {};
   if (rhIds.length) {
