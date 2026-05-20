@@ -3,7 +3,7 @@
  * v3.9.0 — HTML de módulos siempre desde red, JS versionado
  */
 
-const CACHE_VERSION = 'nexum-v4.0.0';
+const CACHE_VERSION = 'nexum-v4.1.0';
 
 // Solo cachear recursos que NO cambian frecuentemente (sin HTML de módulos, sin JS dinámico)
 const RECURSOS_ESTATICOS = [
@@ -39,13 +39,18 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = event.request.url;
 
-  // Todo lo siguiente SIEMPRE va a la red (nunca desde caché):
-  if (url.includes('supabase.co'))          return; // API calls
-  if (url.includes('/modules/'))             return; // Todos los módulos JS y HTML
-  if (url.includes('/js/'))                  return; // Todos los scripts globales
-  if (url.includes('.html'))                 return; // Todas las páginas HTML
-  if (url.includes('.js'))                   return; // Todos los archivos JS
-  if (url.includes('?v=') || url.includes('?t=')) return; // JS versionados
+  // API Supabase: sin interceptar
+  if (url.includes('supabase.co')) return;
+
+  // HTML y JS: SIEMPRE desde red, bypaseando caché HTTP del browser
+  if (url.includes('.html') || url.includes('/modules/') || url.includes('/js/') || url.includes('.js')) {
+    event.respondWith(fetch(event.request, { cache: 'no-store' }));
+    return;
+  }
+  if (url.includes('?v=') || url.includes('?t=')) {
+    event.respondWith(fetch(event.request, { cache: 'no-store' }));
+    return;
+  }
 
   // Solo cachear CSS y assets estáticos
   event.respondWith(

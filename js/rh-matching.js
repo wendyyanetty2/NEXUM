@@ -297,19 +297,45 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
     .eq('movimiento_id', movimientoId);
   if (error) return false;
 
-  // MEJORA 6: migrar datos del RH al movimiento bancario en tesoreria_mbd
-  const [{ data: rh }, { data: mov }] = await Promise.all([
-    _supabase.from('rh_registros').select('nombre,ruc,numero,serie').eq('id', rhId).single(),
-    _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni,nro_factura_doc,tipo_doc').eq('id', movimientoId).single(),
+  // Buscar el movimiento en `movimientos` para obtener su N° operación
+  const [{ data: rh }, { data: movOld }] = await Promise.all([
+    _supabase.from('rh_registros').select('numero_rh, nombre_emisor, nro_doc_emisor').eq('id', rhId).single(),
+    _supabase.from('movimientos').select('numero_operacion').eq('id', movimientoId).single(),
   ]);
-  if (rh && mov) {
-    const patch = { estado_conciliacion: 'conciliado', entrega_doc: 'EMITIDO' };
-    const nroDoc = [rh.serie, rh.numero].filter(Boolean).join('-') || null;
-    if (nroDoc  && !mov.nro_factura_doc)              patch.nro_factura_doc            = nroDoc;
-    if (!mov.tipo_doc)                                patch.tipo_doc                   = 'RH';
-    if (rh.nombre && !mov.proveedor_empresa_personal) patch.proveedor_empresa_personal = rh.nombre;
-    if (rh.ruc    && !mov.ruc_dni)                    patch.ruc_dni                    = rh.ruc;
-    await _supabase.from('tesoreria_mbd').update(patch).eq('id', movimientoId);
+
+  // Buscar en tesoreria_mbd el registro por N° operación (con o sin ceros iniciales)
+  if (movOld?.numero_operacion) {
+    const nroOp     = String(movOld.numero_operacion);
+    const nroOpSin  = nroOp.replace(/^0+/, '');
+    const { data: mbdRows } = await _supabase
+      .from('tesoreria_mbd')
+      .select('id, proveedor_empresa_personal, ruc_dni, nro_factura_doc, tipo_doc, cotizacion, oc, proyecto, concepto, empresa')
+      .or(`nro_operacion_bancaria.eq.${nroOp},nro_operacion_bancaria.eq.${nroOpSin}`)
+      .limit(1);
+
+    if (mbdRows?.length) {
+      const mbd   = mbdRows[0];
+      const patch = { estado_conciliacion: 'conciliado', fecha_actualizacion: new Date().toISOString().slice(0, 10) };
+
+      if (rh?.numero_rh   && !mbd.nro_factura_doc)             patch.nro_factura_doc            = rh.numero_rh;
+      if (!mbd.tipo_doc)                                        patch.tipo_doc                   = 'RH';
+      if (rh?.nombre_emisor && !mbd.proveedor_empresa_personal) patch.proveedor_empresa_personal = rh.nombre_emisor;
+      if (rh?.nro_doc_emisor && !mbd.ruc_dni)                   patch.ruc_dni                    = rh.nro_doc_emisor;
+
+      // EMITIDO solo si TODOS los campos clave están completos
+      const proveedor = (patch.proveedor_empresa_personal || mbd.proveedor_empresa_personal || '').trim();
+      const camposLlenos = !!(
+        proveedor &&
+        mbd.cotizacion?.trim() &&
+        mbd.oc?.trim() &&
+        mbd.proyecto?.trim() &&
+        mbd.concepto?.trim() &&
+        mbd.empresa?.trim()
+      );
+      patch.entrega_doc = camposLlenos ? 'EMITIDO' : 'OBSERVADO';
+
+      await _supabase.from('tesoreria_mbd').update(patch).eq('id', mbd.id);
+    }
   }
 
   return true;

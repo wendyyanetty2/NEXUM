@@ -15,20 +15,28 @@ let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPag
 let _pendientesGrupos = {};
 
 async function _mbdCargarCatalogos() {
-  const eid = empresa_activa.id;
+  // Carga sin filtro de empresa para que todas las compañías compartan el mismo catálogo.
+  // El módulo Catálogos sigue gestionando ítems por empresa; aquí solo leemos para el modal.
   const [rc, re, ra, rm, rproy, rprest] = await Promise.all([
-    _supabase.from('conceptos').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('autorizaciones').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('medios_pago').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
-    _supabase.from('proyectos').select('nombre').eq('empresa_operadora_id', eid).eq('activo', true).order('nombre'),
+    _supabase.from('conceptos').select('nombre').eq('activo', true).order('nombre'),
+    _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('activo', true).order('nombre'),
+    _supabase.from('autorizaciones').select('nombre').eq('activo', true).order('nombre'),
+    _supabase.from('medios_pago').select('nombre').eq('activo', true).order('nombre'),
+    _supabase.from('proyectos').select('nombre').eq('activo', true).order('nombre'),
     _supabase.from('prestadores_servicios').select('nombre,dni').eq('activo', true).order('nombre'),
   ]);
-  _mbdCatalogos.conceptos      = (rc.data || []).map(r => r.nombre);
-  _mbdCatalogos.empresas       = (re.data || []).map(r => r.nombre);
-  _mbdCatalogos.autorizaciones = (ra.data || []).map(r => r.nombre);
-  _mbdCatalogos.mediosPago     = (rm.data || []).map(r => r.nombre);
-  _mbdCatalogos.proyectos      = (rproy.data || []).map(r => r.nombre);
+
+  // De-duplicar por nombre (puede haber ítems con el mismo nombre en distintas empresas)
+  const _uniq = (arr) => {
+    const seen = new Set();
+    return arr.filter(v => { const k = v.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  };
+
+  _mbdCatalogos.conceptos      = _uniq((rc.data || []).map(r => r.nombre));
+  _mbdCatalogos.empresas       = _uniq((re.data || []).map(r => r.nombre));
+  _mbdCatalogos.autorizaciones = _uniq((ra.data || []).map(r => r.nombre));
+  _mbdCatalogos.mediosPago     = _uniq((rm.data || []).map(r => r.nombre));
+  _mbdCatalogos.proyectos      = _uniq((rproy.data || []).map(r => r.nombre));
 
   // Combinar empresas_clientes (RUC) + prestadores_servicios (DNI) — sin duplicados
   const provEmp  = (re.data || []).map(r => ({ nombre: r.nombre, doc: r.ruc_dni || '' }));
