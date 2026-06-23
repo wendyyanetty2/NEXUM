@@ -37,13 +37,32 @@ function renderTabCompras(area) {
     </div>
   `;
 
-  document.getElementById('c-buscar').addEventListener('keydown', e => { if(e.key==='Enter') cargarCompras(); });
+  let _cBuscarTimer = null;
+  document.getElementById('c-buscar').addEventListener('input', () => {
+    clearTimeout(_cBuscarTimer);
+    _cBuscarTimer = setTimeout(() => _renderComprasFiltradas(), 200);
+  });
+  document.getElementById('c-buscar').addEventListener('keydown', e => { if(e.key==='Enter') { e.preventDefault(); _renderComprasFiltradas(); } });
   cargarCompras();
+}
+
+let _comprasRawData = [];
+
+function _filtrarComprasBuscar(filas, buscar) {
+  if (!buscar) return filas;
+  return filas.filter(r => {
+    const haystack = [
+      r.proveedor, r.serie_cdp, r.nro_doc_identidad, r.nro_cp_inicial,
+      TIPOS_DOC_ID_C[r.tipo_doc_identidad], r.tipo_doc_identidad,
+      r.tipo_cp_doc, r.moneda, r.periodo,
+      r.bi_gravado_dg, r.igv_ipm_dg, r.total_cp
+    ].map(v => (v != null ? String(v) : '')).join(' ').toLowerCase();
+    return haystack.includes(buscar);
+  });
 }
 
 async function cargarCompras() {
   const periodo = document.getElementById('c-periodo')?.value.trim();
-  const buscar  = document.getElementById('c-buscar')?.value.trim().toLowerCase();
   const wrap    = document.getElementById('c-tabla-wrap');
   if (!wrap) return;
   wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>';
@@ -56,12 +75,16 @@ async function cargarCompras() {
   const { data, error } = await q;
   if (error) { wrap.innerHTML = `<p class="error-texto">Error: ${escapar(error.message)}</p>`; return; }
 
-  let filas = data || [];
-  if (buscar) filas = filas.filter(r =>
-    (r.proveedor||'').toLowerCase().includes(buscar) ||
-    (r.serie_cdp||'').toLowerCase().includes(buscar) ||
-    (r.nro_doc_identidad||'').toLowerCase().includes(buscar)
-  );
+  _comprasRawData = data || [];
+  await _renderComprasFiltradas();
+}
+
+async function _renderComprasFiltradas() {
+  const wrap   = document.getElementById('c-tabla-wrap');
+  if (!wrap) return;
+  const buscar = document.getElementById('c-buscar')?.value.trim().toLowerCase();
+
+  let filas = _filtrarComprasBuscar(_comprasRawData, buscar);
 
   const totalBI  = filas.reduce((s,r) => s + Number(r.bi_gravado_dg||0), 0);
   const totalIGV = filas.reduce((s,r) => s + Number(r.igv_ipm_dg||0), 0);

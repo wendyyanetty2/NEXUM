@@ -31,11 +31,12 @@ function renderTabRHRecibidas(area) {
             <option value="PENDIENTE">Pendiente</option>
             <option value="CANCELADO">Cancelado</option>
           </select>
+          <input type="text" id="rhr-buscar" placeholder="Buscar emisor, N° RH, N° doc, monto…"
+            style="width:220px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
           <button onclick="cargarRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="rhConciliarAutomatico()" id="btn-rhr-auto" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">⚡ Conciliar automáticamente</button>
-          <button onclick="rhVerHistorialConciliacion()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📋 Historial conciliación</button>
           <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔄 Consolidar estados</button>
           <button onclick="exportarExcelRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar Excel</button>
           <button onclick="document.getElementById('rhr-file-input').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📂 Importar Excel</button>
@@ -60,7 +61,31 @@ function renderTabRHRecibidas(area) {
     </div>
   `;
 
+  let _rhrBuscarTimer = null;
+  document.getElementById('rhr-buscar').addEventListener('input', () => {
+    clearTimeout(_rhrBuscarTimer);
+    _rhrBuscarTimer = setTimeout(() => _renderRHRTabla(), 200);
+  });
+  document.getElementById('rhr-buscar').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _renderRHRTabla(); } });
+
   cargarRHRecibidas();
+}
+
+let _rhrRawFilas = [];
+let _rhrEstadosMap = {};
+
+function _filtrarRHRBuscar(filas, estadosMap, buscar) {
+  if (!buscar) return filas;
+  return filas.filter(r => {
+    const nombre = r.prestadores_servicios?.nombre || r.nombre_emisor || '';
+    const docNum = r.prestadores_servicios?.dni    || r.nro_doc_emisor || '';
+    const haystack = [
+      nombre, docNum, r.numero_rh, r.concepto, r.observaciones,
+      r.moneda, estadosMap[r.id]?.estado,
+      r.monto_bruto, r.monto_retencion, r.monto_neto
+    ].map(v => (v != null ? String(v) : '')).join(' ').toLowerCase();
+    return haystack.includes(buscar);
+  });
 }
 
 // ── Estado calculado desde tesoreria_mbd (prioritario) y rh_movimiento_links ──
@@ -140,7 +165,6 @@ async function _estadoCalculado(rh) {
 async function cargarRHRecibidas() {
   const mes    = document.getElementById('rhr-mes')?.value;
   const anio   = document.getElementById('rhr-anio')?.value;
-  const filtroEstado = document.getElementById('rhr-estado')?.value;
   const wrap   = document.getElementById('rhr-tabla-wrap');
   if (!wrap) return;
   wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>';
@@ -167,10 +191,24 @@ async function cargarRHRecibidas() {
     }
   }));
 
+  _rhrRawFilas   = filas;
+  _rhrEstadosMap = estadosMap;
+  _renderRHRTabla();
+}
+
+function _renderRHRTabla() {
+  const wrap   = document.getElementById('rhr-tabla-wrap');
+  if (!wrap) return;
+  const filtroEstado = document.getElementById('rhr-estado')?.value;
+  const buscar = document.getElementById('rhr-buscar')?.value.trim().toLowerCase();
+  const filas       = _rhrRawFilas;
+  const estadosMap  = _rhrEstadosMap;
+
   // Filtrar por estado si aplica
-  const filasFiltradas = filtroEstado
+  let filasFiltradas = filtroEstado
     ? filas.filter(r => estadosMap[r.id]?.estado === filtroEstado)
     : filas;
+  filasFiltradas = _filtrarRHRBuscar(filasFiltradas, estadosMap, buscar);
 
   const totalBruto  = filasFiltradas.reduce((s,r) => s + Number(r.monto_bruto||0), 0);
   const totalRet    = filasFiltradas.reduce((s,r) => s + Number(r.monto_retencion||0), 0);
@@ -945,6 +983,7 @@ async function _confirmarImportRHR() {
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
 
   let ok = 0, errCount = 0;
+  const errores = [];
 
   for (const r of validos) {
     let dni = (r.nro_doc_emisor || '').toString().trim();
@@ -952,7 +991,7 @@ async function _confirmarImportRHR() {
       if (dni.length < 8) dni = dni.padStart(8, '0');
       else if (dni.length > 8 && dni.length < 11) dni = dni.padStart(11, '0');
     }
-    if (!dni) { errCount++; continue; }
+    if (!dni) { errCount++; errores.push(`Fila ${r._fila}: sin DNI/RUC`); continue; }
 
     let { data: ps } = await _supabase
       .from('prestadores_servicios').select('id').eq('dni', dni).maybeSingle();
@@ -961,13 +1000,17 @@ async function _confirmarImportRHR() {
         .from('prestadores_servicios')
         .insert({ dni, nombre: r.nombre_emisor || dni, ruc: dni.length === 11 ? dni : null, activo: true })
         .select('id').single();
-      if (errPS) { errCount++; continue; }
+      if (errPS) {
+        errCount++;
+        errores.push(`Fila ${r._fila} (prestador ${dni}): ${errPS.message}`);
+        continue;
+      }
       ps = nuevo;
     }
 
     const monedaNorm = ['DOLARES','USD'].includes((r.moneda||'').toUpperCase()) ? 'USD' : 'PEN';
     const estadoDoc  = r.estado_pago === 'CANCELADO' ? 'ANULADO' : 'EMITIDO';
-    const { error } = await _supabase.from('rh_registros').insert({
+    const payload = {
       empresa_operadora_id: empresa_activa.id,
       prestador_id:         ps.id,
       periodo:              r.fecha_emision?.slice(0, 7) || null,
@@ -985,12 +1028,41 @@ async function _confirmarImportRHR() {
       nro_doc_emisor:       dni,
       nombre_emisor:        r.nombre_emisor || null,
       usuario_id:           perfil_usuario?.id || null,
-    });
-    if (error) errCount++; else ok++;
+    };
+
+    // Verificar si ya existe el registro (mismo prestador + empresa + numero_rh)
+    const { data: existente } = await _supabase
+      .from('rh_registros')
+      .select('id')
+      .eq('empresa_operadora_id', empresa_activa.id)
+      .eq('prestador_id', ps.id)
+      .eq('numero_rh', r.nro_rh)
+      .maybeSingle();
+
+    let error;
+    if (existente) {
+      // Actualizar registro existente
+      ({ error } = await _supabase.from('rh_registros').update(payload).eq('id', existente.id));
+    } else {
+      ({ error } = await _supabase.from('rh_registros').insert(payload));
+    }
+
+    if (error) {
+      errCount++;
+      errores.push(`Fila ${r._fila} (${r.nro_rh}): ${error.message}`);
+    } else {
+      ok++;
+    }
   }
 
   _cerrarPrevRHR();
-  mostrarToast(`✓ ${ok} RH importado(s). ${errCount ? errCount + ' errores.' : ''}`, ok ? 'exito' : 'error');
+
+  if (errores.length > 0) {
+    console.error('[Import RH] Errores:', errores);
+  }
+
+  const msgExtra = errores.length === 1 ? ` — ${errores[0]}` : errores.length > 1 ? ` — Ver consola para detalles` : '';
+  mostrarToast(`✓ ${ok} RH importado(s). ${errCount ? errCount + ' errores.' + msgExtra : ''}`, ok ? 'exito' : 'error');
   cargarRHRecibidas();
 }
 

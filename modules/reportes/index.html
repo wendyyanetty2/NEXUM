@@ -102,6 +102,13 @@
           <button class="btn btn-secundario btn-sm" onclick="exportarReporteGlobal()">📦 Exportar completo</button>
         </div>
 
+        <div class="card" style="padding:20px">
+          <div style="font-size:32px;margin-bottom:12px">📦</div>
+          <h3>Cierre mensual</h3>
+          <p class="text-muted text-sm" style="margin:8px 0 16px">Un solo Excel con una hoja por módulo (Ventas, Compras, RH, Tesorería, Asientos) para el periodo seleccionado. Ideal para el cierre de cada mes.</p>
+          <button class="btn btn-secundario btn-sm" onclick="exportarCierreMensual()">📦 Cierre mensual</button>
+        </div>
+
       </div>
 
       <!-- Sección de resúmenes visuales -->
@@ -560,6 +567,117 @@ async function exportarReporteGlobal() {
   ], nombre);
 
   mostrarToast(`Reporte global exportado (10 hojas)`, 'exito');
+}
+
+async function exportarCierreMensual() {
+  const { empId, desde, hasta, empNom } = _getParams();
+  if (!desde || !hasta) { mostrarToast('Selecciona periodo desde y hasta para el cierre mensual', 'atencion'); return; }
+  mostrarToast('Generando cierre mensual (5 hojas)…', 'info');
+
+  const filtroDesde = desde + '-01';
+  const filtroHasta = hasta + '-31';
+
+  const [resV, resC, resMov, resRH, resLinks, resAsi] = await Promise.all([
+    _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id', empId).gte('periodo', desde).lte('periodo', hasta).order('fecha_emision'),
+    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id', empId).gte('periodo', desde).lte('periodo', hasta).order('fecha_emision'),
+    _supabase.from('movimientos').select('*, cuentas_bancarias(nombre_alias)').eq('empresa_operadora_id', empId).gte('fecha', filtroDesde).lte('fecha', filtroHasta).order('fecha'),
+    _supabase.from('rh_registros').select('*, prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId).gte('fecha_emision', filtroDesde).lte('fecha_emision', filtroHasta).order('fecha_emision'),
+    _supabase.from('rh_movimiento_links').select('*, rh_registros(numero_rh,nombre_emisor,monto_bruto), movimientos(fecha,importe,numero_operacion)').eq('empresa_id', empId),
+    _supabase.from('asientos').select('*').eq('empresa_operadora_id', empId).gte('periodo', desde).lte('periodo', hasta).order('fecha'),
+  ]);
+
+  const ventas  = resV.data   || [];
+  const compras = resC.data   || [];
+  const movs    = resMov.data || [];
+  const rhList  = resRH.data  || [];
+  const links   = resLinks.data || [];
+  const asientosCierre = resAsi.data || [];
+
+  // ── HOJA: REG. VENTAS ──────────────────────────────────────
+  const hojaVentas = ventas.map(v => ({
+    Periodo: v.periodo, 'F. Emisión': v.fecha_emision,
+    'Tipo Doc': v.tipo_documento_codigo||'', Serie: v.serie||'', Número: v.numero||'',
+    'RUC Cliente': v.ruc_cliente||'', Cliente: v.nombre_cliente||'',
+    'Base Imponible': v.base_imponible||0, IGV: v.igv||0, Total: v.total||0,
+    Moneda: v.moneda, Estado: v.estado,
+  }));
+
+  // ── HOJA: REG. COMPRAS ─────────────────────────────────────
+  const hojaCompras = compras.map(c => ({
+    Periodo: c.periodo, 'F. Emisión': c.fecha_emision, 'F. Vencimiento': c.fecha_vencimiento||'',
+    'Tipo Doc': c.tipo_documento_codigo||'', Serie: c.serie||'', Número: c.numero||'',
+    'RUC Proveedor': c.ruc_proveedor||'', Proveedor: c.nombre_proveedor||'',
+    'Base Imponible': c.base_imponible||0, IGV: c.igv||0, Total: c.total||0,
+    'Tiene Detracción': c.tiene_detraccion?'Sí':'No', 'Monto Detracción': c.monto_detraccion||0,
+    'Deducible Renta': c.deducible_renta?'Sí':'No', Estado: c.estado,
+  }));
+
+  // ── HOJA: RH RECIBIDOS ─────────────────────────────────────
+  const hojaRH = rhList.map(r => {
+    const rhLinks     = links.filter(l => l.rh_id === r.id);
+    const confirmados = rhLinks.filter(l => l.confirmado_en);
+    const montoPagado = confirmados.reduce((s,l)=>s+parseFloat(l.monto_parcial??l.movimientos?.importe??0),0);
+    const montoRH     = parseFloat(r.monto_bruto||0);
+    let estado = 'PENDIENTE';
+    if (r.estado === 'ANULADO') estado = 'CANCELADO';
+    else if (confirmados.length && Math.abs(montoPagado - montoRH) < 0.01) estado = 'APLICADO';
+    else if (confirmados.length && montoPagado > 0) estado = 'PARCIAL';
+    else if (rhLinks.some(l => !l.confirmado_en)) estado = 'POSIBLE MATCH';
+    return {
+      Fecha: r.fecha_emision,
+      'N° RH': r.numero_rh || '',
+      DNI: r.prestadores_servicios?.dni || r.nro_doc_emisor || '',
+      Emisor: r.prestadores_servicios?.nombre || r.nombre_emisor || '',
+      Concepto: r.concepto || '',
+      Moneda: r.moneda || 'PEN',
+      'Renta Bruta': r.monto_bruto,
+      'Retención': r.monto_retencion,
+      'Renta Neta': r.monto_neto,
+      Estado: estado,
+      'Monto Pagado': montoPagado || '',
+      Observaciones: r.observaciones || '',
+    };
+  });
+
+  // ── HOJA: TESORERÍA ────────────────────────────────────────
+  const hojaTes = movs.map(m => ({
+    Fecha: m.fecha,
+    Cuenta: m.cuentas_bancarias?.nombre_alias || '',
+    Naturaleza: m.naturaleza,
+    Importe: m.importe,
+    Moneda: m.moneda,
+    'N° Operación': m.numero_operacion || '',
+    Descripción: m.descripcion || '',
+    'Tipo Operación': m.tipo_operacion_codigo || '',
+    Estado: m.estado,
+    'Tiene IGV': m.tiene_igv ? 'Sí' : 'No',
+    'Base Imponible': m.base_imponible || 0,
+    IGV: m.igv || 0,
+    'Tiene Detracción': m.tiene_detraccion ? 'Sí' : 'No',
+    'Monto Detracción': m.monto_detraccion || 0,
+    Observaciones: m.observaciones || '',
+  }));
+
+  // ── HOJA: ASIENTOS ─────────────────────────────────────────
+  const hojaAsientos = asientosCierre.map(a => ({
+    Periodo: a.periodo, Fecha: a.fecha, 'N° Asiento': a.numero_asiento || '',
+    Tipo: a.tipo || '', Glosa: a.glosa || '',
+    'Total Debe': a.total_debe || 0, 'Total Haber': a.total_haber || 0,
+    Diferencia: parseFloat(a.total_debe||0) - parseFloat(a.total_haber||0),
+    Estado: a.estado,
+  }));
+
+  const nombre = `NEXUM_${empNom.replace(/\s+/g,'_')}_${desde}_a_${hasta}_CierreMensual.xlsx`;
+
+  _descargarExcelConFormato([
+    { nombre: '💼 VENTAS',    datos: hojaVentas },
+    { nombre: '🛒 COMPRAS',   datos: hojaCompras },
+    { nombre: '📄 RH',        datos: hojaRH },
+    { nombre: '💰 TESORERIA', datos: hojaTes },
+    { nombre: '📒 ASIENTOS',  datos: hojaAsientos },
+  ], nombre);
+
+  mostrarToast('Cierre mensual exportado (5 hojas)', 'exito');
 }
 
 function _descargarExcelConFormato(hojas, nombre) {

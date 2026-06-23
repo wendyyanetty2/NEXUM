@@ -7,10 +7,12 @@ let movimientos_filtrada = [];
 let movimientos_pag      = 1;
 const MOV_POR_PAG        = 20;
 let mov_seleccionados    = new Set();
+let mov_ultimo_undo      = null; // { campos, registros: [{id, ...valoresAnteriores}] }
 
 async function renderTabMovimientos(area) {
   // Limpiar barra masiva de sesiones anteriores
   document.getElementById('mov-barra-masiva')?.remove();
+  mov_ultimo_undo = null;
 
   const hoy      = new Date();
   const mesAct   = String(hoy.getMonth() + 1).padStart(2, '0');
@@ -71,6 +73,11 @@ async function renderTabMovimientos(area) {
               title="Restablecer todos los filtros a su valor por defecto">🔄 Limpiar filtros</button>
             <button class="btn btn-secundario btn-sm" onclick="cargarMovimientos()"
               title="Recargar los movimientos desde la base de datos">↺ Actualizar</button>
+            <button id="btn-mov-deshacer" class="btn btn-sm" onclick="_movDeshacerUltimaEdicion()"
+              title="Revertir la última edición masiva aplicada"
+              style="display:none;background:rgba(214,158,46,.12);color:#B7791F;border:1px solid #B7791F;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">
+              ↩️ Deshacer última edición
+            </button>
             <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()"
               title="Exportar los movimientos visibles a Excel (.xlsx)">⬇ Excel</button>
             <button class="btn btn-sm" onclick="_abrirModalEliminarMesMov()"
@@ -602,6 +609,9 @@ async function _movEditarMasivo() {
   const n = mov_seleccionados.size;
   if (n === 0) return;
 
+  // Eliminar overlay previo para evitar IDs duplicados en el DOM
+  document.getElementById('overlay-masivo')?.remove();
+
   // Un solo registro → edición individual normal
   if (n === 1) {
     abrirModalMovimiento([...mov_seleccionados][0]);
@@ -728,6 +738,16 @@ async function _movGuardarMasivo() {
 
   const ids = [...mov_seleccionados];
   const n   = ids.length;
+  const campos = Object.keys(payload);
+
+  // Guardar valores anteriores para poder deshacer esta edición
+  const registrosPrevios = movimientos_lista
+    .filter(r => ids.includes(r.id))
+    .map(r => {
+      const prev = { id: r.id };
+      campos.forEach(c => { prev[c] = r[c] ?? null; });
+      return prev;
+    });
 
   const btn = document.getElementById('btn-guardar-masivo');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
@@ -749,6 +769,10 @@ async function _movGuardarMasivo() {
     ids.includes(r.id) ? { ...r, ...payload } : r
   );
 
+  mov_ultimo_undo = { campos, registros: registrosPrevios };
+  const btnDeshacer = document.getElementById('btn-mov-deshacer');
+  if (btnDeshacer) btnDeshacer.style.display = '';
+
   document.getElementById('overlay-masivo')?.remove();
   mov_seleccionados.clear();
   _movActualizarBarra();
@@ -757,6 +781,45 @@ async function _movGuardarMasivo() {
   filtrarMovimientos();
 
   mostrarToast(`✅ ${n} registro${n > 1 ? 's' : ''} actualizado${n > 1 ? 's' : ''} correctamente`, 'exito');
+}
+
+// ── Deshacer la última edición masiva ───────────────────────────────
+async function _movDeshacerUltimaEdicion() {
+  if (!mov_ultimo_undo) return;
+  const { registros } = mov_ultimo_undo;
+  const n = registros.length;
+
+  if (!await confirmar(
+    `¿Revertir la última edición masiva en ${n} registro${n > 1 ? 's' : ''} a sus valores anteriores?`
+  )) return;
+
+  const btn = document.getElementById('btn-mov-deshacer');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deshaciendo…'; }
+
+  for (const prev of registros) {
+    const { id, ...valores } = prev;
+    const { error } = await _supabase
+      .from('tesoreria_mbd')
+      .update(valores)
+      .eq('id', id)
+      .eq('empresa_id', empresa_activa.id);
+
+    if (error) {
+      mostrarToast('Error al deshacer registro ' + id + ': ' + error.message, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '↩️ Deshacer última edición'; }
+      return;
+    }
+
+    movimientos_lista = movimientos_lista.map(r =>
+      r.id === id ? { ...r, ...valores } : r
+    );
+  }
+
+  mov_ultimo_undo = null;
+  if (btn) { btn.style.display = 'none'; btn.disabled = false; btn.textContent = '↩️ Deshacer última edición'; }
+
+  filtrarMovimientos();
+  mostrarToast(`↩️ ${n} registro${n > 1 ? 's' : ''} revertido${n > 1 ? 's' : ''} a su valor anterior`, 'exito');
 }
 
 // ── Eliminar masivo ─────────────────────────────────────────────────
