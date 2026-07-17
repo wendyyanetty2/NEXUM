@@ -34,7 +34,7 @@ async function renderTabVentas(area) {
           </div>
           <div>
             <label class="label-filtro">Buscar</label>
-            <input type="text" id="v-buscar" oninput="filtrarVentas()" class="input-buscar w-full"
+            <input type="text" id="v-buscar" autocomplete="off" oninput="filtrarVentas()" class="input-buscar w-full"
                    placeholder="RUC, cliente, número…">
           </div>
         </div>

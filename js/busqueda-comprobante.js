@@ -41,6 +41,19 @@ function _bmFiltroWrap(html) {
 
 const _bmInputStyle = 'padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;width:100%;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:12px;box-sizing:border-box';
 
+// ── Código de tipo de comprobante (catálogo TIPOS_DOC_MBD: FA/BO/RH/PM/OT…) ──
+// Regla de negocio: en Compras/Ventas la serie determina el tipo —
+// empieza con "B" → Boleta (BO), si no → Factura (FA). RH y PM son siempre ese código.
+function _mbdCodigoTipoComprobante(docTipo, nDoc) {
+  if (docTipo === 'RH') return 'RH';
+  if (docTipo === 'PM') return 'PM';
+  if (docTipo === 'COMPRA' || docTipo === 'VENTA') {
+    const serie = String(nDoc || '').trim().toUpperCase();
+    return serie.startsWith('B') ? 'BO' : 'FA';
+  }
+  return 'OT';
+}
+
 // ═══════════════════════════════════════════════════════════════
 // DIRECCIÓN 1: Banco → Comprobante
 // Abre modal para vincular manualmente un movimiento bancario
@@ -67,11 +80,11 @@ async function _bmBuscarDoc(movBancoId, nroOp, monto, fecha, tablaBanco = 'tesor
       </div>
       <div>
         <label style="font-size:11px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">N° comprobante / Planilla</label>
-        <input type="text" id="bm-num" placeholder="E001-00014, 007-11-25…" style="${_bmInputStyle}">
+        <input type="text" id="bm-num" autocomplete="off" placeholder="E001-00014, 007-11-25…" style="${_bmInputStyle}">
       </div>
       <div>
         <label style="font-size:11px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">Proveedor / Trabajador / RUC/DNI</label>
-        <input type="text" id="bm-prov" placeholder="Nombre o doc. identidad…" style="${_bmInputStyle}">
+        <input type="text" id="bm-prov" autocomplete="off" placeholder="Nombre o doc. identidad…" style="${_bmInputStyle}">
       </div>
       <div>
         <label style="font-size:11px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">Monto exacto</label>
@@ -226,7 +239,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
             ${d._fecha ? `<span style="color:var(--color-texto-suave);margin-left:8px">${d._fecha}</span>` : ''}
           </div>
         </div>
-        <button data-bm-vincular data-tipo="${d._tipo}" data-id="${d.id}" data-ndoc="${escapar(d._ndoc)}"
+        <button data-bm-vincular data-tipo="${d._tipo}" data-id="${d.id}" data-ndoc="${escapar(d._ndoc)}" data-prov="${escapar(d._prov||'')}" data-ruc="${escapar(d._ruc||'')}"
           style="flex-shrink:0;padding:7px 14px;background:var(--color-secundario);color:#fff;border:none;
             border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font);font-weight:600;white-space:nowrap">
           ✓ Vincular
@@ -239,26 +252,30 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
       const docTipo = btn.dataset.tipo;
       const docId   = btn.dataset.id;
       const nDoc    = btn.dataset.ndoc;
-      await _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco);
+      await _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco, { proveedor: btn.dataset.prov, ruc: btn.dataset.ruc });
       overlay.remove();
     };
   });
 }
 
-async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco) {
+async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco, extra = {}) {
   const hoy   = new Date().toISOString().slice(0,10);
   const tabla = tablaBanco || 'tesoreria_mbd';
 
   // Para RH (y en general): determinar estado según campos completos en tesoreria_mbd
   let entregaDoc = 'OBSERVADO';
+  let movActual   = null;
   if (tabla === 'tesoreria_mbd') {
     const { data: mov } = await _supabase
       .from('tesoreria_mbd')
-      .select('proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa')
+      .select('proveedor_empresa_personal,ruc_dni,cotizacion,oc,proyecto,concepto,empresa')
       .eq('id', movBancoId)
       .single();
+    movActual = mov;
     if (mov) {
-      const tieneProveedor  = !!(mov.proveedor_empresa_personal?.trim());
+      // El proveedor que migramos ahora (si aplica) cuenta para evaluar completitud
+      const proveedorEfectivo = extra.proveedor || mov.proveedor_empresa_personal;
+      const tieneProveedor  = !!(proveedorEfectivo?.trim());
       const tieneCotOC      = !!(mov.cotizacion?.trim() || mov.oc?.trim());
       const tieneProyecto   = !!(mov.proyecto?.trim());
       const tieneConcepto   = !!(mov.concepto?.trim());
@@ -277,8 +294,14 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     estado_conciliacion: 'conciliado',
     nro_factura_doc:     nroFacturaKey,
     tipo_doc:            docTipo,
+    tipo_comprobante:    _mbdCodigoTipoComprobante(docTipo, nDoc),
     fecha_actualizacion: hoy,
   };
+
+  // Migrar Proveedor/Empresa/Personal y RUC/DNI del comprobante — siempre, ya que el resto de
+  // campos (proyecto, concepto, empresa, cotización/OC) se completan manualmente.
+  if (extra.proveedor) updatePayload.proveedor_empresa_personal = extra.proveedor;
+  if (extra.ruc)       updatePayload.ruc_dni                    = extra.ruc;
 
   const { error: errMov } = await _supabase.from(tabla).update(updatePayload).eq('id', movBancoId);
   if (errMov) { mostrarToast('Error al vincular: ' + errMov.message, 'error'); return; }
@@ -317,7 +340,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
 // DIRECCIÓN 2: Comprobante → Banco
 // Abre modal para buscar movimiento bancario desde un comprobante
 // ═══════════════════════════════════════════════════════════════
-async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
+async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc, ruc = '') {
   const overlay = _bmOverlay();
   const montoRef = Math.abs(Number(total)||0);
 
@@ -335,7 +358,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
     ${_bmFiltroWrap(`
       <div>
         <label style="font-size:11px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">Descripción / Proveedor</label>
-        <input type="text" id="bm2-desc" value="${escapar(proveedor||'')}" placeholder="Nombre, descripción…" style="${_bmInputStyle}">
+        <input type="text" id="bm2-desc" autocomplete="off" value="${escapar(proveedor||'')}" placeholder="Nombre, descripción…" style="${_bmInputStyle}">
       </div>
       <div>
         <label style="font-size:11px;font-weight:600;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">Monto exacto o rango</label>
@@ -376,7 +399,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
     <div style="border-top:1px solid var(--color-borde);padding:10px 16px 0;flex-shrink:0;background:var(--color-bg-card)">
       <p style="font-size:12px;color:var(--color-texto-suave);margin:0 0 8px 0">¿No encuentras el movimiento? Búsqueda manual:</p>
       <div style="display:flex;gap:8px">
-        <input type="text" id="bm2-manual-q" placeholder="N° operación o proveedor"
+        <input type="text" id="bm2-manual-q" autocomplete="off" placeholder="N° operación o proveedor"
           style="${_bmInputStyle};flex:1">
         <button id="bm2-manual-btn"
           style="padding:7px 14px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:12px;font-weight:600;white-space:nowrap">
@@ -395,7 +418,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
 
   overlay.querySelectorAll('[data-bm-close]').forEach(b => b.onclick = () => overlay.remove());
 
-  const doSearch = () => _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc);
+  const doSearch = () => _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor, ruc);
   overlay.querySelector('#bm2-btn-buscar').onclick = doSearch;
   overlay.querySelector('#bm2-btn-limpiar').onclick = () => {
     ['bm2-desc','bm2-desde','bm2-hasta'].forEach(id => {
@@ -412,7 +435,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
   };
   overlay.querySelector('#bm2-desc')?.addEventListener('keydown', e => { if(e.key==='Enter') doSearch(); });
 
-  const doManual = () => _bmBuscarMovManual(overlay, docTipo, docId, nDoc);
+  const doManual = () => _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor, ruc);
   overlay.querySelector('#bm2-manual-btn').onclick = doManual;
   overlay.querySelector('#bm2-manual-q')?.addEventListener('keydown', e => { if(e.key==='Enter') doManual(); });
 
@@ -432,7 +455,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc) {
   if (montoRef || proveedor) setTimeout(doSearch, 100);
 }
 
-async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
+async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor = '', ruc = '') {
   const resEl    = overlay.querySelector('#bm2-resultados');
   const qDesc    = (overlay.querySelector('#bm2-desc')?.value || '').trim().toLowerCase();
   const montoMin = parseFloat(overlay.querySelector('#bm2-monto-min')?.value || '') || 0;
@@ -514,7 +537,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
       const nrop  = btn.dataset.nrop;
       btn.disabled = true;
       btn.textContent = '…';
-      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd');
+      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd', { proveedor, ruc });
       mostrarToast(`✓ Movimiento ${nrop} vinculado al comprobante ${nDoc}`, 'exito');
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
@@ -527,7 +550,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc) {
   });
 }
 
-async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
+async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor = '', ruc = '') {
   const q   = (overlay.querySelector('#bm2-manual-q')?.value || '').trim();
   const res = overlay.querySelector('#bm2-manual-res');
   if (!q || !res) return;
@@ -579,7 +602,7 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc) {
       const nrop  = btn.dataset.bm2mNrop;
       btn.disabled = true;
       btn.textContent = '…';
-      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd');
+      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd', { proveedor, ruc });
       mostrarToast(`✓ Movimiento ${nrop} vinculado a ${nDoc}`, 'exito');
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';

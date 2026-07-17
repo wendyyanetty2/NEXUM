@@ -12,7 +12,7 @@ async function renderTabClientes(area) {
     <div class="fadeIn">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0">
-          <input id="cli-buscar" type="text" class="input-buscar" placeholder="Buscar nombre o RUC/DNI…"
+          <input id="cli-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar nombre o RUC/DNI…"
                  oninput="filtrarClientes()" style="max-width:260px">
           <select id="cli-tipo" onchange="filtrarClientes()" class="input-buscar" style="max-width:160px">
             <option value="">Todos los tipos</option>

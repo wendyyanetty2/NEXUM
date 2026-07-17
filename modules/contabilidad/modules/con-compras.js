@@ -17,7 +17,7 @@ function renderTabCompras(area) {
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <input type="text" id="c-periodo" value="${periodoActual}" placeholder="YYYYMM"
             style="width:100px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
-          <input type="text" id="c-buscar" placeholder="Buscar proveedor, serie…"
+          <input type="text" id="c-buscar" autocomplete="off" placeholder="Buscar proveedor, serie…"
             style="width:200px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
           <button onclick="cargarCompras()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>
@@ -171,7 +171,7 @@ async function _renderComprasFiltradas() {
               </div>`
             : `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
                  title="Click para conciliar"
-                 onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')">🔴 PEND.</span>`;
+                 onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')">🔴 PEND.</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -189,8 +189,8 @@ async function _renderComprasFiltradas() {
             <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">
               <button onclick="abrirModalCompra('${r.id}')" title="Editar" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
-              <button onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')" title="Conciliar con movimiento bancario" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔗</button>
-              <button onclick="_bmBuscarMov('COMPRA','${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')" title="Buscar movimiento bancario manualmente" style="padding:4px 8px;background:rgba(85,60,154,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔍</button>
+              <button onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Conciliar con movimiento bancario" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔗</button>
+              <button onclick="_bmBuscarMov('COMPRA','${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Buscar movimiento bancario manualmente" style="padding:4px 8px;background:rgba(85,60,154,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔍</button>
               <button onclick="eliminarCompra('${r.id}')" title="Eliminar" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
             </td>
           </tr>
@@ -681,7 +681,7 @@ async function _cSunatConfirmar() {
 // ══════════════════════════════════════════════════════════════════
 
 // ── Conciliar una compra individual — busca movs que coincidan ────
-async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fechaEmision) {
+async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fechaEmision, ruc = '') {
   // Buscar en tesoreria_mbd: movimientos sin comprobante + monto cercano
   const margen  = Math.max(total * 0.05, 5);
   const { data: movs } = await _supabase
@@ -694,7 +694,7 @@ async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fech
     .order('fecha_deposito', { ascending: false })
     .limit(30);
 
-  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || []);
+  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, ruc, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || []);
 }
 
 // ── Conciliar lote — todos los PEND. del periodo actual ──────────
@@ -714,7 +714,7 @@ async function _conciliarLoteCompras() {
   // Compras pendientes de aplicar
   const { data: compras } = await _supabase
     .from('contabilidad_compras')
-    .select('id, serie_cdp, nro_cp_inicial, proveedor, total_cp, fecha_emision')
+    .select('id, serie_cdp, nro_cp_inicial, proveedor, nro_doc_identidad, total_cp, fecha_emision')
     .eq('empresa_id', empresa_activa.id)
     .eq('periodo', periodo);
 
@@ -828,7 +828,7 @@ async function _conciliarLoteCompras() {
         </div>
         <div class="modal-footer" style="flex-shrink:0;gap:8px">
           <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-          <button class="btn btn-primario" onclick="_cAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,proveedor:m.compra.proveedor||'',total:m.total})))})">
+          <button class="btn btn-primario" onclick="_cAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,proveedor:m.compra.proveedor||'',ruc:m.compra.nro_doc_identidad||'',total:m.total})))})">
             ✅ Aplicar seleccionados
           </button>
         </div>
@@ -859,7 +859,7 @@ function _cAbrirModalConciliar(compra, movs) {
             ${m.proveedor_empresa_personal ? `<div style="font-size:11px;color:var(--color-texto-suave)">${escapar(m.proveedor_empresa_personal)}</div>` : ''}
             <div style="margin-top:8px;text-align:right">
               <span style="font-size:10px;padding:2px 6px;border-radius:4px;${m.entrega_doc==='EMITIDO'?'background:#2F855A;color:#fff':'background:#C53030;color:#fff'}">${escapar(m.entrega_doc||'PENDIENTE')}</span>
-              <button onclick="_cVincularMovimiento('${compra.id}','${m.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}')"
+              <button onclick="_cVincularMovimiento('${compra.id}','${m.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}','${escapar(compra.proveedor||'')}','${escapar(compra.ruc||'')}')"
                 style="margin-left:8px;padding:4px 12px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:var(--font)">
                 🔗 Vincular
               </button>
@@ -891,9 +891,9 @@ function _cAbrirModalConciliar(compra, movs) {
           <div style="margin-top:14px;border-top:1px solid var(--color-borde);padding-top:12px">
             <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:8px">¿No encuentras el movimiento? Búsqueda manual:</p>
             <div style="display:flex;gap:8px">
-              <input type="text" id="c-conc-buscar" placeholder="N° operación o proveedor"
+              <input type="text" id="c-conc-buscar" autocomplete="off" placeholder="N° operación o proveedor"
                 style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
-              <button onclick="_cBuscarMovManual('${compra.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}')"
+              <button onclick="_cBuscarMovManual('${compra.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}','${escapar(compra.proveedor||'')}','${escapar(compra.ruc||'')}')"
                 class="btn btn-primario" style="font-size:12px;white-space:nowrap">🔍 Buscar</button>
             </div>
             <div id="c-conc-manual-res" style="margin-top:10px"></div>
@@ -906,7 +906,7 @@ function _cAbrirModalConciliar(compra, movs) {
     </div>`;
 }
 
-async function _cBuscarMovManual(compraId, nDoc, tipoDoc) {
+async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = '') {
   const q   = (document.getElementById('c-conc-buscar')?.value || '').trim().toLowerCase();
   const res = document.getElementById('c-conc-manual-res');
   if (!q || !res) return;
@@ -929,7 +929,7 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc) {
         </div>
         <div style="text-align:right">
           <div style="font-weight:700">${formatearMoneda(m.monto)}</div>
-          <button onclick="_cVincularMovimiento('${compraId}','${m.id}','${escapar(nDoc)}','${escapar(tipoDoc)}')"
+          <button onclick="_cVincularMovimiento('${compraId}','${m.id}','${escapar(nDoc)}','${escapar(tipoDoc)}','${escapar(proveedor||'')}','${escapar(ruc||'')}')"
             style="padding:3px 10px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)">
             🔗 Vincular
           </button>
@@ -938,15 +938,22 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc) {
     </div>`).join('');
 }
 
-async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc) {
+async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = '', ruc = '') {
   const hoy = new Date().toISOString().slice(0, 10);
-  const { error } = await _supabase.from('tesoreria_mbd').update({
+
+  const patch = {
     entrega_doc:          'OBSERVADO',
     nro_factura_doc:      nDoc,
     tipo_doc:             tipoDoc,
+    tipo_comprobante:     _mbdCodigoTipoComprobante(tipoDoc, nDoc),
     estado_conciliacion:  'conciliado',
     fecha_actualizacion:  hoy,
-  }).eq('id', movId);
+  };
+  // Proveedor/Empresa y RUC/DNI siempre se sincronizan desde el comprobante (Compras/Ventas/RH)
+  if (proveedor) patch.proveedor_empresa_personal = proveedor;
+  if (ruc)       patch.ruc_dni                    = ruc;
+
+  const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
 
   if (error) { mostrarToast('Error al vincular: ' + error.message, 'error'); return; }
 
@@ -981,8 +988,10 @@ async function _cAplicarLoteConciliacion(items) {
       entrega_doc:          'EMITIDO',
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'COMPRA',
+      tipo_comprobante:     _mbdCodigoTipoComprobante('COMPRA', item.nDoc),
       estado_conciliacion:  'conciliado',
       proveedor_empresa_personal: item.proveedor || undefined,
+      ruc_dni:              item.ruc || undefined,
       fecha_actualizacion:  hoy,
     }).eq('id', item.movId);
 

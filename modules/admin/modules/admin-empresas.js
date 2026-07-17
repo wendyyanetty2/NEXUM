@@ -12,7 +12,7 @@ async function renderTabEmpresas(area) {
     <div class="fadeIn">
       <!-- Barra de acciones -->
       <div class="filtros-barra">
-        <input type="text" class="buscador" id="buscar-empresa"
+        <input type="text" class="buscador" id="buscar-empresa" autocomplete="off"
                placeholder="🔍 Buscar por nombre o RUC…" oninput="filtrarEmpresas()">
         <select id="filtro-estado-empresa" onchange="filtrarEmpresas()">
           <option value="">Todos los estados</option>

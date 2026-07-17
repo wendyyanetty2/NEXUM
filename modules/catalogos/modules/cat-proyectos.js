@@ -9,7 +9,7 @@ async function renderTabProyectos(area) {
   area.innerHTML = `
     <div class="fadeIn">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
-        <input id="pro-buscar" type="text" class="input-buscar" placeholder="Buscar proyecto…"
+        <input id="pro-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar proyecto…"
                oninput="renderTablaProyectos()" style="max-width:280px">
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarProyectosExcel()">⬇ Excel</button>

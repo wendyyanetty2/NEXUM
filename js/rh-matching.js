@@ -319,8 +319,10 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
 
       if (rh?.numero_rh   && !mbd.nro_factura_doc)             patch.nro_factura_doc            = rh.numero_rh;
       if (!mbd.tipo_doc)                                        patch.tipo_doc                   = 'RH';
-      if (rh?.nombre_emisor && !mbd.proveedor_empresa_personal) patch.proveedor_empresa_personal = rh.nombre_emisor;
-      if (rh?.nro_doc_emisor && !mbd.ruc_dni)                   patch.ruc_dni                    = rh.nro_doc_emisor;
+      patch.tipo_comprobante = 'RH';
+      // Proveedor/Empresa y RUC/DNI siempre se sincronizan desde el RH (el resto se completa manualmente)
+      if (rh?.nombre_emisor)  patch.proveedor_empresa_personal = rh.nombre_emisor;
+      if (rh?.nro_doc_emisor) patch.ruc_dni                    = rh.nro_doc_emisor;
 
       // EMITIDO solo si TODOS los campos clave están completos
       const proveedor = (patch.proveedor_empresa_personal || mbd.proveedor_empresa_personal || '').trim();

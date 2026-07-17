@@ -65,7 +65,7 @@ async function renderTabCuentas(area) {
 
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input id="cb-buscar" type="text" class="input-buscar" placeholder="Buscar cuenta…"
+          <input id="cb-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar cuenta…"
                  oninput="renderTarjetasCuentas()" style="max-width:240px">
           <select id="cb-moneda" onchange="renderTarjetasCuentas()" class="input-buscar" style="max-width:130px">
             <option value="">Todas las monedas</option>

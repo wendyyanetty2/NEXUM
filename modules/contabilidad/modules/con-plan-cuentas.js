@@ -59,7 +59,7 @@ async function renderTabPlanCuentas(area) {
     <div class="fadeIn">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input id="pc-buscar" type="text" class="input-buscar" placeholder="Buscar código o nombre…"
+          <input id="pc-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar código o nombre…"
                  oninput="filtrarPlanCuentas()" style="max-width:240px">
           <select id="pc-tipo" onchange="filtrarPlanCuentas()" class="input-buscar" style="max-width:160px">
             <option value="">Todos los tipos</option>

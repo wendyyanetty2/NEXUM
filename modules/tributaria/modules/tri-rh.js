@@ -31,7 +31,7 @@ async function renderTabRH(area) {
           </div>
           <div>
             <label class="label-filtro">Buscar</label>
-            <input type="text" id="rh-buscar" oninput="filtrarRH()" class="input-buscar w-full"
+            <input type="text" id="rh-buscar" autocomplete="off" oninput="filtrarRH()" class="input-buscar w-full"
                    placeholder="Nombre, N° RH…">
           </div>
         </div>

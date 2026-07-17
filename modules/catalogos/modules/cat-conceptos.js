@@ -9,7 +9,7 @@ async function renderTabConceptos(area) {
     <div class="fadeIn">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input id="con-buscar" type="text" class="input-buscar" placeholder="Buscar concepto…"
+          <input id="con-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar concepto…"
                  oninput="renderTablaConceptos()" style="max-width:240px">
           <select id="con-tipo" onchange="renderTablaConceptos()" class="input-buscar" style="max-width:160px">
             <option value="">Todos los tipos</option>

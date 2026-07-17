@@ -32,7 +32,7 @@ async function renderTabCompras(area) {
           </div>
           <div>
             <label class="label-filtro">Buscar</label>
-            <input type="text" id="c-buscar" oninput="filtrarCompras()" class="input-buscar w-full"
+            <input type="text" id="c-buscar" autocomplete="off" oninput="filtrarCompras()" class="input-buscar w-full"
                    placeholder="RUC, proveedor, número…">
           </div>
         </div>

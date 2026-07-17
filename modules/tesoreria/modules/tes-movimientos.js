@@ -62,7 +62,7 @@ async function renderTabMovimientos(area) {
           </div>
           <div>
             <label class="label-filtro">Buscar</label>
-            <input type="text" id="mov-buscar" oninput="filtrarMovimientos()" class="input-buscar w-full"
+            <input type="text" id="mov-buscar" autocomplete="off" oninput="filtrarMovimientos()" class="input-buscar w-full"
                    placeholder="Buscar en cualquier columna…">
           </div>
         </div>
@@ -316,7 +316,7 @@ function renderTablaMovimientos() {
         </td>
         <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar((r.tipo_doc==='RH'&&window._rhUuidMap?.[r.nro_factura_doc])||r.nro_factura_doc||'—')}</td>
         <td style="${_TD}text-align:center">
-          ${r.tipo_doc?`<span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(r.tipo_doc)}</span>`:'—'}
+          ${(r.tipo_comprobante||r.tipo_doc)?`<span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(r.tipo_comprobante||r.tipo_doc)}</span>`:'—'}
         </td>
         <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(r.autorizacion||'—')}</td>
         <td style="${_TD}max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.observaciones||'')}">${escapar(r.observaciones||'—')}</td>
@@ -665,7 +665,7 @@ async function _movEditarMasivo() {
         ${_movFilaCampo('ruc_dni',                 'RUC / DNI',                     'text')}
         ${_movFilaCampo('proyecto',                'Proyecto',                      'combobox', null, _mbdCatalogos.proyectos)}
         ${_movFilaCampo('nro_factura_doc',         'N° Factura / DOC',              'text')}
-        ${_movFilaCampo('tipo_doc',                'Tipo de DOC',                   'select', TIPO_DOC)}
+        ${_movFilaCampo('tipo_comprobante',        'Tipo de DOC',                   'select', TIPO_DOC)}
         ${_movFilaCampo('entrega_doc',             'Estado DOC',                    'select', ESTADO)}
         ${_movFilaCampo('concepto',                'Concepto',                      'combobox', null, _mbdCatalogos.conceptos)}
         ${_movFilaCampo('empresa',                 'Empresa',                       'combobox', null, _mbdCatalogos.empresas)}
@@ -720,7 +720,7 @@ async function _movEditarMasivo() {
 async function _movGuardarMasivo() {
   const CAMPOS = [
     'proveedor_empresa_personal', 'ruc_dni', 'proyecto', 'nro_factura_doc',
-    'tipo_doc', 'entrega_doc', 'concepto', 'empresa', 'cotizacion', 'oc',
+    'tipo_comprobante', 'entrega_doc', 'concepto', 'empresa', 'cotizacion', 'oc',
     'autorizacion', 'detalles_compra_servicio', 'observaciones', 'observaciones_2',
   ];
 
@@ -947,9 +947,9 @@ async function _qkAprobarUno(idx,pref) {
   const arr=(pref==='ex'?window._qkRes?.exactos:window._qkRes?.posibles)||[];
   const item=arr[idx]; if(!item||item._ok) return;
   const hoy=new Date().toISOString().slice(0,10);
-  const patch={entrega_doc:'EMITIDO',estado_conciliacion:'conciliado',nro_factura_doc:item.doc._ndoc||null,tipo_doc:item.doc._tipo||null,fecha_actualizacion:hoy};
-  if(item.doc._proveedor&&!item.mov.proveedor_empresa_personal) patch.proveedor_empresa_personal=item.doc._proveedor;
-  if(item.doc._ruc&&!item.mov.ruc_dni) patch.ruc_dni=item.doc._ruc;
+  const patch={entrega_doc:'EMITIDO',estado_conciliacion:'conciliado',nro_factura_doc:item.doc._ndoc||null,tipo_doc:item.doc._tipo||null,tipo_comprobante:_mbdCodigoTipoComprobante(item.doc._tipo,item.doc._ndoc),fecha_actualizacion:hoy};
+  if(item.doc._proveedor) patch.proveedor_empresa_personal=item.doc._proveedor;
+  if(item.doc._ruc) patch.ruc_dni=item.doc._ruc;
   const {error}=await _supabase.from('tesoreria_mbd').update(patch).eq('id',item.mov.id);
   if(error){mostrarToast('Error: '+error.message,'error');return;}
   await _supabase.from('conciliaciones').insert({empresa_operadora_id:empresa_activa.id,movimiento_id:item.mov.id,doc_tipo:item.doc._tipo,doc_id:item.doc.id||null,score:item.score,tipo_match:pref==='ex'?'EXACTO':'POSIBLE',estado:'APROBADO',usuario_id:perfil_usuario?.id||null});
@@ -963,9 +963,9 @@ async function _qkAprobarMulti(idx) {
   const item=(window._qkRes?.posibles||[])[idx]; if(!item?.esMulti||item._ok) return;
   const hoy=new Date().toISOString().slice(0,10); let ok=0;
   for (const mov of item.movs) {
-    const patch={entrega_doc:'EMITIDO',estado_conciliacion:'conciliado',nro_factura_doc:item.doc._ndoc||null,tipo_doc:item.doc._tipo||null,fecha_actualizacion:hoy};
-    if(item.doc._proveedor&&!mov.proveedor_empresa_personal) patch.proveedor_empresa_personal=item.doc._proveedor;
-    if(item.doc._ruc&&!mov.ruc_dni) patch.ruc_dni=item.doc._ruc;
+    const patch={entrega_doc:'EMITIDO',estado_conciliacion:'conciliado',nro_factura_doc:item.doc._ndoc||null,tipo_doc:item.doc._tipo||null,tipo_comprobante:_mbdCodigoTipoComprobante(item.doc._tipo,item.doc._ndoc),fecha_actualizacion:hoy};
+    if(item.doc._proveedor) patch.proveedor_empresa_personal=item.doc._proveedor;
+    if(item.doc._ruc) patch.ruc_dni=item.doc._ruc;
     const {error}=await _supabase.from('tesoreria_mbd').update(patch).eq('id',mov.id);
     if(!error){await _supabase.from('conciliaciones').insert({empresa_operadora_id:empresa_activa.id,movimiento_id:mov.id,doc_tipo:item.doc._tipo,doc_id:item.doc.id||null,score:item.score,tipo_match:'MULTI_TRANSFER',estado:'APROBADO',usuario_id:perfil_usuario?.id||null});ok++;}
   }

@@ -31,7 +31,7 @@ function renderTabRHRecibidas(area) {
             <option value="PENDIENTE">Pendiente</option>
             <option value="CANCELADO">Cancelado</option>
           </select>
-          <input type="text" id="rhr-buscar" placeholder="Buscar emisor, N° RH, N° doc, monto…"
+          <input type="text" id="rhr-buscar" autocomplete="off" placeholder="Buscar emisor, N° RH, N° doc, monto…"
             style="width:220px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
           <button onclick="cargarRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>
@@ -281,7 +281,7 @@ function _renderRHRTabla() {
             <td style="text-align:center;white-space:nowrap">
               ${tienePosible ? `<button onclick="rhConfirmarPosible('${r.id}')" title="Confirmar match posible" style="padding:4px 8px;background:rgba(214,158,46,.2);color:#D69E2E;border:1px solid #D69E2E;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">✓</button>` : ''}
               ${tieneLinks ? `<button onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Ver movimientos vinculados" style="padding:4px 8px;background:rgba(44,82,130,.1);color:#3182CE;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">🔗</button>` : ''}
-              <button onclick="_bmBuscarMov('RH','${r.id}','${escapar(r.numero_rh||'')}','${escapar(nombre)}',${Number(r.monto_neto||0)},'${r.fecha_emision||''}')" title="Buscar y vincular operación(es) bancaria(s)" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px;margin-right:2px">🔍</button>
+              <button onclick="_bmBuscarMov('RH','${r.id}','${escapar(r.numero_rh||'')}','${escapar(nombre)}',${Number(r.monto_neto||0)},'${r.fecha_emision||''}','${escapar(docNum!=='—'?docNum:'')}')" title="Buscar y vincular operación(es) bancaria(s)" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px;margin-right:2px">🔍</button>
               <button onclick="abrirModalRHR('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
               <button onclick="eliminarRHR('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
             </td>

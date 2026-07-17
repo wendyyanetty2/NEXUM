@@ -9,7 +9,7 @@ async function renderTabAsignaciones(area) {
   area.innerHTML = `
     <div class="fadeIn">
       <div class="filtros-barra">
-        <input type="text" class="buscador" id="buscar-asignacion"
+        <input type="text" class="buscador" id="buscar-asignacion" autocomplete="off"
                placeholder="🔍 Buscar por usuario o empresa…" oninput="filtrarAsignaciones()">
         <select id="filtro-rol-asignacion" onchange="filtrarAsignaciones()">
           <option value="">Todos los roles</option>

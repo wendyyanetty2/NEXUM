@@ -77,7 +77,7 @@ function renderTabImportarMBD(area) {
           <select id="mbd-filtro-anio" style="${estiloSelect()}">
             ${[anioActual-1, anioActual, anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('')}
           </select>
-          <input id="mbd-buscar" type="text" placeholder="Buscar…" style="${estiloInput()};width:180px">
+          <input id="mbd-buscar" type="text" autocomplete="off" placeholder="Buscar…" style="${estiloInput()};width:180px">
           <select id="mbd-filtro-estado" style="${estiloSelect()}">
             <option value="">Todos los estados</option>
             <option value="PENDIENTE">🔴 PENDIENTE</option>

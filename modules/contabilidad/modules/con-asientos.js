@@ -45,7 +45,7 @@ async function renderTabAsientos(area) {
           </div>
           <div>
             <label class="label-filtro">Buscar</label>
-            <input type="text" id="asi-buscar" oninput="filtrarAsientos()" class="input-buscar w-full"
+            <input type="text" id="asi-buscar" autocomplete="off" oninput="filtrarAsientos()" class="input-buscar w-full"
                    placeholder="Glosa, número…">
           </div>
         </div>

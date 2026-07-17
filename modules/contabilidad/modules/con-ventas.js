@@ -16,7 +16,7 @@ function renderTabVentas(area) {
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <input type="text" id="v-periodo" value="${periodoActual}" placeholder="YYYYMM"
             style="width:100px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
-          <input type="text" id="v-buscar" placeholder="Buscar cliente, serie…"
+          <input type="text" id="v-buscar" autocomplete="off" placeholder="Buscar cliente, serie…"
             style="width:200px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
           <button onclick="cargarVentas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>
@@ -170,7 +170,7 @@ async function _renderVentasFiltradas() {
               </div>`
             : `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
                  title="Click para conciliar con banco"
-                 onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')">🔴 PEND.</span>`;
+                 onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')">🔴 PEND.</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -188,8 +188,8 @@ async function _renderVentasFiltradas() {
             <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">
               <button onclick="abrirModalVenta('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Editar">✏️</button>
-              <button onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')" title="Conciliar con movimiento bancario" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔗</button>
-              <button onclick="_bmBuscarMov('VENTA','${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}')" title="Buscar movimiento bancario manualmente" style="padding:4px 8px;background:rgba(85,60,154,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔍</button>
+              <button onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Conciliar con movimiento bancario" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔗</button>
+              <button onclick="_bmBuscarMov('VENTA','${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Buscar movimiento bancario manualmente" style="padding:4px 8px;background:rgba(85,60,154,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔍</button>
               <button onclick="eliminarVenta('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Eliminar">🗑️</button>
             </td>
           </tr>
@@ -676,7 +676,7 @@ async function _vSunatConfirmar() {
 // _cBuscarMovManual, _cVincularMovimiento, _cAplicarLoteConciliacion)
 // ══════════════════════════════════════════════════════════════════
 
-async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmision) {
+async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmision, ruc = '') {
   const margen  = Math.max(total * 0.05, 5);
   const { data: movs } = await _supabase
     .from('tesoreria_mbd')
@@ -688,7 +688,7 @@ async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmi
     .order('fecha_deposito', { ascending: false })
     .limit(30);
 
-  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || []);
+  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, ruc, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || []);
 }
 
 async function _conciliarLoteVentas() {
@@ -706,7 +706,7 @@ async function _conciliarLoteVentas() {
 
   const { data: ventas } = await _supabase
     .from('contabilidad_ventas')
-    .select('id, serie_cdp, nro_cp_inicial, cliente, total_cp, fecha_emision')
+    .select('id, serie_cdp, nro_cp_inicial, cliente, nro_doc_identidad, total_cp, fecha_emision')
     .eq('empresa_id', empresa_activa.id)
     .eq('periodo', periodo);
 
@@ -811,7 +811,7 @@ async function _conciliarLoteVentas() {
         <div class="modal-footer" style="flex-shrink:0;gap:8px">
           <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
           <button class="btn btn-primario"
-            onclick="_vAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,cliente:m.compra.cliente||'',total:m.total})))})">
+            onclick="_vAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,cliente:m.compra.cliente||'',ruc:m.compra.nro_doc_identidad||'',total:m.total})))})">
             ✅ Aplicar seleccionados
           </button>
         </div>
@@ -834,8 +834,10 @@ async function _vAplicarLoteConciliacion(items) {
       entrega_doc:          'EMITIDO',
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'VENTA',
+      tipo_comprobante:     _mbdCodigoTipoComprobante('VENTA', item.nDoc),
       estado_conciliacion:  'conciliado',
       proveedor_empresa_personal: item.cliente || undefined,
+      ruc_dni:              item.ruc || undefined,
       fecha_actualizacion:  hoy,
     }).eq('id', item.movId);
 

@@ -20,7 +20,7 @@ async function renderTabUsuarios(area) {
   area.innerHTML = `
     <div class="fadeIn">
       <div class="filtros-barra">
-        <input type="text" class="buscador" id="buscar-usuario"
+        <input type="text" class="buscador" id="buscar-usuario" autocomplete="off"
                placeholder="🔍 Buscar por nombre, email o DNI…" oninput="filtrarUsuarios()">
         <select id="filtro-estado-usuario" onchange="filtrarUsuarios()">
           <option value="">Todos</option>
