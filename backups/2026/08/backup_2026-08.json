@@ -1,0 +1,13 @@
+{
+  "periodo": "2026-08",
+  "generado_en": "2026-08-01T05:45:55Z",
+  "tablas": {
+    "alertas_sistema": [],
+    "empresas": [],
+    "movimientos": [],
+    "notas_operativas": [],
+    "rh_movimiento_links": [],
+    "rh_registros": [],
+    "tesoreria_mbd": []
+  }
+}
