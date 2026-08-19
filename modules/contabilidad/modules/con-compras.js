@@ -179,11 +179,14 @@ async function _renderComprasFiltradas() {
             bancoHtml = `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
                  title="Click para conciliar" onclick="_conciliarCompraIndividual(${conciliarArgs})">🔴 PEND.</span>`;
           } else if (cov.estado === 'PARCIAL') {
+            const tituloParcial = cov.excede
+              ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Revisar manualmente.`
+              : `Parcial: ${formatearMoneda(cov.suma)} registrados, faltan ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`;
             bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
-                 title="Parcial: ${formatearMoneda(cov.suma)} registrados, faltan ${formatearMoneda(cov.falta)}. Click para vincular más movimientos."
+                 title="${tituloParcial}"
                  onclick="_conciliarCompraIndividual(${conciliarArgs})">
-                <span style="background:#D69E2E;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">🟡 PARCIAL</span>
-                <span style="font-size:9px;color:#D69E2E;white-space:nowrap">${formatearMoneda(cov.suma)} / ${formatearMoneda(cov.total)}</span>
+                <span style="background:${cov.excede?'#C53030':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">${cov.excede?'🔺 EXCEDE':'🟡 PARCIAL'}</span>
+                <span style="font-size:9px;color:${cov.excede?'#C53030':'#D69E2E'};white-space:nowrap">${formatearMoneda(cov.suma)} / ${formatearMoneda(cov.total)}</span>
               </div>`;
           } else {
             const emitido = cov.estado === 'COMPLETO_EMITIDO';

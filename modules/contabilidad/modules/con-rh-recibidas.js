@@ -125,8 +125,14 @@ async function _estadoCalculado(rh) {
     const mbdValidos = (mbdLinks || []).filter(l => ['OBSERVADO','EMITIDO'].includes(l.entrega_doc));
     if (mbdValidos.length > 0) {
       const montoPagadoMBD = mbdValidos.reduce((s, l) => s + Math.abs(Number(l.monto||0)), 0);
-      if (montoPagadoMBD >= montoNeto - 0.01) {
+      if (Math.abs(montoPagadoMBD - montoNeto) < 0.01) {
         return { estado: 'APLICADO', color: '#2F855A', etiqueta: '✅ APLICADO', links: mbdValidos, confirmados: mbdValidos, esMBD: true };
+      }
+      // Sobre-cobertura: lo vinculado suma MÁS que el RH — no es un match limpio,
+      // se marca igual como Parcial (con "excede") para revisión manual.
+      if (montoPagadoMBD > montoNeto) {
+        const excedeMBD = montoPagadoMBD - montoNeto;
+        return { estado: 'PARCIAL', color: '#C53030', etiqueta: `🔺 EXCEDE (+${formatearMoneda(excedeMBD)})`, links: mbdValidos, confirmados: mbdValidos, montoPagado: montoPagadoMBD, excede: excedeMBD, esMBD: true };
       }
       return { estado: 'PARCIAL', color: '#DD6B20', etiqueta: `🔶 PARCIAL (${formatearMoneda(montoPagadoMBD)})`, links: mbdValidos, confirmados: mbdValidos, montoPagado: montoPagadoMBD, esMBD: true };
     }
@@ -156,6 +162,11 @@ async function _estadoCalculado(rh) {
 
   if (Math.abs(montoPagado - montoRH) < 0.01) {
     return { estado: 'APLICADO', color: '#2F855A', etiqueta: '✅ APLICADO', links, confirmados };
+  }
+  if (montoPagado > montoRH) {
+    // Sobre-cobertura: no es un match limpio, requiere revisión manual.
+    const excedeLegacy = montoPagado - montoRH;
+    return { estado: 'PARCIAL', color: '#C53030', etiqueta: `🔺 EXCEDE (+${formatearMoneda(excedeLegacy)})`, links, confirmados, montoPagado, excede: excedeLegacy };
   }
   if (montoPagado > 0 && montoPagado < montoRH) {
     return { estado: 'PARCIAL', color: '#DD6B20', etiqueta: `🔶 PARCIAL (${formatearMoneda(montoPagado)})`, links, confirmados, montoPagado };

@@ -26,6 +26,12 @@ function _conCobertura(movsVinculados, totalComprobante) {
   if (suma < total - TOL) {
     return { estado: 'PARCIAL', suma: round(suma), total: round(total), falta: round(total - suma) };
   }
+  // Sobre-cobertura: el/los movimiento(s) vinculado(s) suman MÁS que el comprobante.
+  // No es un match limpio — se marca igual como PARCIAL (con "excede" en vez de
+  // "falta") para que se revise manualmente, en vez de darlo por completo sin más.
+  if (suma > total + TOL) {
+    return { estado: 'PARCIAL', suma: round(suma), total: round(total), falta: 0, excede: round(suma - total) };
+  }
   const todosEmitidos = movsVinculados.every(m => m.entrega_doc === 'EMITIDO');
   return {
     estado: todosEmitidos ? 'COMPLETO_EMITIDO' : 'COMPLETO_OBSERVADO',
