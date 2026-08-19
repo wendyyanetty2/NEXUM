@@ -58,8 +58,11 @@ function _migCompararCampos(formVals, comprobante) {
     if (vacioForm) {
       autocompletar[c.key] = valComp;
     } else {
+      // Monto: en Tesorería los cargos (salidas de dinero) se guardan en negativo,
+      // mientras que el comprobante siempre es positivo (salvo nota de crédito) —
+      // se compara en valor absoluto para no marcar conflicto solo por el signo.
       const igual = c.key === 'monto'
-        ? Math.abs(Number(formVals.monto) - Number(valComp)) < 0.01
+        ? Math.abs(Math.abs(Number(formVals.monto)) - Math.abs(Number(valComp))) < 0.01
         : (formVals[c.key] || '').trim().toLowerCase() === String(valComp).trim().toLowerCase();
       if (!igual) conflictos.push({ ...c, valComp });
     }
