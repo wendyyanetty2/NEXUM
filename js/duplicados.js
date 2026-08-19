@@ -1,24 +1,25 @@
 /* ============================================================
-   NEXUM — Detección de comprobantes duplicados (Compras/Ventas/RH)
-   Punto 3.1. Criterio aprobado por Wendy 2026-08-19:
-     N° de factura/DOC  O  (Proveedor + Monto + fecha ≤5 días)
-   Solo LECTURA — nunca borra ni modifica nada. La alerta hacia
-   adelante se dispara al guardar un comprobante NUEVO; el reporte
-   histórico es un escaneo aparte, bajo demanda.
+   NEXUM — Detección de duplicados (punto 3.1)
+   Corregido 2026-08-19 tras feedback de Wendy: el N° de factura/DOC
+   que emite SUNAT es correlativo y nunca se repite legítimamente,
+   así que en Compras/Ventas/RH el ÚNICO criterio de duplicado es
+   ese N° de factura/DOC exacto (+ mismo proveedor/RUC). El criterio
+   "mismo monto, fecha cercana" daba falsos positivos con pagos
+   recurrentes legítimos (mismo proveedor, mismo monto, mes tras mes)
+   y se trasladó a donde sí aplica: Tesorería → Movimientos bancarios,
+   donde el riesgo real es que la MISMA fila del banco se haya
+   importado o registrado dos veces.
+
+   Importante: esto NO debe confundirse con el Estado Parcial (1.7) —
+   que varios movimientos bancarios compartan el mismo N° de factura
+   vinculado (regla N:M) es NORMAL cuando un comprobante se paga en
+   partes; eso no es un duplicado.
+
+   Solo LECTURA — nunca borra ni modifica nada.
    ============================================================ */
 
-const _DUP_TOL_DIAS = 5;
-
-function _dupFechaCercana(f1, f2) {
-  if (!f1 || !f2) return false;
-  const dias = Math.abs(new Date(f1) - new Date(f2)) / 86400000;
-  return dias <= _DUP_TOL_DIAS;
-}
-
-// ── Busca posibles duplicados de un comprobante (Compras/Ventas) ──
-// candidato: { nDoc, docIdentidad, proveedor, total, fecha }
-// tabla: 'contabilidad_compras' | 'contabilidad_ventas'
-// campoProveedor: 'proveedor' | 'cliente'
+// ── Comprobantes (Compras/Ventas/RH): duplicado = mismo N° factura/DOC
+//    + mismo proveedor/RUC. Sin criterio de monto/fecha. ─────────────
 async function _dupBuscarCompraVenta(tabla, campoProveedor, candidato, excluirId = null) {
   let q = _supabase.from(tabla).select('*').eq('empresa_id', empresa_activa.id);
   if (excluirId) q = q.neq('id', excluirId);
@@ -26,29 +27,18 @@ async function _dupBuscarCompraVenta(tabla, campoProveedor, candidato, excluirId
 
   return (data || []).filter(r => {
     const rNDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-    const mismoDoc = candidato.nDoc && rNDoc === candidato.nDoc && r.nro_doc_identidad === candidato.docIdentidad;
-    const mismoMontoProveedor =
-      Math.abs(Number(r.total_cp || 0) - Number(candidato.total || 0)) < 0.01 &&
-      (r[campoProveedor] || '').trim().toLowerCase() === (candidato.proveedor || '').trim().toLowerCase() &&
-      _dupFechaCercana(r.fecha_emision, candidato.fecha);
-    return mismoDoc || mismoMontoProveedor;
+    return candidato.nDoc && rNDoc === candidato.nDoc && r.nro_doc_identidad === candidato.docIdentidad;
   });
 }
 
-// ── Busca posibles duplicados de un RH ─────────────────────────────
 async function _dupBuscarRH(candidato, excluirId = null) {
   let q = _supabase.from('rh_registros').select('*, prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empresa_activa.id);
   if (excluirId) q = q.neq('id', excluirId);
   const { data } = await q;
 
-  return (data || []).filter(r => {
-    const mismoNumero = candidato.numeroRH && r.numero_rh === candidato.numeroRH && r.nro_doc_emisor === candidato.docIdentidad;
-    const mismoMontoEmisor =
-      Math.abs(Number(r.monto_neto || 0) - Number(candidato.total || 0)) < 0.01 &&
-      (r.nombre_emisor || '').trim().toLowerCase() === (candidato.proveedor || '').trim().toLowerCase() &&
-      _dupFechaCercana(r.fecha_emision, candidato.fecha);
-    return mismoNumero || mismoMontoEmisor;
-  });
+  return (data || []).filter(r =>
+    candidato.numeroRH && r.numero_rh === candidato.numeroRH && r.nro_doc_emisor === candidato.docIdentidad
+  );
 }
 
 // ── Arma el detalle legible de cada ocurrencia previa, incluyendo
@@ -79,9 +69,7 @@ async function _dupDetalleOcurrencias(candidatos, nDocKey = 'nDocCalc') {
 }
 
 // ════════════════════════════════════════════════════════════════
-// REPORTE HISTÓRICO DE DUPLICADOS — solo lectura, no modifica nada.
-// Agrupa comprobantes ya existentes que cumplen el criterio de
-// duplicado entre sí (regla aprobada 2026-08-19).
+// REPORTE HISTÓRICO — solo lectura, no modifica nada.
 // ════════════════════════════════════════════════════════════════
 function _dupAgruparClusters(filas, matchFn) {
   const usados = new Set();
@@ -109,19 +97,14 @@ async function _dupReporteHistorico(tabla, campoProveedor, tituloTipo, nombreFnA
   const grupos = _dupAgruparClusters(filas, (a, b) => {
     const nDocA = [a.serie_cdp, a.nro_cp_inicial].filter(Boolean).join('-');
     const nDocB = [b.serie_cdp, b.nro_cp_inicial].filter(Boolean).join('-');
-    const mismoDoc = nDocA === nDocB && a.nro_doc_identidad === b.nro_doc_identidad;
-    const mismoMontoProveedor =
-      Math.abs(Number(a.total_cp||0) - Number(b.total_cp||0)) < 0.01 &&
-      (a[campoProveedor]||'').trim().toLowerCase() === (b[campoProveedor]||'').trim().toLowerCase() &&
-      _dupFechaCercana(a.fecha_emision, b.fecha_emision);
-    return mismoDoc || mismoMontoProveedor;
+    return nDocA === nDocB && a.nro_doc_identidad === b.nro_doc_identidad;
   });
 
   _dupRenderReporte(grupos.map(g => g.map(r => ({
     id: r.id,
     label: `${r.serie_cdp}-${r.nro_cp_inicial} · ${r[campoProveedor]||''}`,
     periodo: r.periodo, fecha: r.fecha_emision, total: r.total_cp,
-  }))), tituloTipo, nombreFnAbrir);
+  }))), tituloTipo, nombreFnAbrir, 'N° de factura/DOC exacto + mismo proveedor/RUC');
 }
 
 async function _dupReporteHistoricoRH() {
@@ -129,23 +112,60 @@ async function _dupReporteHistoricoRH() {
   const { data } = await _supabase.from('rh_registros').select('*').eq('empresa_operadora_id', empresa_activa.id);
   const filas = data || [];
 
-  const grupos = _dupAgruparClusters(filas, (a, b) => {
-    const mismoNumero = a.numero_rh === b.numero_rh && a.nro_doc_emisor === b.nro_doc_emisor;
-    const mismoMontoEmisor =
-      Math.abs(Number(a.monto_neto||0) - Number(b.monto_neto||0)) < 0.01 &&
-      (a.nombre_emisor||'').trim().toLowerCase() === (b.nombre_emisor||'').trim().toLowerCase() &&
-      _dupFechaCercana(a.fecha_emision, b.fecha_emision);
-    return mismoNumero || mismoMontoEmisor;
-  });
+  const grupos = _dupAgruparClusters(filas, (a, b) =>
+    a.numero_rh === b.numero_rh && a.nro_doc_emisor === b.nro_doc_emisor
+  );
 
   _dupRenderReporte(grupos.map(g => g.map(r => ({
     id: r.id,
     label: `${r.numero_rh} · ${r.nombre_emisor||''}`,
     periodo: r.periodo, fecha: r.fecha_emision, total: r.monto_neto,
-  }))), 'RH Recibidos', 'abrirModalRHR');
+  }))), 'RH Recibidos', 'abrirModalRHR', 'N° de RH exacto + mismo emisor');
 }
 
-function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir) {
+// ════════════════════════════════════════════════════════════════
+// TESORERÍA → MOVIMIENTOS BANCARIOS (tesoreria_mbd)
+// Aquí SÍ aplica monto + descripción — sin ventana de fecha, porque
+// una fila duplicada puede reimportarse en cualquier momento, y el
+// N° de operación bancaria puede venir vacío o distinto en la copia
+// duplicada, así que no es un criterio confiable por sí solo.
+// ════════════════════════════════════════════════════════════════
+function _dupMismoMovimiento(a, b) {
+  const montoOk = Math.abs(Math.abs(Number(a.monto)||0) - Math.abs(Number(b.monto)||0)) < 0.01;
+  const descA = (a.descripcion || '').trim().toLowerCase();
+  const descB = (b.descripcion || '').trim().toLowerCase();
+  const descOk = descA && descB && descA === descB;
+  return montoOk && descOk;
+}
+
+async function _dupBuscarMovimientoBancario(candidato, excluirId = null) {
+  let q = _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empresa_activa.id);
+  if (excluirId) q = q.neq('id', excluirId);
+  const { data } = await q;
+  return (data || []).filter(r => _dupMismoMovimiento(r, candidato));
+}
+
+function _dupDetalleMovimientos(candidatos) {
+  return candidatos.map(m =>
+    `• Op. ${m.nro_operacion_bancaria || '—'} — ${formatearFecha(m.fecha_deposito)} — ${formatearMoneda(m.monto)} — ${m.entrega_doc || 'PENDIENTE'}${m.nro_factura_doc ? ` — vinculado a ${m.nro_factura_doc}` : ''}`
+  ).join('\n');
+}
+
+async function _dupReporteHistoricoMovimientos() {
+  mostrarToast('Buscando movimientos bancarios duplicados…', 'atencion');
+  const { data } = await _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empresa_activa.id);
+  const filas = data || [];
+
+  const grupos = _dupAgruparClusters(filas, _dupMismoMovimiento);
+
+  _dupRenderReporte(grupos.map(g => g.map(r => ({
+    id: r.id,
+    label: `Op. ${r.nro_operacion_bancaria || '—'} · ${(r.descripcion||'').slice(0,40)}`,
+    periodo: r.fecha_deposito ? r.fecha_deposito.slice(0,7) : '', fecha: r.fecha_deposito, total: r.monto,
+  }))), 'Movimientos Bancarios', 'abrirModalMBD', 'Mismo monto + misma descripción del banco');
+}
+
+function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir, criterioTxt) {
   const mc = document.getElementById('modal-container');
   if (!mc) return;
   if (!grupos.length) {
@@ -153,7 +173,7 @@ function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir) {
       <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
         <div class="modal" style="max-width:460px;width:95%;padding:28px;text-align:center">
           <div style="font-size:36px;margin-bottom:10px">✅</div>
-          <p style="color:var(--color-texto)">No se encontraron ${tituloTipo.toLowerCase()} duplicados con el criterio actual (N° factura/DOC, o Proveedor + Monto + fecha ≤5 días).</p>
+          <p style="color:var(--color-texto)">No se encontraron ${tituloTipo.toLowerCase()} duplicados con el criterio actual (${criterioTxt || ''}).</p>
           <button class="btn btn-secundario" style="margin-top:16px" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
         </div>
       </div>`;
@@ -168,7 +188,7 @@ function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir) {
         </div>
         <div class="modal-body" style="flex:1;overflow-y:auto">
           <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
-            Solo lectura — nada se modifica automáticamente. Revisa cada grupo y decide manualmente si corresponde eliminar o corregir alguno.
+            Solo lectura — nada se modifica automáticamente. Criterio: ${criterioTxt || ''}. Revisa cada grupo y decide manualmente.
           </p>
           ${grupos.map((g, i) => `
             <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">

@@ -560,6 +560,18 @@ async function guardarMBD(id) {
   if (id) {
     const ok = await confirmar('¿Está segura de guardar los cambios en este movimiento?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
     if (!ok) return;
+  } else if (typeof _dupBuscarMovimientoBancario === 'function') {
+    // Alerta de movimiento bancario duplicado (3.1) — mismo monto + misma descripción,
+    // solo al registrar movimientos NUEVOS (no aplica al Estado Parcial: varios
+    // movimientos distintos vinculados al mismo comprobante son normales).
+    const dups = await _dupBuscarMovimientoBancario({ monto: payload.monto, descripcion: payload.descripcion });
+    if (dups.length) {
+      const ok = await confirmar(
+        `⚠️ Ya existe un movimiento bancario con el mismo monto y descripción:\n\n${_dupDetalleMovimientos(dups)}\n\n¿Está segura de registrarlo de todas formas?`,
+        { btnOk: 'Sí, registrar de todas formas', btnColor: '#C53030' }
+      );
+      if (!ok) return;
+    }
   }
 
   let error;
@@ -1026,6 +1038,27 @@ function cancelarPreviewMBD() {
 async function confirmarImportMBD() {
   const validos = _mbdDatosPreview.filter(r => r._ok);
   if (!validos.length) { mostrarToast('No hay registros válidos para importar.', 'atencion'); return; }
+
+  // Alerta de duplicados (3.1) — mismo monto + misma descripción, tanto contra
+  // lo ya existente en BD como entre filas del propio archivo que se va a importar.
+  if (typeof _dupMismoMovimiento === 'function') {
+    const { data: existentes } = await _supabase.from('tesoreria_mbd').select('monto,descripcion,nro_operacion_bancaria,fecha_deposito,entrega_doc').eq('empresa_id', empresa_activa.id);
+    let posiblesDup = 0;
+    const vistosEnLote = [];
+    for (const fila of validos) {
+      const chocaConExistente = (existentes || []).some(e => _dupMismoMovimiento(e, fila));
+      const chocaConLote = vistosEnLote.some(v => _dupMismoMovimiento(v, fila));
+      if (chocaConExistente || chocaConLote) posiblesDup++;
+      vistosEnLote.push(fila);
+    }
+    if (posiblesDup > 0) {
+      const ok = await confirmar(
+        `⚠️ ${posiblesDup} de ${validos.length} movimiento(s) de este archivo parecen estar duplicados (mismo monto y descripción que uno ya existente, o repetido dentro del mismo archivo).\n\n¿Está segura de importar todo de todas formas?`,
+        { btnOk: 'Sí, importar de todas formas', btnColor: '#C53030' }
+      );
+      if (!ok) return;
+    }
+  }
 
   const btn = document.getElementById('btn-confirmar-mbd');
   if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
