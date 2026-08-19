@@ -151,19 +151,24 @@ async function consolidarEstadosRetroactivo() {
     let concCreadas  = 0;
 
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
-    const { data: movs, error: errMovs } = await _supabase
+    const { data: movsCrudos, error: errMovs } = await _supabase
       .from('tesoreria_mbd')
-      .select('id,proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,entrega_doc,fecha_deposito')
+      .select('id,proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,entrega_doc,fecha_deposito,monto')
       .eq('empresa_id', empId)
       .not('nro_factura_doc', 'is', null)
       .in('tipo_doc', ['COMPRA', 'VENTA', 'RH', 'PM']);
 
     if (errMovs) throw errMovs;
 
-    if (!movs?.length) {
+    if (!movsCrudos?.length) {
       mostrarToast('No hay movimientos vinculados para consolidar.', 'atencion');
       return;
     }
+
+    // CANCELADO es manual (se asigna en Tesorería → Movimientos) — nunca se sobrescribe aquí.
+    const movs = movsCrudos.filter(m => m.entrega_doc !== 'CANCELADO');
+    const cancelados = movsCrudos.length - movs.length;
+    let discrepancias = 0;
 
     // ── Paso 1b: Traer comprobantes de Compras para clave compuesta
     let comprasMap = new Map(); // "SERIE-NRO" → [{proveedor, periodo}]
@@ -171,13 +176,13 @@ async function consolidarEstadosRetroactivo() {
     if (hayCompras) {
       const { data: compras } = await _supabase
         .from('contabilidad_compras')
-        .select('serie_cdp,nro_cp_inicial,proveedor,periodo')
+        .select('serie_cdp,nro_cp_inicial,proveedor,periodo,total_cp')
         .eq('empresa_id', empId);
       (compras || []).forEach(c => {
         const k = [c.serie_cdp, c.nro_cp_inicial].filter(Boolean).join('-');
         if (k) {
           if (!comprasMap.has(k)) comprasMap.set(k, []);
-          comprasMap.get(k).push({ proveedor: c.proveedor || '', periodo: c.periodo || '' });
+          comprasMap.get(k).push({ proveedor: c.proveedor || '', periodo: c.periodo || '', total: Number(c.total_cp) || 0 });
         }
       });
     }
@@ -188,13 +193,13 @@ async function consolidarEstadosRetroactivo() {
     if (hayVentas) {
       const { data: ventas } = await _supabase
         .from('contabilidad_ventas')
-        .select('serie_cdp,nro_cp_inicial,cliente,periodo')
+        .select('serie_cdp,nro_cp_inicial,cliente,periodo,total_cp')
         .eq('empresa_id', empId);
       (ventas || []).forEach(v => {
         const k = [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-');
         if (k) {
           if (!ventasMap.has(k)) ventasMap.set(k, []);
-          ventasMap.get(k).push({ proveedor: v.cliente || '', periodo: v.periodo || '' });
+          ventasMap.get(k).push({ proveedor: v.cliente || '', periodo: v.periodo || '', total: Number(v.total_cp) || 0 });
         }
       });
     }
@@ -218,14 +223,24 @@ async function consolidarEstadosRetroactivo() {
         const mapa       = mov.tipo_doc === 'COMPRA' ? comprasMap : ventasMap;
         const candidatos = mapa.get(mov.nro_factura_doc) || [];
 
-        // Si existen comprobantes en BD con ese número, validar clave compuesta.
-        // Si todavía no hay comprobante registrado, actualizamos igual (vínculo manual ya validado por el usuario).
-        const claveValida = !candidatos.length || candidatos.some(c =>
+        // Si existen comprobantes en BD con ese número, validar clave compuesta
+        // (nombre + período). Si todavía no hay comprobante registrado, actualizamos
+        // igual (vínculo manual ya validado por el usuario).
+        const matchNombrePeriodo = candidatos.filter(c =>
           _conNombreCoincide(mov.proveedor_empresa_personal, c.proveedor) &&
           _conPeriodoCercano(periodoMov, c.periodo)
         );
+        const claveValida = !candidatos.length || matchNombrePeriodo.length > 0;
 
-        if (claveValida) {
+        // Reforzado (1.2): además verificar que el MONTO del movimiento coincida
+        // razonablemente con el total del comprobante — si no coincide, no se
+        // actualiza el estado automáticamente (queda para revisión manual).
+        const montoOk = !matchNombrePeriodo.length || matchNombrePeriodo.some(c =>
+          Math.abs(Math.abs(Number(mov.monto) || 0) - c.total) < Math.max(c.total * 0.02, 1)
+        );
+        if (claveValida && matchNombrePeriodo.length && !montoOk) discrepancias++;
+
+        if (claveValida && montoOk) {
           // Paso 3 – evaluar completitud y actualizar entrega_doc
           const nuevoEstado = _conEvalCompletitud(mov);
           if (nuevoEstado !== mov.entrega_doc) {
@@ -284,10 +299,12 @@ async function consolidarEstadosRetroactivo() {
 
     // ── Resumen ──────────────────────────────────────────────────
     const parts = [`${movs.length} mov. revisados`];
-    if (actualizados) parts.push(`${actualizados} estado(s) corregido(s)`);
-    if (concCreadas)  parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
-    if (!actualizados && !concCreadas) parts.push('todo ya consistente');
-    mostrarToast('✅ ' + parts.join(' · '), 'exito');
+    if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
+    if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
+    if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
+    if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revisar manualmente`);
+    if (!actualizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
+    mostrarToast((discrepancias ? '⚠️ ' : '✅ ') + parts.join(' · '), discrepancias ? 'atencion' : 'exito');
 
     // ── Refrescar módulos abiertos ───────────────────────────────
     if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
