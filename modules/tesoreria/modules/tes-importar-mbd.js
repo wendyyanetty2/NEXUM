@@ -567,7 +567,7 @@ async function guardarMBD(id) {
     const dups = await _dupBuscarMovimientoBancario({ monto: payload.monto, descripcion: payload.descripcion });
     if (dups.length) {
       const ok = await confirmar(
-        `⚠️ Ya existe un movimiento bancario con el mismo monto y descripción:\n\n${_dupDetalleMovimientos(dups)}\n\n¿Está segura de registrarlo de todas formas?`,
+        `⚠️ Ya existe un movimiento bancario con el mismo monto, descripción y comprobante vinculado:\n\n${_dupDetalleMovimientos(dups)}\n\n¿Está segura de registrarlo de todas formas?`,
         { btnOk: 'Sí, registrar de todas formas', btnColor: '#C53030' }
       );
       if (!ok) return;
@@ -1053,7 +1053,7 @@ async function confirmarImportMBD() {
     }
     if (posiblesDup > 0) {
       const ok = await confirmar(
-        `⚠️ ${posiblesDup} de ${validos.length} movimiento(s) de este archivo parecen estar duplicados (mismo monto y descripción que uno ya existente, o repetido dentro del mismo archivo).\n\n¿Está segura de importar todo de todas formas?`,
+        `⚠️ ${posiblesDup} de ${validos.length} movimiento(s) de este archivo parecen estar duplicados (mismo monto, descripción y comprobante vinculado que uno ya existente, o repetido dentro del mismo archivo).\n\n¿Está segura de importar todo de todas formas?`,
         { btnOk: 'Sí, importar de todas formas', btnColor: '#C53030' }
       );
       if (!ok) return;

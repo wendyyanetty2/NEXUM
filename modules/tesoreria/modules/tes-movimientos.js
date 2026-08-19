@@ -81,7 +81,7 @@ async function renderTabMovimientos(area) {
             <button class="btn btn-secundario btn-sm" onclick="exportarMovimientosExcel()"
               title="Exportar los movimientos visibles a Excel (.xlsx)">⬇ Excel</button>
             <button class="btn btn-secundario btn-sm" onclick="_dupReporteHistoricoMovimientos()"
-              title="Buscar movimientos bancarios duplicados en TODA la base (mismo monto y descripción)">🔍 Buscar duplicados</button>
+              title="Buscar movimientos bancarios duplicados en TODA la base (mismo monto, descripción y comprobante vinculado)">🔍 Buscar duplicados</button>
             <button class="btn btn-sm" onclick="_abrirModalEliminarMesMov()"
               title="Eliminar TODOS los movimientos del mes seleccionado (requiere doble confirmación)"
               style="background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:var(--radio);padding:6px 12px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">

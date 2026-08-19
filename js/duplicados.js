@@ -129,13 +129,24 @@ async function _dupReporteHistoricoRH() {
 // una fila duplicada puede reimportarse en cualquier momento, y el
 // N° de operación bancaria puede venir vacío o distinto en la copia
 // duplicada, así que no es un criterio confiable por sí solo.
+//
+// Corregido 2026-08-19 (feedback Wendy, 109 falsos positivos): la
+// "descripcion" del banco suele ser solo el TIPO de transacción
+// (ej. "IMPUESTO ITF", "TRAN.CTAS.TERC.BM", "COM.MANTENIM") — no un
+// identificador único, y se repite todos los meses por cargos
+// recurrentes legítimos (comisiones, ITF, mantenimiento de tarjeta).
+// Por eso ahora TAMBIÉN se exige que ambos movimientos estén
+// vinculados al MISMO comprobante (nro_factura_doc). Si no hay
+// comprobante vinculado en alguno de los dos, o están vinculados a
+// comprobantes distintos, no se considera duplicado.
 // ════════════════════════════════════════════════════════════════
 function _dupMismoMovimiento(a, b) {
   const montoOk = Math.abs(Math.abs(Number(a.monto)||0) - Math.abs(Number(b.monto)||0)) < 0.01;
   const descA = (a.descripcion || '').trim().toLowerCase();
   const descB = (b.descripcion || '').trim().toLowerCase();
   const descOk = descA && descB && descA === descB;
-  return montoOk && descOk;
+  const mismoComprobante = !!(a.nro_factura_doc && b.nro_factura_doc && a.nro_factura_doc === b.nro_factura_doc);
+  return montoOk && descOk && mismoComprobante;
 }
 
 async function _dupBuscarMovimientoBancario(candidato, excluirId = null) {
@@ -162,7 +173,7 @@ async function _dupReporteHistoricoMovimientos() {
     id: r.id,
     label: `Op. ${r.nro_operacion_bancaria || '—'} · ${(r.descripcion||'').slice(0,40)}`,
     periodo: r.fecha_deposito ? r.fecha_deposito.slice(0,7) : '', fecha: r.fecha_deposito, total: r.monto,
-  }))), 'Movimientos Bancarios', 'abrirModalMBD', 'Mismo monto + misma descripción del banco');
+  }))), 'Movimientos Bancarios', 'abrirModalMBD', 'Mismo monto + misma descripción + vinculados al mismo comprobante');
 }
 
 function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir, criterioTxt) {
