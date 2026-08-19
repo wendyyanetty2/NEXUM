@@ -104,6 +104,19 @@ function _conNombreCoincide(a, b) {
   return na.includes(nb) || nb.includes(na);
 }
 
+// ── Versión ESTRICTA: usada donde el N° de documento por sí solo NO
+//    identifica de forma única al registro (ej. N° de RH, que puede
+//    repetirse entre emisores distintos — ver con-rh-recibidas.js).
+//    A diferencia de _conNombreCoincide(), si falta cualquiera de los
+//    dos nombres NO se asume coincidencia — eso mezclaría montos de
+//    personas/empresas distintas y produciría falsos "EXCEDE".
+function _conNombreCoincideEstricto(a, b) {
+  const na = String(a || '').trim().toLowerCase();
+  const nb = String(b || '').trim().toLowerCase();
+  if (!na || !nb) return false;
+  return na.includes(nb) || nb.includes(na);
+}
+
 // ── Período del movimiento y del comprobante son compatibles ────
 // Tolerancia ±2 meses (el pago puede caer en mes distinto al de emisión)
 function _conPeriodoCercano(periodoMov, periodoComp) {

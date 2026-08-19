@@ -668,8 +668,11 @@ async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, provee
     const vistos = new Set(links.map(l => l.id));
     (linksLegible || []).forEach(l => {
       if (vistos.has(l.id)) return;
-      const coincideProveedor = !proveedorEmisor || typeof _conNombreCoincide !== 'function'
-        || _conNombreCoincide(l.proveedor_empresa_personal, proveedorEmisor);
+      // Estricto: el N° de RH puede repetirse entre emisores distintos, así que
+      // si falta el proveedor en cualquiera de los dos lados NO se asume match
+      // (evita mezclar montos de personas distintas — ver consolidacion-estados.js).
+      const coincideProveedor = typeof _conNombreCoincideEstricto === 'function'
+        && _conNombreCoincideEstricto(l.proveedor_empresa_personal, proveedorEmisor);
       if (coincideProveedor) { links.push(l); vistos.add(l.id); }
     });
   }

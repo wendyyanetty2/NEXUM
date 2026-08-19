@@ -128,9 +128,7 @@ async function _estadoCalculado(rh) {
   (uuidLinks   || []).forEach(l => todosIds.add(l.id));
   (numeroLinks || []).forEach(l => {
     const nombreEmisor = rh.nombre_emisor || rh.prestadores_servicios?.nombre || '';
-    if (typeof _conNombreCoincide === 'function'
-      ? _conNombreCoincide(l.proveedor_empresa_personal, nombreEmisor)
-      : true) {
+    if (typeof _conNombreCoincideEstricto === 'function' && _conNombreCoincideEstricto(l.proveedor_empresa_personal, nombreEmisor)) {
       todosIds.add(l.id);
     }
   });
@@ -308,7 +306,8 @@ function _renderRHRTabla() {
             <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.monto_retencion, mon)}</td>
             <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.monto_neto, mon)}</td>
             <td>
-              <span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${estInfo.color};color:#fff;white-space:nowrap">${estInfo.etiqueta}</span>
+              <span ${tieneLinks ? `onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Click para ver el/los movimiento(s) vinculado(s)"` : ''}
+                style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${estInfo.color};color:#fff;white-space:nowrap${tieneLinks ? ';cursor:pointer' : ''}">${estInfo.etiqueta}</span>
             </td>
             <td style="text-align:center;white-space:nowrap">
               ${tienePosible ? `<button onclick="rhConfirmarPosible('${r.id}')" title="Confirmar match posible" style="padding:4px 8px;background:rgba(214,158,46,.2);color:#D69E2E;border:1px solid #D69E2E;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">✓</button>` : ''}
