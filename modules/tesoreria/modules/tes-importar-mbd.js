@@ -541,9 +541,12 @@ async function guardarMBD(id) {
   if (error) { alerta.textContent = 'Error al guardar: ' + error.message; alerta.classList.add('visible'); return; }
   mostrarToast(id ? 'Movimiento actualizado.' : 'Movimiento registrado.', 'exito');
   cerrarModalMBD();
-  // Refrescar el panel activo: Movimientos o importar-MBD según el tab abierto
-  if (document.getElementById('tbody-movimientos')) cargarMovimientos();
-  if (document.getElementById('mbd-tabla-wrap')) cargarMBD();
+  // Refrescar el panel activo: Movimientos o importar-MBD según el tab abierto,
+  // manteniendo página y posición de scroll (no reiniciar la vista al editar)
+  const _y = window.scrollY;
+  if (document.getElementById('tbody-movimientos')) await cargarMovimientos(true);
+  if (document.getElementById('mbd-tabla-wrap')) await cargarMBD();
+  requestAnimationFrame(() => window.scrollTo(0, _y));
 }
 
 function _mbdAgregarNroOp() {
@@ -567,7 +570,9 @@ async function eliminarMBD(id) {
   const { error } = await _supabase.from('tesoreria_mbd').delete().eq('id', id);
   if (error) { mostrarToast('Error al eliminar.', 'error'); return; }
   mostrarToast('Movimiento eliminado.', 'exito');
-  cargarMBD();
+  const _y = window.scrollY;
+  await cargarMBD();
+  requestAnimationFrame(() => window.scrollTo(0, _y));
 }
 
 /* ── Dividir transferencia en N comprobantes (1→N) ──────────── */
@@ -679,15 +684,15 @@ function _renderModalDividir() {
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
                 <div class="campo" style="margin:0">
-                  <label>Tipo de DOC <span style="color:var(--color-critico)">*</span></label>
+                  <label>Tipo de DOC</label>
                   <select id="div-tipo-${i}" onchange="_actualizarSumaDividir()">
                     <option value="">— Seleccionar —</option>
                     ${TIPOS_DOC_MBD.map(t => `<option value="${t.val}" ${f.tipodoc === t.val ? 'selected' : ''}>${t.lab}</option>`).join('')}
                   </select>
                 </div>
                 <div class="campo" style="margin:0">
-                  <label>N° Comprobante <span style="color:var(--color-critico)">*</span></label>
-                  <input type="text" id="div-nro-${i}" value="${escapar(f.nrodoc)}" placeholder="Ej: E001-17, 001-10-25">
+                  <label>N° Comprobante</label>
+                  <input type="text" id="div-nro-${i}" value="${escapar(f.nrodoc)}" placeholder="Ej: E001-17, 001-10-25 (opcional, puede completarse después)">
                 </div>
                 <div class="campo" style="margin:0">
                   <label>Monto (${moneda}) <span style="color:var(--color-critico)">*</span></label>
@@ -742,17 +747,10 @@ async function _confirmarDividirMBD() {
   const moneda = r.moneda === 'USD' ? 'USD' : 'PEN';
   const n      = _dividirFilas.length;
 
-  // Validar cada fila
+  // Validar cada fila — solo el monto es obligatorio (la suma debe cuadrar con el total original).
+  // Tipo de DOC, N° Comprobante y Proveedor pueden completarse después.
   for (let i = 0; i < n; i++) {
     const f = _dividirFilas[i];
-    if (!f.tipodoc) {
-      if (alerta) { alerta.textContent = `Comprobante ${i+1}: selecciona el tipo de documento.`; alerta.classList.add('visible'); }
-      return;
-    }
-    if (!f.nrodoc) {
-      if (alerta) { alerta.textContent = `Comprobante ${i+1}: ingresa el número del comprobante.`; alerta.classList.add('visible'); }
-      return;
-    }
     if (!parseFloat(f.monto)) {
       if (alerta) { alerta.textContent = `Comprobante ${i+1}: ingresa un monto válido distinto de cero.`; alerta.classList.add('visible'); }
       return;
@@ -762,7 +760,6 @@ async function _confirmarDividirMBD() {
   if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
 
   // Construir las N filas hijas
-  const _ok = v => !!(v && String(v).trim());
   const nuevasFilas = _dividirFilas.map((f, i) => {
     const proveedor = f.proveedor || r.proveedor_empresa_personal || null;
     const cotizacion = r.cotizacion;
@@ -770,15 +767,24 @@ async function _confirmarDividirMBD() {
     const proyecto = r.proyecto;
     const concepto = r.concepto;
     const empresa = r.empresa;
-    const estadoDoc = (_ok(proveedor) && (_ok(cotizacion) || _ok(oc)) && _ok(proyecto) && _ok(concepto) && _ok(empresa))
-      ? 'EMITIDO' : 'OBSERVADO';
+    const descripcion = (r.descripcion || '') + (n > 1 ? ` (${i+1}/${n})` : '');
+    // Estado según completitud real de los 14 campos (PENDIENTE/OBSERVADO/EMITIDO) — punto 2.5
+    const estadoDoc = typeof _conEvalCompletitud14 === 'function'
+      ? _conEvalCompletitud14({
+          nro_operacion_bancaria: r.nro_operacion_bancaria, fecha_deposito: r.fecha_deposito,
+          descripcion, moneda: r.moneda, monto: f.monto,
+          proveedor_empresa_personal: proveedor, ruc_dni: f.ruc,
+          cotizacion, oc, proyecto, concepto, empresa,
+          nro_factura_doc: f.nrodoc, tipo_doc: f.tipodoc, autorizacion: r.autorizacion,
+        })
+      : 'PENDIENTE';
     return {
       empresa_id:                 r.empresa_id,
       nro_operacion_bancaria:     r.nro_operacion_bancaria,
       fecha_deposito:             r.fecha_deposito,
       moneda:                     r.moneda,
       monto:                      parseFloat(f.monto),
-      descripcion:                (r.descripcion || '') + (n > 1 ? ` (${i+1}/${n})` : ''),
+      descripcion,
       proveedor_empresa_personal: proveedor,
       ruc_dni:                    f.ruc || null,
       tipo_doc:                   f.tipodoc,

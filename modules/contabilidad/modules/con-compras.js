@@ -52,10 +52,12 @@ function _filtrarComprasBuscar(filas, buscar) {
   if (!buscar) return filas;
   return filas.filter(r => {
     const haystack = [
-      r.proveedor, r.serie_cdp, r.nro_doc_identidad, r.nro_cp_inicial,
+      r.proveedor, r.serie_cdp, r.nro_doc_identidad, r.nro_cp_inicial, r.nro_cp_final,
       TIPOS_DOC_ID_C[r.tipo_doc_identidad], r.tipo_doc_identidad,
-      r.tipo_cp_doc, r.moneda, r.periodo,
-      r.bi_gravado_dg, r.igv_ipm_dg, r.total_cp
+      r.tipo_cp_doc, r.moneda, r.periodo, r.fecha_emision, r.fecha_vcto_pago,
+      r.bi_gravado_dg, r.igv_ipm_dg, r.total_cp,
+      r.car_sunat, r.cod_dam_dsi, r.tipo_nota,
+      r.serie_cp_modificado, r.nro_cp_modificado, r.id_proyecto
     ].map(v => (v != null ? String(v) : '')).join(' ').toLowerCase();
     return haystack.includes(buscar);
   });
@@ -942,7 +944,6 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
   const hoy = new Date().toISOString().slice(0, 10);
 
   const patch = {
-    entrega_doc:          'OBSERVADO',
     nro_factura_doc:      nDoc,
     tipo_doc:             tipoDoc,
     tipo_comprobante:     _mbdCodigoTipoComprobante(tipoDoc, nDoc),
@@ -968,6 +969,9 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
     usuario_id:           perfil_usuario?.id || null,
   });
 
+  // entrega_doc se calcula (no se fuerza) con la misma lógica que usa el icono 🔍 lupa
+  if (typeof consolidarMovimientoVinculado === 'function') await consolidarMovimientoVinculado(movId);
+
   document.querySelector('.modal-overlay')?.remove();
   mostrarToast(`✅ Vinculado: ${nDoc} → movimiento bancario`, 'exito');
   cargarCompras();
@@ -985,7 +989,6 @@ async function _cAplicarLoteConciliacion(items) {
     if (!item) continue;
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
-      entrega_doc:          'EMITIDO',
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'COMPRA',
       tipo_comprobante:     _mbdCodigoTipoComprobante('COMPRA', item.nDoc),
@@ -1006,6 +1009,8 @@ async function _cAplicarLoteConciliacion(items) {
         estado:               'APROBADO',
         usuario_id:           perfil_usuario?.id || null,
       });
+      // entrega_doc se calcula (no se fuerza) con la misma lógica que usa el icono 🔍 lupa
+      if (typeof consolidarMovimientoVinculado === 'function') await consolidarMovimientoVinculado(item.movId);
       ok++;
     } else {
       errores++;

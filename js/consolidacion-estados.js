@@ -9,7 +9,11 @@
      consolidarEstadosRetroactivo()        — proceso retroactivo masivo (botón UI)
    ============================================================ */
 
-// ── Evalúa completitud de los 5 campos requeridos ──────────────
+// ── Evalúa completitud de los 5 campos requeridos (fórmula histórica,
+//    2 niveles: EMITIDO/OBSERVADO). Usada hoy solo por "🔄 Consolidar
+//    estados" (proceso retroactivo masivo) para no alterar de golpe
+//    el estado de registros ya existentes — ver _conEvalCompletitud14
+//    para la fórmula nueva de 3 niveles. ──────────────────────────
 function _conEvalCompletitud(mov) {
   const ok = v => !!(v && String(v).trim());
   return (ok(mov.proveedor_empresa_personal) &&
@@ -18,6 +22,37 @@ function _conEvalCompletitud(mov) {
           ok(mov.concepto) &&
           ok(mov.empresa))
     ? 'EMITIDO' : 'OBSERVADO';
+}
+
+// ── Fórmula nueva (3 niveles: PENDIENTE/OBSERVADO/EMITIDO), aprobada
+//    2026-08-19 — punto 2.5. Evalúa los 14 campos del comprobante.
+//    Ningún campo faltante → PENDIENTE. Todos completos → EMITIDO.
+//    Algunos completos → OBSERVADO. Se usa solo en acciones NUEVAS
+//    (vincular, dividir) — nunca sobrescribe un estado CANCELADO
+//    (ese se asigna manualmente en Tesorería → Movimientos). ──────
+function _conEvalCompletitud14(mov) {
+  if (mov.entrega_doc === 'CANCELADO') return 'CANCELADO';
+  const ok = v => !!(v && String(v).trim());
+  const slots = [
+    ok(mov.nro_operacion_bancaria),
+    ok(mov.fecha_deposito),
+    ok(mov.descripcion),
+    ok(mov.moneda),
+    !!(mov.monto || mov.monto === 0) && mov.monto !== '',
+    ok(mov.proveedor_empresa_personal),
+    ok(mov.ruc_dni),
+    ok(mov.cotizacion) || ok(mov.oc),
+    ok(mov.proyecto),
+    ok(mov.concepto),
+    ok(mov.empresa),
+    ok(mov.nro_factura_doc),
+    ok(mov.tipo_doc) || ok(mov.tipo_comprobante),
+    ok(mov.autorizacion),
+  ];
+  const completos = slots.filter(Boolean).length;
+  if (completos === 0) return 'PENDIENTE';
+  if (completos === slots.length) return 'EMITIDO';
+  return 'OBSERVADO';
 }
 
 // ── Extrae período YYYYMM de una fecha YYYY-MM-DD ───────────────
@@ -53,14 +88,14 @@ async function consolidarMovimientoVinculado(movId) {
 
   const { data: mov } = await _supabase
     .from('tesoreria_mbd')
-    .select('id,proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,entrega_doc')
+    .select('id,nro_operacion_bancaria,fecha_deposito,descripcion,moneda,monto,proveedor_empresa_personal,ruc_dni,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,tipo_comprobante,autorizacion,entrega_doc')
     .eq('id', movId)
     .eq('empresa_id', empresa_activa.id)
     .single();
 
-  if (!mov?.nro_factura_doc) return;
+  if (!mov?.nro_factura_doc || mov.entrega_doc === 'CANCELADO') return;
 
-  const estadoCorrecto = _conEvalCompletitud(mov);
+  const estadoCorrecto = _conEvalCompletitud14(mov);
   if (estadoCorrecto !== mov.entrega_doc) {
     await _supabase
       .from('tesoreria_mbd')

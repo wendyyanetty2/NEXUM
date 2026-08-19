@@ -23,3 +23,23 @@ npm-debug.log*
 
 # Cloudflare
 .wrangler/
+
+# Entorno Python suelto (no es parte de la app)
+Lib/
+Scripts/
+pyvenv.cfg
+
+# Archivos temporales de trabajo (Excel/JSON generados localmente)
+temp_xlsx/
+
+# Documentos reales con datos bancarios/personales — nunca al historial de Git
+Plantilla HTML/
+Plantilla Word/
+Plantillas JSON/
+Plantillas excel base/
+
+# Worktrees locales de Claude Code
+.claude/worktrees/
+
+# Config local de Claude Code (no se comparte)
+.claude/settings.local.json

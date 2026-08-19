@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Verificar Reembolsos de Peaje — NEXUM</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  body { font-family: sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background: #f0f4f8; }
+  h2 { color: #2d3748; }
+  input, button, select { padding: 10px; margin: 6px 0; box-sizing: border-box; border-radius: 6px; border: 1px solid #cbd5e0; font-size: 14px; }
+  input[type=email], input[type=password] { width: 100%; }
+  button { background: #2c5282; color: white; border: none; cursor: pointer; font-size: 15px; font-weight: bold; }
+  button:hover { background: #2a4a7f; }
+  button:disabled { background: #a0aec0; cursor: not-allowed; }
+  .section { background: white; border-radius: 10px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  label { font-size: 13px; color: #4a5568; font-weight: 600; display:block; }
+  #log { background: #1a202c; color: #68d391; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 240px; overflow-y: auto; margin-top: 16px; display: none; }
+  .error { color: #fc8181; }
+  .ok { color: #68d391; }
+  .warn { color: #f6e05e; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: left; white-space: nowrap; }
+  th { background: #edf2f7; color: #2d3748; position: sticky; top: 0; }
+  tr:hover { background: #f7fafc; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; }
+  .b-ok { background: #2f855a; }
+  .b-pend { background: #c05621; }
+  .b-obs { background: #744210; }
+  .b-no { background: #c53030; }
+  #tabla-wrap { overflow: auto; max-height: 600px; }
+  #resumen { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:10px; }
+  #resumen div { background:#edf2f7; border-radius:8px; padding:10px 16px; font-size:13px; }
+  #resumen b { display:block; font-size:18px; color:#2c5282; }
+</style>
+</head>
+<body>
+<h2>🧾 Verificar Reembolsos de Peaje — PEVAL</h2>
+<p style="color:#718096;font-size:13px">
+  Compara el Excel de facturas de peaje que solicitan reembolso contra el Registro de Compras,
+  Tesorería (MBD) y el extracto bancario real (movimientos) de <b>PEVAL</b> — desde el mes en que
+  se cargaron los datos — para saber cuáles ya fueron reembolsadas y cuáles siguen pendientes.
+  También avisa si alguna de estas facturas aparece duplicada en <b>JVÑ</b>.
+</p>
+
+<div class="section">
+  <label>Email NEXUM</label>
+  <input type="email" id="email" placeholder="tu@email.com" />
+  <label>Contraseña NEXUM</label>
+  <input type="password" id="pass" placeholder="contraseña" />
+  <button onclick="login()">🔐 Iniciar sesión</button>
+  <div id="login-status" style="font-size:13px;margin-top:8px;color:#2f855a"></div>
+</div>
+
+<div class="section" id="sec-import" style="display:none">
+  <label>Archivo Excel (Reembolsos de peajes.xlsx)</label>
+  <input type="file" id="archivo" accept=".xlsx,.xls" />
+  <button id="btn-verificar" onclick="verificar()" disabled>🔍 Verificar contra NEXUM</button>
+</div>
+
+<div id="log"></div>
+
+<div class="section" id="sec-resultado" style="display:none">
+  <div id="resumen"></div>
+  <div id="tabla-wrap"></div>
+</div>
+
+<script>
+const SUPA_URL = 'https://ncfnhjyqehvdqzikjhmg.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZm5oanlxZWh2ZHF6aWtqaG1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3MzQ0NTAsImV4cCI6MjA5MjMxMDQ1MH0.n_fDdqDQFANPJ9ySD0KBztSCwodBFVn0hBFbW8WNySk';
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+const PEVAL_RUC = '20611965479';
+const JVN_RUC   = '20603607342';
+let empresa_id = null;
+let jvn_empresa_id = null;
+
+function log(msg, tipo = '') {
+  const el = document.getElementById('log');
+  el.style.display = 'block';
+  el.innerHTML += `<span class="${tipo}">${msg}\n</span>`;
+  el.scrollTop = el.scrollHeight;
+}
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function login() {
+  const email = document.getElementById('email').value.trim();
+  const pass = document.getElementById('pass').value;
+  if (!email || !pass) { alert('Ingresa email y contraseña'); return; }
+
+  document.getElementById('login-status').textContent = 'Iniciando sesión...';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+  if (error) {
+    document.getElementById('login-status').style.color = '#e53e3e';
+    document.getElementById('login-status').textContent = '❌ Error: ' + error.message;
+    return;
+  }
+
+  const { data: emp, error: eEmp } = await sb.from('empresas_operadoras').select('id,nombre').eq('ruc', PEVAL_RUC).maybeSingle();
+  if (eEmp || !emp) {
+    document.getElementById('login-status').style.color = '#e53e3e';
+    document.getElementById('login-status').textContent = '❌ No se encontró la empresa PEVAL (RUC ' + PEVAL_RUC + ') en empresas_operadoras.';
+    return;
+  }
+  empresa_id = emp.id;
+
+  const { data: empJvn } = await sb.from('empresas_operadoras').select('id,nombre').eq('ruc', JVN_RUC).maybeSingle();
+  jvn_empresa_id = empJvn?.id || null;
+
+  document.getElementById('login-status').style.color = '#2f855a';
+  document.getElementById('login-status').textContent = `✅ Sesión iniciada. Empresa: ${emp.nombre}` +
+    (jvn_empresa_id ? ' (también se validarán duplicados contra JVÑ)' : ' — ⚠️ no se encontró JVÑ, no se podrá chequear duplicados');
+  document.getElementById('sec-import').style.display = 'block';
+  document.getElementById('archivo').onchange = () => {
+    document.getElementById('btn-verificar').disabled = false;
+  };
+}
+
+function parseFechaExcel(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') {
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0,10);
+  }
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val.toISOString().slice(0,10);
+  const d2 = new Date(val);
+  return isNaN(d2.getTime()) ? null : d2.toISOString().slice(0,10);
+}
+
+async function verificar() {
+  const file = document.getElementById('archivo').files[0];
+  if (!file) { alert('Selecciona el archivo Excel'); return; }
+  if (!empresa_id) { alert('No se encontró empresa PEVAL activa'); return; }
+
+  document.getElementById('btn-verificar').disabled = true;
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('sec-resultado').style.display = 'none';
+  log('Leyendo archivo: ' + file.name, 'warn');
+
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  // Columnas por posición (no por nombre): la cabecera "N° Comprobantes" trae un
+  // carácter corrupto en este archivo, así que el nombre de columna no es fiable.
+  // Orden esperado: Mes, Gasto, Fecha de emisión, N° Comprobantes, RUC,
+  // Apellidos Nombres/Razón Social, BI Gravado DG, IGV/IPM DG, Total CP, Moneda.
+  const filasArr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  const filas = filasArr.slice(1).filter(r => r && r.some(v => v !== null && v !== ''));
+
+  log(`Filas leídas: ${filas.length}`, 'warn');
+
+  const facturas = filas.map(r => {
+    const nComp = (r[3] ?? '').toString().trim();
+    const partes = nComp.split('-');
+    const serie = partes[0] || null;
+    const numero = partes.slice(1).join('-') || null;
+    const rucRaw = r[4];
+    const ruc = rucRaw != null ? (typeof rucRaw === 'number' ? Math.round(rucRaw).toString() : rucRaw.toString().trim()) : null;
+    return {
+      mes: r[0] || '',
+      nComp, serie, numero, ruc,
+      proveedor: r[5] || '',
+      total: parseFloat(r[8]) || 0,
+      moneda: r[9] || 'PEN',
+      fecha: parseFechaExcel(r[2]),
+    };
+  }).filter(f => f.nComp);
+
+  log(`Facturas válidas (con N° Comprobante): ${facturas.length}`, 'warn');
+
+  // Traer TODO el registro de compras y tesorería MBD de PEVAL relevante (RUC proveedor de peajes)
+  const rucsUnicos = [...new Set(facturas.map(f => f.ruc).filter(Boolean))];
+
+  const { data: compras, error: eCompras } = await sb
+    .from('registro_compras')
+    .select('id,serie,numero,ruc_proveedor,nombre_proveedor,total,fecha_emision')
+    .eq('empresa_operadora_id', empresa_id)
+    .in('ruc_proveedor', rucsUnicos);
+  if (eCompras) { log('❌ Error consultando registro_compras: ' + eCompras.message, 'error'); document.getElementById('btn-verificar').disabled = false; return; }
+
+  const nDocsUnicos = facturas.map(f => f.nComp);
+  const { data: mbd, error: eMbd } = await sb
+    .from('tesoreria_mbd')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc,tipo_doc,nro_factura_doc,proveedor_empresa_personal')
+    .eq('empresa_id', empresa_id)
+    .eq('tipo_doc', 'COMPRA')
+    .in('nro_factura_doc', nDocsUnicos);
+  if (eMbd) { log('❌ Error consultando tesoreria_mbd: ' + eMbd.message, 'error'); document.getElementById('btn-verificar').disabled = false; return; }
+
+  log(`Compras encontradas en NEXUM (mismo RUC proveedor): ${compras?.length ?? 0}`, 'ok');
+  log(`Movimientos de tesorería (MBD) vinculados a estos comprobantes: ${mbd?.length ?? 0}`, 'ok');
+
+  // ── Extracto bancario real (tabla "movimientos") desde el mes en que se
+  //    cargaron los datos del Excel, para detectar reembolsos ya pagados
+  //    aunque nadie los haya vinculado formalmente en tesoreria_mbd ──
+  const fechasValidas = facturas.map(f => f.fecha).filter(Boolean).sort();
+  const mesInicio = fechasValidas.length ? fechasValidas[0].slice(0,7) + '-01' : null;
+  let movBanco = [];
+  if (mesInicio) {
+    const { data: movs, error: eMov } = await sb
+      .from('movimientos')
+      .select('id,fecha,naturaleza,importe,moneda,descripcion,numero_operacion,numero_documento,estado')
+      .eq('empresa_operadora_id', empresa_id)
+      .eq('naturaleza', 'CARGO')
+      .gte('fecha', mesInicio)
+      .order('fecha', { ascending: true })
+      .limit(2000);
+    if (eMov) log('⚠️ No se pudo consultar "movimientos" (extracto bancario): ' + eMov.message, 'warn');
+    else movBanco = movs || [];
+  }
+  log(`Movimientos bancarios CARGO en PEVAL desde ${mesInicio || '—'}: ${movBanco.length}`, 'ok');
+
+  // ── Duplicados: ¿estas mismas facturas aparecen también en JVÑ? ──
+  let comprasJvn = [], mbdJvn = [];
+  if (jvn_empresa_id) {
+    const { data: cj } = await sb.from('registro_compras')
+      .select('id,serie,numero,ruc_proveedor,total,fecha_emision')
+      .eq('empresa_operadora_id', jvn_empresa_id)
+      .in('ruc_proveedor', rucsUnicos);
+    comprasJvn = cj || [];
+    const { data: mj } = await sb.from('tesoreria_mbd')
+      .select('id,nro_factura_doc,entrega_doc,monto,fecha_deposito')
+      .eq('empresa_id', jvn_empresa_id)
+      .eq('tipo_doc', 'COMPRA')
+      .in('nro_factura_doc', nDocsUnicos);
+    mbdJvn = mj || [];
+    log(`Chequeo de duplicados en JVÑ: ${comprasJvn.length} en Compras, ${mbdJvn.length} vinculados en MBD`, comprasJvn.length || mbdJvn.length ? 'error' : 'ok');
+  } else {
+    log('⚠️ No se validaron duplicados: no se encontró la empresa JVÑ.', 'warn');
+  }
+
+  // Indexar
+  const comprasPorClave = new Map();
+  (compras || []).forEach(c => {
+    const clave = `${(c.serie||'').trim().toUpperCase()}-${(c.numero||'').trim()}`;
+    comprasPorClave.set(clave, c);
+  });
+  const mbdPorDoc = new Map();
+  (mbd || []).forEach(m => {
+    const arr = mbdPorDoc.get(m.nro_factura_doc) || [];
+    arr.push(m);
+    mbdPorDoc.set(m.nro_factura_doc, arr);
+  });
+  const comprasJvnPorClave = new Map();
+  comprasJvn.forEach(c => {
+    const clave = `${(c.serie||'').trim().toUpperCase()}-${(c.numero||'').trim()}`;
+    comprasJvnPorClave.set(clave, c);
+  });
+  const mbdJvnPorDoc = new Map();
+  mbdJvn.forEach(m => {
+    const arr = mbdJvnPorDoc.get(m.nro_factura_doc) || [];
+    arr.push(m);
+    mbdJvnPorDoc.set(m.nro_factura_doc, arr);
+  });
+
+  // ── Coincidencia 1 a 1 contra el extracto bancario real ──
+  // IMPORTANTE: muchas facturas de peaje tienen el MISMO monto exacto (ej. S/6.30),
+  // así que un solo depósito NO puede "explicar" varias facturas a la vez.
+  // Cada movimiento bancario se consume una sola vez (el primero que calce se lo
+  // lleva); el resto queda sin coincidencia aunque el monto sea igual. Esto es
+  // solo una PISTA para que la revises tú — no reemplaza el vínculo formal en MBD.
+  // Dos pasadas para que la coincidencia fuerte (serie-número) SIEMPRE gane,
+  // sin importar el orden de fechas — si se hiciera todo en una sola pasada,
+  // una factura sin mención de comprobante podía "robarse" por monto el
+  // movimiento que en realidad correspondía a otra factura mencionada por su
+  // serie-número.
+  const movUsados = new Set();
+  const movAsignadoPorFactura = new Map();
+  const movFuertePorFactura = new Set(); // facturas cuyo match vino por serie-número (confiable)
+
+  function coincidePorDocumento(f, m) {
+    if (f.fecha && m.fecha < f.fecha) return false;
+    const doc = `${m.numero_documento||''} ${m.descripcion||''}`.toLowerCase();
+    const numeroSolo = (f.numero||'').toLowerCase();
+    return (f.nComp && doc.includes(f.nComp.toLowerCase())) ||
+           (numeroSolo && numeroSolo.length > 3 && doc.includes(numeroSolo));
+  }
+
+  // Pasada 1 (fuerte): la SERIE-NÚMERO de la factura aparece mencionada en el
+  // movimiento (N° de documento o descripción) — es la guía principal que
+  // pidió Wendy, más confiable que el monto porque varios peajes cuestan
+  // exactamente lo mismo.
+  facturas.forEach(f => {
+    const candidato = movBanco.find(m => !movUsados.has(m.id) && coincidePorDocumento(f, m));
+    if (candidato) { movUsados.add(candidato.id); movAsignadoPorFactura.set(f, candidato); movFuertePorFactura.add(f); }
+  });
+
+  // Pasada 2 (respaldo débil, solo para facturas que quedaron sin match por
+  // documento): mismo importe, el más cercano en fecha. Las salidas de dinero
+  // (CARGO) se guardan en negativo en "movimientos" (ej. -6.30), por eso se
+  // compara con Math.abs() en ambos lados. Se procesa en orden cronológico
+  // para que la asignación 1 a 1 sea consistente.
+  const ordenPorFecha = [...facturas].sort((a,b) => (a.fecha||'').localeCompare(b.fecha||''));
+  ordenPorFecha.forEach(f => {
+    if (movAsignadoPorFactura.has(f)) return;
+    const candidato = movBanco
+      .filter(m => !movUsados.has(m.id) && (!f.fecha || m.fecha >= f.fecha) && Math.abs(Math.abs(Number(m.importe||0)) - f.total) < 0.02)
+      .sort((a,b) => a.fecha.localeCompare(b.fecha))[0];
+    if (candidato) { movUsados.add(candidato.id); movAsignadoPorFactura.set(f, candidato); }
+  });
+
+  const resultado = facturas.map(f => {
+    const clave = `${(f.serie||'').trim().toUpperCase()}-${(f.numero||'').trim()}`;
+    const compra = comprasPorClave.get(clave);
+    const links = mbdPorDoc.get(f.nComp) || [];
+    const movAsignado = movAsignadoPorFactura.get(f);
+    let estado, badge;
+    // El único estado "Reembolsado" confiable es el vínculo formal en tesoreria_mbd
+    // (que es la tabla real detrás del módulo Tesorería > Movimientos).
+    if (links.some(l => l.entrega_doc === 'EMITIDO')) { estado = 'Reembolsado (MBD)'; badge = 'b-ok'; }
+    else if (links.length) { estado = 'Vinculado (observado)'; badge = 'b-obs'; }
+    else if (compra) { estado = 'Registrado, pendiente de reembolso'; badge = 'b-pend'; }
+    else { estado = 'No registrado en Compras'; badge = 'b-no'; }
+    const montoVinculado = links.reduce((s,l) => s + Math.abs(Number(l.monto||0)), 0);
+
+    const dupCompra = comprasJvnPorClave.get(clave);
+    const dupLinks = mbdJvnPorDoc.get(f.nComp) || [];
+    const duplicadoJvn = !!(dupCompra || dupLinks.length);
+
+    // Respuesta simple: ¿se cobró/reembolsó, sí o no?
+    // Sí solo si está formalmente vinculado y EMITIDO en tesoreria_mbd, o si el
+    // banco tiene un movimiento que menciona ESTA factura por su serie-número
+    // (match fuerte). El match por monto solo (débil) NO cuenta como "sí".
+    const cobrado = links.some(l => l.entrega_doc === 'EMITIDO') || movFuertePorFactura.has(f);
+
+    return { ...f, compra, links, movAsignado, estado, badge, montoVinculado, duplicadoJvn, cobrado };
+  });
+
+  // Resumen
+  const totalFacturas = resultado.length;
+  const totalMonto = resultado.reduce((s,f) => s + f.total, 0);
+  const cobradas = resultado.filter(f => f.cobrado);
+  const noCobradas = resultado.filter(f => !f.cobrado);
+  const duplicadas = resultado.filter(f => f.duplicadoJvn);
+
+  document.getElementById('resumen').innerHTML = `
+    <div style="background:${cobradas.length ? '#c6f6d5' : '#edf2f7'};flex:1 1 100%;font-size:16px;padding:14px 18px">
+      <b style="font-size:22px;display:inline">✅ ${cobradas.length}</b> de ${totalFacturas} facturas <u>SÍ</u> se cobraron/reembolsaron ·
+      <b style="font-size:22px;display:inline">❌ ${noCobradas.length}</b> <u>NO</u> se han cobrado todavía
+    </div>
+    <div>Total facturas<b>${totalFacturas}</b></div>
+    <div>Monto total<b>S/ ${totalMonto.toFixed(2)}</b></div>
+    <div style="background:${duplicadas.length ? '#feb2b2' : '#edf2f7'}">🚫 Duplicadas en JVÑ<b>${duplicadas.length}</b></div>
+  `;
+
+  document.getElementById('tabla-wrap').innerHTML = `
+    <table>
+      <thead><tr>
+        <th>¿Se cobró?</th><th>Mes</th><th>N° Comprobante</th><th>RUC</th><th>Proveedor</th><th>Fecha</th>
+        <th>Total</th><th>Estado</th><th>Depósito en Tesorería (MBD) — fecha · N° operación · a nombre de</th><th>Pista en banco (sin confirmar, 1 movimiento = 1 factura)</th><th>¿Duplicado en JVÑ?</th>
+      </tr></thead>
+      <tbody>
+        ${resultado.map(f => `
+          <tr>
+            <td><span class="badge ${f.cobrado ? 'b-ok' : 'b-no'}" style="font-size:13px">${f.cobrado ? '✅ SÍ' : '❌ NO'}</span></td>
+            <td>${esc(f.mes)}</td>
+            <td style="font-family:monospace">${esc(f.nComp)}</td>
+            <td style="font-family:monospace">${esc(f.ruc)}</td>
+            <td>${esc(f.proveedor)}</td>
+            <td>${esc(f.fecha)}</td>
+            <td>${f.moneda} ${f.total.toFixed(2)}</td>
+            <td><span class="badge ${f.badge}">${f.estado}</span></td>
+            <td>${f.links.length
+              ? f.links.map(l => `${esc(l.fecha_deposito)||'—'} · ${esc(l.nro_operacion_bancaria)||'—'} · ${esc(l.proveedor_empresa_personal)||'—'} <span class="badge ${l.entrega_doc==='EMITIDO'?'b-ok':'b-obs'}" style="font-size:9px">${esc(l.entrega_doc)}</span>`).join('<br>')
+              : (f.compra ? 'En Compras, sin depósito vinculado' : '—')}</td>
+            <td>${f.movAsignado ? `🔎 ${esc(f.movAsignado.fecha)} · S/${Number(f.movAsignado.importe).toFixed(2)} · ${esc(f.movAsignado.numero_operacion)||'sin N° op.'}` : '—'}</td>
+            <td>${f.duplicadoJvn ? '<span class="badge b-no">🚫 SÍ, revisar</span>' : '—'}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+  document.getElementById('sec-resultado').style.display = 'block';
+  log('✅ Verificación completa.', 'ok');
+  document.getElementById('btn-verificar').disabled = false;
+}
+</script>
+</body>
+</html>

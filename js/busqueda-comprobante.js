@@ -262,32 +262,30 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
   const hoy   = new Date().toISOString().slice(0,10);
   const tabla = tablaBanco || 'tesoreria_mbd';
 
-  // Para RH (y en general): determinar estado según campos completos en tesoreria_mbd
+  // Para RH: UUID como clave única en nro_factura_doc (distintos emisores pueden tener el mismo número).
+  // Display legible se resuelve en tes-movimientos.js con batch lookup.
+  const nroFacturaKey = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
+
+  // Determinar estado según completitud de los 14 campos (PENDIENTE/OBSERVADO/EMITIDO) — punto 2.5
   let entregaDoc = 'OBSERVADO';
   let movActual   = null;
   if (tabla === 'tesoreria_mbd') {
     const { data: mov } = await _supabase
       .from('tesoreria_mbd')
-      .select('proveedor_empresa_personal,ruc_dni,cotizacion,oc,proyecto,concepto,empresa')
+      .select('nro_operacion_bancaria,fecha_deposito,descripcion,moneda,monto,proveedor_empresa_personal,ruc_dni,cotizacion,oc,proyecto,concepto,empresa,autorizacion,entrega_doc')
       .eq('id', movBancoId)
       .single();
     movActual = mov;
-    if (mov) {
-      // El proveedor que migramos ahora (si aplica) cuenta para evaluar completitud
-      const proveedorEfectivo = extra.proveedor || mov.proveedor_empresa_personal;
-      const tieneProveedor  = !!(proveedorEfectivo?.trim());
-      const tieneCotOC      = !!(mov.cotizacion?.trim() || mov.oc?.trim());
-      const tieneProyecto   = !!(mov.proyecto?.trim());
-      const tieneConcepto   = !!(mov.concepto?.trim());
-      const tieneEmpresa    = !!(mov.empresa?.trim());
-      entregaDoc = (tieneProveedor && tieneCotOC && tieneProyecto && tieneConcepto && tieneEmpresa)
-        ? 'EMITIDO' : 'OBSERVADO';
+    if (mov && typeof _conEvalCompletitud14 === 'function') {
+      entregaDoc = _conEvalCompletitud14({
+        ...mov,
+        proveedor_empresa_personal: extra.proveedor || mov.proveedor_empresa_personal,
+        ruc_dni:                    extra.ruc || mov.ruc_dni,
+        nro_factura_doc:            nroFacturaKey,
+        tipo_doc:                   docTipo,
+      });
     }
   }
-
-  // Para RH: UUID como clave única en nro_factura_doc (distintos emisores pueden tener el mismo número).
-  // Display legible se resuelve en tes-movimientos.js con batch lookup.
-  const nroFacturaKey = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
 
   const updatePayload = {
     entrega_doc:         entregaDoc,
@@ -320,7 +318,11 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     }).maybeSingle();
   }
 
-  const estadoLabel = entregaDoc === 'EMITIDO' ? '✓ Vinculado y EMITIDO' : '✓ Vinculado (OBSERVADO — faltan campos)';
+  const estadoLabel = entregaDoc === 'EMITIDO'
+    ? '✓ Vinculado y EMITIDO'
+    : entregaDoc === 'PENDIENTE'
+      ? '✓ Vinculado (PENDIENTE — faltan casi todos los campos)'
+      : '✓ Vinculado (OBSERVADO — faltan campos)';
   mostrarToast(estadoLabel, 'exito');
 
   // Refrescar lista si hay función disponible

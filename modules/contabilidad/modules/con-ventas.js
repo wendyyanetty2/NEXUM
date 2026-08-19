@@ -51,10 +51,12 @@ function _filtrarVentasBuscar(filas, buscar) {
   if (!buscar) return filas;
   return filas.filter(r => {
     const haystack = [
-      r.cliente, r.serie_cdp, r.nro_doc_identidad, r.nro_cp_inicial,
+      r.cliente, r.serie_cdp, r.nro_doc_identidad, r.nro_cp_inicial, r.nro_cp_final,
       TIPOS_DOC_ID_V[r.tipo_doc_identidad], r.tipo_doc_identidad,
-      r.tipo_cp_doc, r.moneda, r.periodo,
-      r.bi_gravada, r.igv_ipm, r.total_cp
+      r.tipo_cp_doc, r.moneda, r.periodo, r.fecha_emision, r.fecha_vcto_pago,
+      r.bi_gravada, r.igv_ipm, r.total_cp,
+      r.car_sunat, r.dam_cp, r.tipo_nota,
+      r.serie_cp_modificado, r.nro_cp_modificado
     ].map(v => (v != null ? String(v) : '')).join(' ').toLowerCase();
     return haystack.includes(buscar);
   });
@@ -831,7 +833,6 @@ async function _vAplicarLoteConciliacion(items) {
     if (!item) continue;
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
-      entrega_doc:          'EMITIDO',
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'VENTA',
       tipo_comprobante:     _mbdCodigoTipoComprobante('VENTA', item.nDoc),
@@ -852,6 +853,8 @@ async function _vAplicarLoteConciliacion(items) {
         estado:               'APROBADO',
         usuario_id:           perfil_usuario?.id || null,
       });
+      // entrega_doc se calcula (no se fuerza) con la misma lógica que usa el icono 🔍 lupa
+      if (typeof consolidarMovimientoVinculado === 'function') await consolidarMovimientoVinculado(item.movId);
       ok++;
     } else {
       errores++;

@@ -133,7 +133,7 @@ async function renderTabMovimientos(area) {
   await cargarMovimientos();
 }
 
-async function cargarMovimientos() {
+async function cargarMovimientos(mantenerPagina = false) {
   const mes  = document.getElementById('mov-mes')?.value;
   const anio = document.getElementById('mov-anio')?.value;
   if (!mes || !anio) return;
@@ -159,7 +159,7 @@ async function cargarMovimientos() {
   }
 
   movimientos_lista = data || [];
-  movimientos_pag   = 1;
+  if (!mantenerPagina) movimientos_pag = 1;
   mov_seleccionados = new Set();
 
   // Resolver UUID → numero_rh solo para links ANTIGUOS donde nro_factura_doc es un UUID.
@@ -377,7 +377,9 @@ async function eliminarMovimiento(id) {
   const { error } = await _supabase.from('tesoreria_mbd').delete().eq('id', id);
   if (error) { mostrarToast('Error al eliminar: ' + error.message, 'error'); return; }
   mostrarToast('Movimiento eliminado.', 'exito');
-  await cargarMovimientos();
+  const _y = window.scrollY;
+  await cargarMovimientos(true);
+  requestAnimationFrame(() => window.scrollTo(0, _y));
 }
 
 // ── Modal Editar / Nuevo movimiento ──────────────────────────────

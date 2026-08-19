@@ -9,11 +9,11 @@ async function renderTabImportar(area) {
       <div class="card" style="margin-bottom:16px">
         <h3 style="margin-bottom:4px">⬆️ Importar estado de cuenta bancario</h3>
         <p class="text-muted text-sm" style="margin-bottom:20px">
-          Sube el Excel del estado de cuenta del banco. El sistema detecta automáticamente el formato BCP y lo compara contra los movimientos MBD importados.
+          Sube el Excel del estado de cuenta del banco. El sistema detecta automáticamente el formato BCP y lo compara contra los movimientos MBD importados. Si aún no sabes a qué cuenta corresponde, puedes importarlo sin asignarla y vincularla después desde el historial.
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-items:end">
           <div class="campo" style="margin:0">
-            <label>Cuenta bancaria destino <span class="req">*</span></label>
+            <label>Cuenta bancaria destino <span class="text-muted text-sm">(opcional)</span></label>
             <select id="imp-cuenta" class="w-full"></select>
           </div>
           <div class="campo" style="margin:0">
@@ -86,9 +86,8 @@ async function _cargarCuentasImp() {
   const cuentas = data || [];
   const sel = document.getElementById('imp-cuenta');
   if (!sel) return;
-  sel.innerHTML = '<option value="">— Seleccionar cuenta —</option>' +
+  sel.innerHTML = '<option value="">— Sin asignar (vincular después) —</option>' +
     cuentas.map(c => `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`).join('');
-  if (cuentas.length >= 1) sel.value = cuentas[0].id;
 }
 
 let imp_datos_preview    = [];
@@ -106,9 +105,7 @@ function descargarPlantilla() {
 }
 
 function procesarImportacion() {
-  const cuenta  = document.getElementById('imp-cuenta')?.value;
   const archivo = document.getElementById('imp-archivo')?.files[0];
-  if (!cuenta)  { mostrarToast('Selecciona una cuenta bancaria', 'atencion'); return; }
   if (!archivo) { mostrarToast('Selecciona un archivo Excel', 'atencion'); return; }
 
   const reader = new FileReader();
@@ -233,7 +230,7 @@ function cancelarPreview() {
 }
 
 async function confirmarImportacion() {
-  const cuenta  = document.getElementById('imp-cuenta')?.value;
+  const cuenta  = document.getElementById('imp-cuenta')?.value || null;
   const fuente  = document.getElementById('imp-fuente')?.value || 'MANUAL';
   const validos = imp_datos_preview.filter(r => r._ok);
   if (!validos.length) { mostrarToast('No hay registros válidos para importar', 'atencion'); return; }
@@ -325,13 +322,19 @@ async function cargarHistorialImportaciones() {
           <tr>
             <td>${formatearFecha(l.fecha_creacion?.slice(0,10))}</td>
             <td class="text-sm">${escapar(l.nombre_archivo)}</td>
-            <td>${escapar(l.cuentas_bancarias?.nombre_alias || '—')}</td>
+            <td>${l.cuentas_bancarias?.nombre_alias
+                    ? escapar(l.cuentas_bancarias.nombre_alias)
+                    : '<span class="badge badge-warning" style="font-size:10px">Sin asignar</span>'}</td>
             <td>${escapar(l.tipo_fuente || '—')}</td>
             <td class="text-center">${l.total_registros}</td>
             <td class="text-center text-verde">${l.registros_ok}</td>
             <td class="text-center ${l.registros_error > 0 ? 'text-rojo' : ''}">${l.registros_error}</td>
             <td><span class="badge ${colores[l.estado] || 'badge-info'}" style="font-size:11px">${l.estado}</span></td>
-            <td>
+            <td style="white-space:nowrap">
+              ${!l.cuenta_bancaria_id ? `
+              <button onclick="vincularCuentaLote('${l.id}')"
+                style="padding:3px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:12px"
+                title="Vincular esta importación a una cuenta bancaria">🔗 Vincular</button>` : ''}
               <button onclick="eliminarLoteEECC('${l.id}', ${l.registros_ok || 0})"
                 style="padding:3px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
                 title="Eliminar esta importación y sus movimientos">🗑️</button>
@@ -362,6 +365,113 @@ async function eliminarLoteEECC(loteId, cantMovimientos) {
   await cargarHistorialImportaciones();
 }
 
+// ── Vincular una importación existente (sin cuenta) a una cuenta bancaria ─
+async function vincularCuentaLote(loteId) {
+  const { data: cuentas } = await _supabase
+    .from('cuentas_bancarias')
+    .select('id, nombre_alias, moneda')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('activo', true)
+    .order('nombre_alias');
+
+  if (!cuentas || !cuentas.length) {
+    mostrarToast('No hay cuentas bancarias activas registradas para esta empresa', 'atencion');
+    return;
+  }
+
+  const cuentaId = await _mostrarSelectorCuenta(cuentas);
+  if (!cuentaId) return;
+
+  const { error: errLote } = await _supabase
+    .from('lotes_importacion')
+    .update({ cuenta_bancaria_id: cuentaId })
+    .eq('id', loteId);
+  if (errLote) { mostrarToast('Error al vincular el lote: ' + errLote.message, 'error'); return; }
+
+  const { error: errMov } = await _supabase
+    .from('movimientos')
+    .update({ cuenta_bancaria_id: cuentaId })
+    .eq('lote_importacion', loteId);
+  if (errMov) { mostrarToast('Error al vincular los movimientos: ' + errMov.message, 'error'); return; }
+
+  mostrarToast('Importación vinculada a la cuenta bancaria', 'exito');
+  await cargarHistorialImportaciones();
+  await _validarLoteVinculado(loteId, cuentaId);
+}
+
+function _mostrarSelectorCuenta(cuentas) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed; inset:0; background:rgba(0,0,0,0.5);
+      display:flex; align-items:center; justify-content:center; z-index:9998;
+    `;
+    overlay.innerHTML = `
+      <div style="background:var(--color-bg-card); border-radius:12px; padding:28px 32px; max-width:380px; width:90%;
+                  box-shadow:var(--sombra-lg); border:1px solid var(--color-borde);">
+        <div style="font-size:32px; margin-bottom:8px; text-align:center;">🔗</div>
+        <h3 style="text-align:center; margin-bottom:4px;">Vincular a cuenta bancaria</h3>
+        <p class="text-muted text-sm" style="text-align:center; margin-bottom:16px;">
+          Elige la cuenta a la que corresponde este estado de cuenta. Se actualizarán todos sus movimientos.
+        </p>
+        <select id="sel-vincular-cuenta" class="w-full" style="margin-bottom:20px">
+          <option value="">— Seleccionar cuenta —</option>
+          ${cuentas.map(c => `<option value="${c.id}">${escapar(c.nombre_alias)} (${c.moneda})</option>`).join('')}
+        </select>
+        <div style="display:flex; gap:12px; justify-content:center;">
+          <button id="btn-cancelar-vinc" style="padding:10px 24px; border:1px solid var(--color-borde);
+            border-radius:8px; background:var(--color-bg-card); color:var(--color-texto); cursor:pointer; font-size:14px; font-family:var(--font);">
+            Cancelar
+          </button>
+          <button id="btn-confirmar-vinc" style="padding:10px 24px; border:none;
+            border-radius:8px; background:var(--color-secundario); color:#fff; cursor:pointer; font-size:14px; font-family:var(--font); font-weight:500;">
+            Vincular
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#btn-confirmar-vinc').onclick = () => {
+      const val = overlay.querySelector('#sel-vincular-cuenta').value;
+      if (!val) { mostrarToast('Selecciona una cuenta', 'atencion'); return; }
+      overlay.remove(); resolve(val);
+    };
+    overlay.querySelector('#btn-cancelar-vinc').onclick = () => { overlay.remove(); resolve(null); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+  });
+}
+
+// ── Validar cruzado tras vincular un lote ya importado ────────────────────
+async function _validarLoteVinculado(loteId, cuentaId) {
+  const cont = document.getElementById('imp-validacion');
+  if (!cont) return;
+
+  const { data: filaLote } = await _supabase
+    .from('movimientos')
+    .select('id, fecha, naturaleza, importe, moneda, descripcion, numero_operacion')
+    .eq('lote_importacion', loteId);
+
+  if (!filaLote || !filaLote.length) return;
+
+  const fechas = filaLote.map(r => r.fecha).filter(Boolean).sort();
+  const desde  = fechas[0];
+  const hasta  = fechas[fechas.length - 1];
+
+  const idsLote = new Set(filaLote.map(r => r.id));
+  const { data: otrosRaw } = await _supabase
+    .from('movimientos')
+    .select('id, fecha, naturaleza, importe, moneda, descripcion, numero_operacion')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('cuenta_bancaria_id', cuentaId)
+    .gte('fecha', desde)
+    .lte('fecha', hasta);
+
+  imp_movs_validacion = (otrosRaw || []).filter(m => !idsLote.has(m.id));
+  imp_datos_preview = filaLote.map(r => ({ ...r, _ok: true }));
+  cont.style.display = 'block';
+  _impRenderValidacion();
+}
+
 // ── Validación cruzada EECC vs Movimientos bancarios ─────────────
 async function _impCargarValidacion() {
   const cont   = document.getElementById('imp-validacion');
@@ -369,7 +479,14 @@ async function _impCargarValidacion() {
 
   const cuenta = document.getElementById('imp-cuenta')?.value;
   const validos = imp_datos_preview.filter(r => r._ok);
-  if (!cuenta || !validos.length) { cont.style.display = 'none'; return; }
+  if (!validos.length) { cont.style.display = 'none'; return; }
+  if (!cuenta) {
+    cont.style.display = 'block';
+    cont.innerHTML = `<div class="text-center text-muted text-sm" style="padding:16px">
+      ℹ️ No se validará contra movimientos bancarios porque no asignaste una cuenta. Podrás vincularla y validar después desde el historial.
+    </div>`;
+    return;
+  }
 
   // Rango de fechas del EECC
   const fechas = validos.map(r => r.fecha).filter(Boolean).sort();
