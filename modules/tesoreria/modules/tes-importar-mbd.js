@@ -531,6 +531,32 @@ async function guardarMBD(id) {
     fecha_actualizacion:      new Date().toISOString(),
   };
 
+  // Migración 2.4 — si el N° Factura/DOC coincide con un comprobante ya
+  // registrado en Contabilidad, autocompletar lo que falte y fusionar
+  // lo que ya esté escrito distinto (nunca sobrescribir en silencio).
+  if (payload.nro_factura_doc && payload.tipo_doc && typeof _migBuscarComprobante === 'function') {
+    const comprobante = await _migBuscarComprobante(payload.nro_factura_doc, payload.tipo_doc);
+    if (comprobante) {
+      const { autocompletar, conflictos } = _migCompararCampos(
+        { proveedor: payload.proveedor_empresa_personal, ruc: payload.ruc_dni, monto: payload.monto },
+        comprobante
+      );
+      if (autocompletar.proveedor) payload.proveedor_empresa_personal = autocompletar.proveedor;
+      if (autocompletar.ruc)       payload.ruc_dni = autocompletar.ruc;
+      if (autocompletar.monto != null) payload.monto = autocompletar.monto;
+
+      if (conflictos.length) {
+        const elegido = await _migModalFusion(conflictos, {
+          proveedor: payload.proveedor_empresa_personal, ruc: payload.ruc_dni, monto: payload.monto,
+        });
+        if (!elegido) return; // canceló — no se guarda nada
+        if (elegido.proveedor != null) payload.proveedor_empresa_personal = elegido.proveedor;
+        if (elegido.ruc != null)       payload.ruc_dni = elegido.ruc;
+        if (elegido.monto != null)     payload.monto = elegido.monto;
+      }
+    }
+  }
+
   if (id) {
     const ok = await confirmar('¿Está segura de guardar los cambios en este movimiento?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
     if (!ok) return;
