@@ -93,12 +93,17 @@ function _filtrarRHRBuscar(filas, estadosMap, buscar) {
 async function _estadoCalculado(rh) {
   const montoNeto = parseFloat(rh.monto_neto || 0);
 
-  // Recopilar IDs de tesoreria_mbd desde AMBAS fuentes y combinarlas.
+  // Recopilar IDs de tesoreria_mbd desde TRES fuentes y combinarlas.
   // Fuente A: conciliaciones (doc_id = UUID del RH → movimiento_id del movimiento)
-  // Fuente B: nro_factura_doc = UUID del RH (sistema anterior o links directos)
+  // Fuente B: nro_factura_doc = UUID del RH (vinculación manual con 🔍 lupa)
+  // Fuente C: nro_factura_doc = N° de RH legible (ej. "E001-1") — así queda
+  //   cuando el movimiento se cargó por Excel/Importar MBD, donde se escribe
+  //   el número legible y no el UUID interno. Se exige además que el
+  //   proveedor coincida, porque distintos emisores pueden repetir el mismo
+  //   número de RH.
   const todosIds = new Set();
 
-  const [{ data: concLinks }, { data: uuidLinks }] = await Promise.all([
+  const [{ data: concLinks }, { data: uuidLinks }, { data: numeroLinks }] = await Promise.all([
     _supabase.from('conciliaciones')
       .select('movimiento_id')
       .eq('empresa_operadora_id', empresa_activa.id)
@@ -110,10 +115,25 @@ async function _estadoCalculado(rh) {
       .eq('empresa_id', empresa_activa.id)
       .eq('tipo_doc', 'RH')
       .eq('nro_factura_doc', rh.id),
+    rh.numero_rh
+      ? _supabase.from('tesoreria_mbd')
+          .select('id,proveedor_empresa_personal')
+          .eq('empresa_id', empresa_activa.id)
+          .eq('tipo_doc', 'RH')
+          .eq('nro_factura_doc', rh.numero_rh)
+      : Promise.resolve({ data: [] }),
   ]);
 
-  (concLinks || []).forEach(l => { if (l.movimiento_id) todosIds.add(l.movimiento_id); });
-  (uuidLinks  || []).forEach(l => todosIds.add(l.id));
+  (concLinks   || []).forEach(l => { if (l.movimiento_id) todosIds.add(l.movimiento_id); });
+  (uuidLinks   || []).forEach(l => todosIds.add(l.id));
+  (numeroLinks || []).forEach(l => {
+    const nombreEmisor = rh.nombre_emisor || rh.prestadores_servicios?.nombre || '';
+    if (typeof _conNombreCoincide === 'function'
+      ? _conNombreCoincide(l.proveedor_empresa_personal, nombreEmisor)
+      : true) {
+      todosIds.add(l.id);
+    }
+  });
 
   if (todosIds.size > 0) {
     const { data: mbdLinks } = await _supabase
