@@ -425,7 +425,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc, ru
 
   overlay.querySelectorAll('[data-bm-close]').forEach(b => b.onclick = () => overlay.remove());
 
-  const doSearch = () => _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor, ruc);
+  const doSearch = () => _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor, ruc, montoRef);
   overlay.querySelector('#bm2-btn-buscar').onclick = doSearch;
   overlay.querySelector('#bm2-btn-limpiar').onclick = () => {
     ['bm2-desc','bm2-desde','bm2-hasta'].forEach(id => {
@@ -462,7 +462,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc, ru
   if (montoRef || proveedor) setTimeout(doSearch, 100);
 }
 
-async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor = '', ruc = '') {
+async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor = '', ruc = '', totalFactura = 0) {
   const resEl    = overlay.querySelector('#bm2-resultados');
   const qDesc    = (overlay.querySelector('#bm2-desc')?.value || '').trim().toLowerCase();
   const montoMin = parseFloat(overlay.querySelector('#bm2-monto-min')?.value || '') || 0;
@@ -534,9 +534,24 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor =
                 border-radius:6px;cursor:pointer;font-size:11px;font-family:var(--font);font-weight:600">
               ✓ Vincular
             </button>
+            ${totalFactura > 0 && absM > totalFactura + 1 ? `
+            <button data-bm2-dividir data-movid="${m.id}" data-nrop="${escapar(m.nro_operacion_bancaria||'')}"
+              style="margin-top:4px;padding:5px 12px;background:var(--color-atencion,#D69E2E);color:#fff;border:none;
+                border-radius:6px;cursor:pointer;font-size:11px;font-family:var(--font);font-weight:600;display:block;width:100%"
+              title="Este movimiento cubre más que esta factura — divídelo y vincula solo la parte que corresponde">
+              ✂️ Dividir y vincular
+            </button>` : ''}
           </div>
         </div>`;
     }).join('')}`;
+
+  resEl.querySelectorAll('[data-bm2-dividir]').forEach(btn => {
+    btn.onclick = async () => {
+      const movId = btn.dataset.movid;
+      overlay.remove();
+      await _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, totalFactura);
+    };
+  });
 
   resEl.querySelectorAll('[data-bm2-vincular]').forEach(btn => {
     btn.onclick = async () => {
@@ -705,4 +720,78 @@ function _bmMesSiguiente(fecha) {
   const d = new Date(fecha + 'T12:00:00');
   d.setMonth(d.getMonth() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Punto 1.1 — Conciliación múltiple iniciada desde Compras/Ventas/RH
+// (ícono 🔍 lupa), sin depender de un paso manual previo en Tesorería.
+// Divide el movimiento bancario en dos partes: el monto exacto de
+// ESTE comprobante (que queda vinculado de inmediato) + el resto
+// (que se deja pendiente para conciliar después, igual que si se
+// hubiera recortado desde Tesorería → Movimientos).
+// ═══════════════════════════════════════════════════════════════
+async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, totalFactura) {
+  const { data: r, error: errCarga } = await _supabase.from('tesoreria_mbd').select('*').eq('id', movId).single();
+  if (errCarga || !r) { mostrarToast('No se pudo cargar el movimiento.', 'error'); return; }
+
+  const montoOriginal = Number(r.monto) || 0;
+  const signo = montoOriginal < 0 ? -1 : 1;
+  const montoFactura = signo * Math.abs(Number(totalFactura) || 0);
+  const montoResto = montoOriginal - montoFactura;
+
+  const ok = await confirmar(
+    `✂️ Se dividirá el movimiento ${escapar(r.nro_operacion_bancaria || '')} (${formatearMoneda(montoOriginal)}) en 2 partes:\n\n` +
+    `• ${formatearMoneda(montoFactura)} → se vincula ahora con el comprobante ${escapar(nDoc)}\n` +
+    `• ${formatearMoneda(montoResto)} → queda pendiente para conciliar después\n\n¿Está segura de continuar?`,
+    { btnOk: 'Sí, dividir y vincular', btnColor: '#2C5282' }
+  );
+  if (!ok) return;
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const nuevasFilas = [
+    {
+      empresa_id: r.empresa_id, nro_operacion_bancaria: r.nro_operacion_bancaria,
+      fecha_deposito: r.fecha_deposito, moneda: r.moneda, monto: montoFactura,
+      descripcion: (r.descripcion || '') + ' (1/2)',
+      proveedor_empresa_personal: proveedor || r.proveedor_empresa_personal || null,
+      ruc_dni: ruc || r.ruc_dni || null,
+      tipo_doc: docTipo, nro_factura_doc: nDoc,
+      tipo_comprobante: _mbdCodigoTipoComprobante(docTipo, nDoc),
+      estado_conciliacion: 'conciliado',
+      entrega_doc: 'OBSERVADO', // se recalcula abajo con consolidarMovimientoVinculado
+      concepto: r.concepto, empresa: r.empresa, proyecto: r.proyecto,
+      autorizacion: r.autorizacion, cotizacion: r.cotizacion, oc: r.oc,
+      observaciones: r.observaciones, detalles_compra_servicio: r.detalles_compra_servicio,
+      observaciones_2: r.observaciones_2, fecha_actualizacion: hoy,
+    },
+    {
+      empresa_id: r.empresa_id, nro_operacion_bancaria: r.nro_operacion_bancaria,
+      fecha_deposito: r.fecha_deposito, moneda: r.moneda, monto: montoResto,
+      descripcion: (r.descripcion || '') + ' (2/2 — pendiente)',
+      entrega_doc: 'PENDIENTE', fecha_actualizacion: hoy,
+    },
+  ];
+
+  const { data: insertadas, error: errIns } = await _supabase.from('tesoreria_mbd').insert(nuevasFilas).select('id');
+  if (errIns) { mostrarToast('Error al dividir: ' + errIns.message, 'error'); return; }
+
+  const { error: errDel } = await _supabase.from('tesoreria_mbd').delete().eq('id', movId);
+  if (errDel) { mostrarToast('Dividido, pero hubo un error al eliminar la fila original. Revisa duplicados.', 'atencion'); }
+
+  const idFactura = insertadas?.[0]?.id;
+  if (idFactura) {
+    await _supabase.from('conciliaciones').insert({
+      empresa_operadora_id: empresa_activa.id,
+      movimiento_id: idFactura, doc_tipo: docTipo, doc_id: docId || null,
+      score: 0, tipo_match: 'MANUAL', estado: 'APROBADO',
+      usuario_id: typeof perfil_usuario !== 'undefined' ? (perfil_usuario?.id || null) : null,
+    });
+    if (typeof consolidarMovimientoVinculado === 'function') await consolidarMovimientoVinculado(idFactura);
+  }
+
+  mostrarToast(`✅ Movimiento dividido: ${formatearMoneda(montoFactura)} vinculado a ${nDoc}, ${formatearMoneda(montoResto)} queda pendiente.`, 'exito');
+
+  if (typeof cargarCompras === 'function') cargarCompras();
+  if (typeof cargarVentas  === 'function') cargarVentas();
+  if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
 }
