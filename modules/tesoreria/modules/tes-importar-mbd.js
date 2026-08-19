@@ -531,6 +531,11 @@ async function guardarMBD(id) {
     fecha_actualizacion:      new Date().toISOString(),
   };
 
+  if (id) {
+    const ok = await confirmar('¿Está segura de guardar los cambios en este movimiento?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
+    if (!ok) return;
+  }
+
   let error;
   if (id) {
     ({ error } = await _supabase.from('tesoreria_mbd').update(payload).eq('id', id));

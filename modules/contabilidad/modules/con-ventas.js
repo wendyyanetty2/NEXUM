@@ -409,6 +409,11 @@ async function guardarVenta(id) {
     fecha_actualizacion: new Date().toISOString(),
   };
 
+  if (id) {
+    const ok = await confirmar('¿Está segura de guardar los cambios en este comprobante?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
+    if (!ok) return;
+  }
+
   let error;
   if (id) ({ error } = await _supabase.from('contabilidad_ventas').update(payload).eq('id', id));
   else    ({ error } = await _supabase.from('contabilidad_ventas').insert(payload));
@@ -823,6 +828,8 @@ async function _conciliarLoteVentas() {
 
 async function _vAplicarLoteConciliacion(items) {
   const checks = document.querySelectorAll('[id^=vnt-chk-]');
+  const nMarcados = Array.from(checks).filter(c => c.checked).length;
+  if (!await confirmar(`¿Está segura de aplicar la conciliación a ${nMarcados} movimiento(s) seleccionado(s)?`, { btnOk: 'Sí, aplicar', btnColor: '#2C5282' })) return;
   const hoy    = new Date().toISOString().slice(0, 10);
   let ok = 0, errores = 0;
 

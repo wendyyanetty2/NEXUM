@@ -692,6 +692,8 @@ async function rhVincularManual(rhId, nombre) {
 }
 
 async function rhVincularConfirmar(rhId, movId, confianza) {
+  if (!await confirmar('¿Está segura de vincular este RH con el movimiento bancario seleccionado?', { btnOk: 'Sí, vincular', btnColor: '#2C5282' })) return;
+
   const { error } = await _supabase.from('rh_movimiento_links').upsert({
     empresa_id:      empresa_activa.id,
     rh_id:           rhId,
@@ -839,6 +841,11 @@ async function guardarRHR(id) {
     nombre_emisor:        nombre,
     usuario_id:           perfil_usuario?.id || null,
   };
+
+  if (id) {
+    const ok = await confirmar('¿Está segura de guardar los cambios en este RH?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
+    if (!ok) return;
+  }
 
   let error;
   if (id) ({ error } = await _supabase.from('rh_registros').update(payload).eq('id', id));

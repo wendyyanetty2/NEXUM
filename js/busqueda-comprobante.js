@@ -287,6 +287,11 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     }
   }
 
+  const mensajeConfirm = movActual?.entrega_doc === 'EMITIDO'
+    ? `⚠️ Este movimiento bancario ya fue registrado por completo (EMITIDO).\n¿Está segura de vincularlo con "${escapar(nDoc)}"?`
+    : `¿Está segura de vincular "${escapar(nDoc)}" con este movimiento bancario?`;
+  if (!await confirmar(mensajeConfirm, { btnOk: 'Sí, vincular', btnColor: movActual?.entrega_doc === 'EMITIDO' ? '#C53030' : '#2C5282' })) return;
+
   const updatePayload = {
     entrega_doc:         entregaDoc,
     estado_conciliacion: 'conciliado',

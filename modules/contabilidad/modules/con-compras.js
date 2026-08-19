@@ -411,6 +411,11 @@ async function guardarCompra(id) {
     fecha_actualizacion: new Date().toISOString(),
   };
 
+  if (id) {
+    const ok = await confirmar('¿Está segura de guardar los cambios en este comprobante?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
+    if (!ok) return;
+  }
+
   let error;
   if (id) ({ error } = await _supabase.from('contabilidad_compras').update(payload).eq('id', id));
   else    ({ error } = await _supabase.from('contabilidad_compras').insert(payload));
@@ -943,6 +948,12 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = 
 async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = '', ruc = '') {
   const hoy = new Date().toISOString().slice(0, 10);
 
+  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc').eq('id', movId).maybeSingle();
+  const mensajeConfirm = movPrevio?.entrega_doc === 'EMITIDO'
+    ? `⚠️ Este movimiento bancario ya fue registrado por completo (EMITIDO)${movPrevio.nro_factura_doc ? ` con el comprobante ${escapar(movPrevio.nro_factura_doc)}` : ''}.\n¿Está segura de vincularlo con "${escapar(nDoc)}"?`
+    : `¿Está segura de vincular el comprobante "${escapar(nDoc)}" con este movimiento bancario?`;
+  if (!await confirmar(mensajeConfirm, { btnOk: 'Sí, vincular', btnColor: movPrevio?.entrega_doc === 'EMITIDO' ? '#C53030' : '#2C5282' })) return;
+
   const patch = {
     nro_factura_doc:      nDoc,
     tipo_doc:             tipoDoc,
@@ -979,6 +990,8 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
 
 async function _cAplicarLoteConciliacion(items) {
   const checks = document.querySelectorAll('[id^=cmp-chk-]');
+  const nMarcados = Array.from(checks).filter(c => c.checked).length;
+  if (!await confirmar(`¿Está segura de aplicar la conciliación a ${nMarcados} movimiento(s) seleccionado(s)?`, { btnOk: 'Sí, aplicar', btnColor: '#2C5282' })) return;
   const hoy    = new Date().toISOString().slice(0, 10);
   let ok = 0, errores = 0;
 
