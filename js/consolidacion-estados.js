@@ -164,7 +164,7 @@ async function consolidarEstadosRetroactivo() {
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
     const { data: movsCrudos, error: errMovs } = await _supabase
       .from('tesoreria_mbd')
-      .select('id,proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,entrega_doc,fecha_deposito,monto')
+      .select('id,proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,entrega_doc,fecha_deposito,monto,nro_operacion_bancaria')
       .eq('empresa_id', empId)
       .not('nro_factura_doc', 'is', null)
       .in('tipo_doc', ['COMPRA', 'VENTA', 'RH', 'PM']);
@@ -179,7 +179,7 @@ async function consolidarEstadosRetroactivo() {
     // CANCELADO es manual (se asigna en Tesorería → Movimientos) — nunca se sobrescribe aquí.
     const movs = movsCrudos.filter(m => m.entrega_doc !== 'CANCELADO');
     const cancelados = movsCrudos.length - movs.length;
-    let discrepancias = 0;
+    const discrepanciasDetalle = [];
 
     // ── Paso 1b: Traer comprobantes de Compras para clave compuesta
     let comprasMap = new Map(); // "SERIE-NRO" → [{proveedor, periodo}]
@@ -249,7 +249,17 @@ async function consolidarEstadosRetroactivo() {
         const montoOk = !matchNombrePeriodo.length || matchNombrePeriodo.some(c =>
           Math.abs(Math.abs(Number(mov.monto) || 0) - c.total) < Math.max(c.total * 0.02, 1)
         );
-        if (claveValida && matchNombrePeriodo.length && !montoOk) discrepancias++;
+        if (claveValida && matchNombrePeriodo.length && !montoOk) {
+          const mejorCandidato = matchNombrePeriodo.reduce((a, b) =>
+            Math.abs(Math.abs(Number(mov.monto)||0) - a.total) <= Math.abs(Math.abs(Number(mov.monto)||0) - b.total) ? a : b
+          );
+          discrepanciasDetalle.push({
+            id: mov.id, nDoc: mov.nro_factura_doc, tipoDoc: mov.tipo_doc,
+            nroOp: mov.nro_operacion_bancaria, fecha: mov.fecha_deposito,
+            montoMov: Math.abs(Number(mov.monto)||0), montoComprobante: mejorCandidato.total,
+            proveedor: mejorCandidato.proveedor,
+          });
+        }
 
         if (claveValida && montoOk) {
           // Paso 3 – evaluar completitud y actualizar entrega_doc
@@ -309,6 +319,7 @@ async function consolidarEstadosRetroactivo() {
     }
 
     // ── Resumen ──────────────────────────────────────────────────
+    const discrepancias = discrepanciasDetalle.length;
     const parts = [`${movs.length} mov. revisados`];
     if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
@@ -323,10 +334,57 @@ async function consolidarEstadosRetroactivo() {
     if (typeof cargarVentas      === 'function') cargarVentas();
     if (typeof _concCargarDatos  === 'function') _concCargarDatos();
 
+    // ── Reporte visual de discrepancias (solo lectura) ────────────
+    if (discrepancias) _conRenderDiscrepancias(discrepanciasDetalle);
+
   } catch (err) {
     mostrarToast('Error en consolidación: ' + err.message, 'error');
     console.error('[consolidacion-estados]', err);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔄 Consolidar estados'; }
   }
+}
+
+// ── Reporte visual de discrepancias detectadas por "Consolidar estados"
+//    (monto del movimiento bancario no coincide con el total del
+//    comprobante vinculado). Solo lectura — no modifica nada; cada fila
+//    tiene un botón "Ver" para abrir el movimiento y revisarlo a mano.
+function _conRenderDiscrepancias(detalle) {
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:760px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+        <div class="modal-header">
+          <h3>⚠️ Montos que no coinciden — ${detalle.length} caso(s)</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
+            El movimiento bancario está vinculado a un comprobante con el mismo proveedor/período, pero el monto no coincide (más de un 2% de diferencia). No se tocó su estado — revisa cada caso y corrígelo manualmente si corresponde.
+          </p>
+          ${detalle.map(d => {
+            const diff = Math.round((d.montoMov - d.montoComprobante) * 100) / 100;
+            return `
+            <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+                <span style="font-weight:700;color:var(--color-secundario)">${escapar(d.tipoDoc)} ${escapar(d.nDoc||'')} · ${escapar(d.proveedor||'')}</span>
+                <span style="font-family:monospace;font-size:11px;color:var(--color-texto-suave)">Op. ${escapar(d.nroOp||'—')} · ${formatearFecha(d.fecha)}</span>
+              </div>
+              <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px">
+                <span>Movimiento bancario: <strong>${formatearMoneda(d.montoMov)}</strong></span>
+                <span>Comprobante: <strong>${formatearMoneda(d.montoComprobante)}</strong></span>
+                <span style="color:${diff>0?'#C53030':'#D69E2E'}">Diferencia: <strong>${diff>0?'+':''}${formatearMoneda(diff)}</strong></span>
+              </div>
+              <div style="margin-top:8px;font-size:11px;color:var(--color-texto-suave)">
+                💡 Búscalo en Tesorería → Movimientos con el N° de operación <strong style="font-family:monospace;color:var(--color-texto)">${escapar(d.nroOp||'—')}</strong>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
 }
