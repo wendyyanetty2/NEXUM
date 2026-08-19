@@ -104,18 +104,21 @@ async function _renderComprasFiltradas() {
   // (un comprobante puede cubrirse con varios movimientos — regla N:M)
   const numeros = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicados } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc')
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc, ruc_dni, proveedor_empresa_personal')
         .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
-  const aplicadosMap = new Map(); // nDoc → [movs...]
+  const aplicadosMap = new Map(); // nDoc → [movs...] (sin filtrar por emisor todavía)
   (mbdAplicados || []).forEach(r => {
     if (!aplicadosMap.has(r.nro_factura_doc)) aplicadosMap.set(r.nro_factura_doc, []);
     aplicadosMap.get(r.nro_factura_doc).push(r);
   });
 
   // Estadísticas de conciliación (ahora con 3 estados: completo/parcial/pendiente)
+  // La serie+número SUNAT es única POR EMISOR — se filtra por RUC/proveedor para
+  // no mezclar montos si dos proveedores distintos comparten la misma serie+número.
   const _nDocC = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-  const _covC  = r => _conCobertura(aplicadosMap.get(_nDocC(r)), r.total_cp);
+  const _movsDelEmisorC = r => _conFiltrarPorEmisor(aplicadosMap.get(_nDocC(r)), r.nro_doc_identidad, r.proveedor);
+  const _covC  = r => _conCobertura(_movsDelEmisorC(r), r.total_cp);
   const covFilas    = filas.map(r => ({ r, cov: _covC(r) }));
   const countAplicC = covFilas.filter(x => x.cov.estado.startsWith('COMPLETO')).length;
   const countParcC  = covFilas.filter(x => x.cov.estado === 'PARCIAL').length;
@@ -171,7 +174,7 @@ async function _renderComprasFiltradas() {
       <tbody>
         ${filas.map(r => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-          const movs = aplicadosMap.get(nDoc);
+          const movs = _conFiltrarPorEmisor(aplicadosMap.get(nDoc), r.nro_doc_identidad, r.proveedor);
           const cov  = _conCobertura(movs, r.total_cp);
           const conciliarArgs = `'${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}'`;
           let bancoHtml;
@@ -192,7 +195,7 @@ async function _renderComprasFiltradas() {
             const emitido = cov.estado === 'COMPLETO_EMITIDO';
             bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
                  title="Click para ver movimiento(s) bancario(s) vinculado(s)"
-                 onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA')">
+                 onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')">
                 <span style="background:${emitido?'#2F855A':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">
                   ${emitido?'✅ APLIC.':'⚠️ OBSERV.'}
                 </span>
@@ -1084,7 +1087,7 @@ async function _cAplicarLoteConciliacion(items) {
 // VER MOVIMIENTO BANCARIO VINCULADO (compartido con Ventas)
 // ══════════════════════════════════════════════════════════════════
 
-async function _verMovBancarioLink(nDoc, tipo) {
+async function _verMovBancarioLink(nDoc, tipo, ruc = '', nombre = '') {
   const mc = document.getElementById('modal-container');
   mc.innerHTML = `
     <div class="modal-overlay" style="display:flex">
@@ -1099,9 +1102,11 @@ async function _verMovBancarioLink(nDoc, tipo) {
     .select('*')
     .eq('empresa_id', empresa_activa.id)
     .eq('nro_factura_doc', nDoc)
-    .limit(5);
+    .limit(20);
 
-  _mbdLinkCache = movs || [];
+  // La serie+número SUNAT es única por emisor — filtrar por RUC/nombre para no
+  // mostrar movimientos de un proveedor/cliente distinto que comparta el N°.
+  _mbdLinkCache = (typeof _conFiltrarPorEmisor === 'function' ? _conFiltrarPorEmisor(movs, ruc, nombre) : movs || []).slice(0, 5);
 
   const filas = _mbdLinkCache.map((m, i) => `
     <div style="padding:12px 14px;border:1px solid var(--color-borde);border-radius:8px;margin-bottom:10px;background:var(--color-bg-card)">

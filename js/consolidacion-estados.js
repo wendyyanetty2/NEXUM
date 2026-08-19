@@ -117,6 +117,21 @@ function _conNombreCoincideEstricto(a, b) {
   return na.includes(nb) || nb.includes(na);
 }
 
+// ── Filtra movimientos por emisor (RUC exacto, o nombre estricto si no
+//    hay RUC en algún lado). El N° de serie-comprobante SUNAT es único
+//    POR EMISOR — dos proveedores/clientes distintos podrían coincidir
+//    en la misma serie+número, así que agrupar solo por nro_factura_doc
+//    puede mezclar montos de empresas distintas (mismo tipo de bug que
+//    el de N° de RH repetido — aplicado 2026-08-19 a pedido de Wendy:
+//    "la corrección para todos" — Compras, Ventas y RH). ──────────────
+function _conFiltrarPorEmisor(movs, ruc, nombre) {
+  if (!movs?.length) return [];
+  return movs.filter(m => {
+    if (ruc && m.ruc_dni) return String(m.ruc_dni).trim() === String(ruc).trim();
+    return _conNombreCoincideEstricto(m.proveedor_empresa_personal, nombre);
+  });
+}
+
 // ── Período del movimiento y del comprobante son compatibles ────
 // Tolerancia ±2 meses (el pago puede caer en mes distinto al de emisión)
 function _conPeriodoCercano(periodoMov, periodoComp) {
