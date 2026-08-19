@@ -49,14 +49,21 @@ function _conEvalCompletitud(mov) {
 }
 
 // ── Fórmula nueva (3 niveles: PENDIENTE/OBSERVADO/EMITIDO), aprobada
-//    2026-08-19 — punto 2.5. Evalúa los 14 campos del comprobante.
-//    Ningún campo faltante → PENDIENTE. Todos completos → EMITIDO.
-//    Algunos completos → OBSERVADO. Se usa solo en acciones NUEVAS
-//    (vincular, dividir) — nunca sobrescribe un estado CANCELADO
-//    (ese se asigna manualmente en Tesorería → Movimientos). ──────
+//    2026-08-19 — punto 2.5. El Nº Factura o DOC es la puerta de
+//    entrada obligatoria: sin ese dato el estado SIEMPRE es PENDIENTE,
+//    sin importar cuántos otros campos estén llenos (corregido tras
+//    feedback de Wendy — un movimiento con Proveedor/Concepto/Empresa
+//    llenos pero SIN N° Factura no es "OBSERVADO", es "PENDIENTE").
+//    Con el N° Factura presente: todos los 14 campos completos →
+//    EMITIDO; si falta alguno → OBSERVADO. Se usa solo en acciones
+//    NUEVAS (vincular, dividir) — nunca sobrescribe un estado
+//    CANCELADO (ese se asigna manualmente en Tesorería → Movimientos).
 function _conEvalCompletitud14(mov) {
   if (mov.entrega_doc === 'CANCELADO') return 'CANCELADO';
   const ok = v => !!(v && String(v).trim());
+
+  if (!ok(mov.nro_factura_doc)) return 'PENDIENTE';
+
   const slots = [
     ok(mov.nro_operacion_bancaria),
     ok(mov.fecha_deposito),
@@ -73,10 +80,8 @@ function _conEvalCompletitud14(mov) {
     ok(mov.tipo_doc) || ok(mov.tipo_comprobante),
     ok(mov.autorizacion),
   ];
-  const completos = slots.filter(Boolean).length;
-  if (completos === 0) return 'PENDIENTE';
-  if (completos === slots.length) return 'EMITIDO';
-  return 'OBSERVADO';
+  const todosCompletos = slots.every(Boolean);
+  return todosCompletos ? 'EMITIDO' : 'OBSERVADO';
 }
 
 // ── Extrae período YYYYMM de una fecha YYYY-MM-DD ───────────────
