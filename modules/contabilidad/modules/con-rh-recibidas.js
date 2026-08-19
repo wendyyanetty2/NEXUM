@@ -556,12 +556,51 @@ async function _rhAplicarSeleccionados(listaPlana) {
 
 // ── Ver links de un RH ────────────────────────────────────────────
 async function rhVerLinks(rhId, nombre) {
+  // Preferir la fuente moderna (tesoreria_mbd), ya calculada por _estadoCalculado()
+  // al cargar la lista — evita repetir la consulta y queda 100% consistente con
+  // el estado (Pendiente/Parcial/Aplicado) que se ve en la tabla.
+  const estInfo = _rhrEstadosMap[rhId];
+
+  const mc = document.getElementById('modal-container');
+
+  if (estInfo?.esMBD && estInfo.links?.length) {
+    mc.innerHTML = `
+      <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+        <div class="modal" style="max-width:640px;width:95%;max-height:90vh;overflow-y:auto">
+          <div class="modal-header">
+            <h3>🔗 Movimientos vinculados — ${escapar(nombre)}</h3>
+            <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+          </div>
+          <div class="modal-body">
+            <table class="tabla-nexum" style="font-size:13px">
+              <thead><tr>
+                <th>Fecha mov.</th><th>N° Op.</th><th style="text-align:right">Monto</th><th>Estado</th>
+              </tr></thead>
+              <tbody>
+                ${estInfo.links.map(l => `<tr>
+                  <td>${formatearFecha(l.fecha_deposito)}</td>
+                  <td style="font-family:monospace;font-size:11px">${escapar(l.nro_operacion_bancaria||'—')}</td>
+                  <td style="text-align:right;font-weight:600">${formatearMoneda(l.monto, l.moneda||'PEN')}</td>
+                  <td style="font-size:11px">${escapar(l.entrega_doc||'')}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+            ${estInfo.montoPagado != null ? `<p style="font-size:12px;color:var(--color-texto-suave);margin-top:10px">Total vinculado: <strong>${formatearMoneda(estInfo.montoPagado)}</strong></p>` : ''}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Sistema antiguo (rh_movimiento_links) — solo si no hay vínculos por tesoreria_mbd.
   const { data: links } = await _supabase
     .from('rh_movimiento_links')
     .select('*, movimientos(fecha, importe, descripcion, numero_operacion, naturaleza)')
     .eq('rh_id', rhId);
 
-  const mc = document.getElementById('modal-container');
   mc.innerHTML = `
     <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
       <div class="modal" style="max-width:640px;width:95%;max-height:90vh;overflow-y:auto">

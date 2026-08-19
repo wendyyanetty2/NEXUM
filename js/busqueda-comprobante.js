@@ -450,7 +450,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc, ru
   const docKey = docTipo === 'RH' ? docId : nDoc;
 
   // Cargar links existentes y manejar cierre (todos los tipos)
-  _bmCargarLinks(overlay, docKey, docTipo);
+  _bmCargarLinks(overlay, docKey, docTipo, docTipo === 'RH' ? nDoc : null, docTipo === 'RH' ? proveedor : null);
   overlay.querySelector('#bm2-btn-cerrar')?.addEventListener('click', () => {
     overlay.remove();
     if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
@@ -564,7 +564,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor =
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
         btn.style.background = '#2F855A';
-        _bmCargarLinks(overlay, docTipo === 'RH' ? docId : nDoc, docTipo);
+        _bmCargarLinks(overlay, docTipo === 'RH' ? docId : nDoc, docTipo, docTipo === 'RH' ? nDoc : null, docTipo === 'RH' ? proveedor : null);
       } else {
         overlay.remove();
       }
@@ -629,7 +629,7 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor = '',
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
         btn.style.background = '#2F855A';
-        _bmCargarLinks(overlay, docTipo === 'RH' ? docId : nDoc, docTipo);
+        _bmCargarLinks(overlay, docTipo === 'RH' ? docId : nDoc, docTipo, docTipo === 'RH' ? nDoc : null, docTipo === 'RH' ? proveedor : null);
       } else {
         overlay.remove();
       }
@@ -638,19 +638,41 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor = '',
 }
 
 // ── Panel de operaciones ya vinculadas (todos los tipos) ─────────
-async function _bmCargarLinks(overlay, nDoc, docTipo) {
+// Para RH busca por DOS claves: el UUID (vinculación manual con lupa) y el
+// N° de RH legible (así queda cuando se carga por Excel/Importar MBD) —
+// mismo criterio que _estadoCalculado() en con-rh-recibidas.js.
+async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, proveedorEmisor = null) {
   const el  = overlay.querySelector('#bm2-links-lista');
   const cnt = overlay.querySelector('#bm2-links-count');
   const tot = overlay.querySelector('#bm2-links-total');
   if (!el || !nDoc) return;
 
-  const { data: links } = await _supabase
+  const { data: linksUuid } = await _supabase
     .from('tesoreria_mbd')
-    .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc,proveedor_empresa_personal')
     .eq('empresa_id', empresa_activa.id)
     .eq('tipo_doc', docTipo)
     .eq('nro_factura_doc', nDoc)
     .order('fecha_deposito', { ascending: false });
+
+  let links = linksUuid || [];
+
+  if (docTipo === 'RH' && nDocLegible && nDocLegible !== nDoc) {
+    const { data: linksLegible } = await _supabase
+      .from('tesoreria_mbd')
+      .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc,proveedor_empresa_personal')
+      .eq('empresa_id', empresa_activa.id)
+      .eq('tipo_doc', docTipo)
+      .eq('nro_factura_doc', nDocLegible)
+      .order('fecha_deposito', { ascending: false });
+    const vistos = new Set(links.map(l => l.id));
+    (linksLegible || []).forEach(l => {
+      if (vistos.has(l.id)) return;
+      const coincideProveedor = !proveedorEmisor || typeof _conNombreCoincide !== 'function'
+        || _conNombreCoincide(l.proveedor_empresa_personal, proveedorEmisor);
+      if (coincideProveedor) { links.push(l); vistos.add(l.id); }
+    });
+  }
 
   if (!links?.length) {
     el.innerHTML = '<span style="font-style:italic;font-size:12px">Sin operaciones vinculadas aún.</span>';
