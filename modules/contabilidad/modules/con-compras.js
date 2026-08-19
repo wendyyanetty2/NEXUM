@@ -24,6 +24,7 @@ function renderTabCompras(area) {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="_conciliarLoteCompras()" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔗 Conciliar con banco</button>
           <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔄 Consolidar estados</button>
+          <button onclick="_dupReporteHistorico('contabilidad_compras','proveedor','Compras','abrirModalCompra')" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Buscar duplicados</button>
           <button onclick="exportarExcelCompras()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar PLE</button>
           <button onclick="document.getElementById('c-sunat-file').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📊 Importar SUNAT</button>
           <input type="file" id="c-sunat-file" accept=".xlsx,.xls" style="display:none" onchange="_cSunatHandleFile(this)">
@@ -435,6 +436,23 @@ async function guardarCompra(id) {
   if (id) {
     const ok = await confirmar('¿Está segura de guardar los cambios en este comprobante?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
     if (!ok) return;
+  } else if (typeof _dupBuscarCompraVenta === 'function') {
+    // Alerta de factura duplicada (3.1) — solo al registrar comprobantes NUEVOS
+    const nDoc = [serie, nroIni].filter(Boolean).join('-');
+    const dups = await _dupBuscarCompraVenta('contabilidad_compras', 'proveedor',
+      { nDoc, docIdentidad: nroId, proveedor, total: payload.total_cp, fecha });
+    if (dups.length) {
+      const detalle = await _dupDetalleOcurrencias(dups.map(d => ({
+        nDocCalc: [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-'),
+        _fecha: d.fecha_emision, _total: d.total_cp,
+        _label: `${d.serie_cdp}-${d.nro_cp_inicial} · ${d.proveedor||''}`,
+      })));
+      const ok = await confirmar(
+        `⚠️ Esta factura ya existe en el sistema:\n\n${detalle}\n\n¿Está segura de registrarla de todas formas?`,
+        { btnOk: 'Sí, registrar de todas formas', btnColor: '#C53030' }
+      );
+      if (!ok) return;
+    }
   }
 
   let error;

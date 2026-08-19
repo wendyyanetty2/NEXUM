@@ -38,6 +38,7 @@ function renderTabRHRecibidas(area) {
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="rhConciliarAutomatico()" id="btn-rhr-auto" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">⚡ Conciliar automáticamente</button>
           <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔄 Consolidar estados</button>
+          <button onclick="_dupReporteHistoricoRH()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Buscar duplicados</button>
           <button onclick="exportarExcelRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar Excel</button>
           <button onclick="document.getElementById('rhr-file-input').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📂 Importar Excel</button>
           <input type="file" id="rhr-file-input" accept=".xlsx,.xls" style="display:none" onchange="procesarImportRHR(this)">
@@ -845,6 +846,20 @@ async function guardarRHR(id) {
   if (id) {
     const ok = await confirmar('¿Está segura de guardar los cambios en este RH?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
     if (!ok) return;
+  } else if (typeof _dupBuscarRH === 'function') {
+    // Alerta de RH duplicado (3.1) — solo al registrar RH NUEVOS
+    const dups = await _dupBuscarRH({ numeroRH: nroRH, docIdentidad: nroDoc, proveedor: nombre, total: neta, fecha });
+    if (dups.length) {
+      const detalle = await _dupDetalleOcurrencias(dups.map(d => ({
+        nDocCalc: d.id, _fecha: d.fecha_emision, _total: d.monto_neto,
+        _label: `${d.numero_rh} · ${d.nombre_emisor||''}`,
+      })), 'nDocCalc');
+      const ok = await confirmar(
+        `⚠️ Este RH ya existe en el sistema:\n\n${detalle}\n\n¿Está segura de registrarlo de todas formas?`,
+        { btnOk: 'Sí, registrar de todas formas', btnColor: '#C53030' }
+      );
+      if (!ok) return;
+    }
   }
 
   let error;
