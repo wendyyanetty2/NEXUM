@@ -99,19 +99,27 @@ async function _renderComprasFiltradas() {
     return;
   }
 
-  // MEJORA 7: verificar qué comprobantes tienen movimiento bancario aplicado
+  // MEJORA 7 + Estado Parcial (1.7): traer TODOS los movimientos vinculados por comprobante
+  // (un comprobante puede cubrirse con varios movimientos — regla N:M)
   const numeros = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicados } = numeros.length
     ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc')
         .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
-  const aplicadosMap = new Map((mbdAplicados || []).map(r => [r.nro_factura_doc, r]));
+  const aplicadosMap = new Map(); // nDoc → [movs...]
+  (mbdAplicados || []).forEach(r => {
+    if (!aplicadosMap.has(r.nro_factura_doc)) aplicadosMap.set(r.nro_factura_doc, []);
+    aplicadosMap.get(r.nro_factura_doc).push(r);
+  });
 
-  // Estadísticas de conciliación
-  const _nDocC    = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-  const countAplicC = filas.filter(r => aplicadosMap.has(_nDocC(r))).length;
-  const countPendC  = filas.length - countAplicC;
-  const montoAplicC = filas.filter(r => aplicadosMap.has(_nDocC(r))).reduce((s,r) => s + Number(r.total_cp||0), 0);
+  // Estadísticas de conciliación (ahora con 3 estados: completo/parcial/pendiente)
+  const _nDocC = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+  const _covC  = r => _conCobertura(aplicadosMap.get(_nDocC(r)), r.total_cp);
+  const covFilas    = filas.map(r => ({ r, cov: _covC(r) }));
+  const countAplicC = covFilas.filter(x => x.cov.estado.startsWith('COMPLETO')).length;
+  const countParcC  = covFilas.filter(x => x.cov.estado === 'PARCIAL').length;
+  const countPendC  = covFilas.filter(x => x.cov.estado === 'PENDIENTE').length;
+  const montoAplicC = covFilas.filter(x => x.cov.estado.startsWith('COMPLETO')).reduce((s,x) => s + Number(x.r.total_cp||0), 0);
   const montoPendC  = totalCP - montoAplicC;
   const pctAplicC   = filas.length > 0 ? Math.round(countAplicC / filas.length * 100) : 0;
 
@@ -121,6 +129,7 @@ async function _renderComprasFiltradas() {
       padding:8px 12px;background:rgba(128,128,128,.05);border:1px solid var(--color-borde);
       border-radius:8px;font-size:11px;font-weight:600;box-sizing:border-box">
       <span style="background:#2F855A;color:#fff;padding:3px 10px;border-radius:12px">✅ APLICADO ${countAplicC}</span>
+      <span style="background:#D69E2E;color:#fff;padding:3px 10px;border-radius:12px">🟡 PARCIAL ${countParcC}</span>
       <span style="background:#C53030;color:#fff;padding:3px 10px;border-radius:12px">🔴 PENDIENTE ${countPendC}</span>
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicC}% conciliado</span>
     </div>
@@ -160,20 +169,32 @@ async function _renderComprasFiltradas() {
       </tr></thead>
       <tbody>
         ${filas.map(r => {
-          const nDoc    = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-          const movLink = aplicadosMap.get(nDoc);
-          const bancoHtml = movLink
-            ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
-                 title="Click para ver movimiento bancario vinculado"
+          const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+          const movs = aplicadosMap.get(nDoc);
+          const cov  = _conCobertura(movs, r.total_cp);
+          const conciliarArgs = `'${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}'`;
+          let bancoHtml;
+          if (cov.estado === 'PENDIENTE') {
+            bancoHtml = `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
+                 title="Click para conciliar" onclick="_conciliarCompraIndividual(${conciliarArgs})">🔴 PEND.</span>`;
+          } else if (cov.estado === 'PARCIAL') {
+            bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
+                 title="Parcial: ${formatearMoneda(cov.suma)} registrados, faltan ${formatearMoneda(cov.falta)}. Click para vincular más movimientos."
+                 onclick="_conciliarCompraIndividual(${conciliarArgs})">
+                <span style="background:#D69E2E;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">🟡 PARCIAL</span>
+                <span style="font-size:9px;color:#D69E2E;white-space:nowrap">${formatearMoneda(cov.suma)} / ${formatearMoneda(cov.total)}</span>
+              </div>`;
+          } else {
+            const emitido = cov.estado === 'COMPLETO_EMITIDO';
+            bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
+                 title="Click para ver movimiento(s) bancario(s) vinculado(s)"
                  onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA')">
-                <span style="background:${movLink.entrega_doc==='EMITIDO'?'#2F855A':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">
-                  ${movLink.entrega_doc==='EMITIDO'?'✅ APLIC.':'⚠️ OBSERV.'}
+                <span style="background:${emitido?'#2F855A':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">
+                  ${emitido?'✅ APLIC.':'⚠️ OBSERV.'}
                 </span>
-                <span style="font-family:monospace;font-size:9px;color:${movLink.entrega_doc==='EMITIDO'?'#22c55e':'#D69E2E'};max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapar(movLink.nro_operacion_bancaria||'')}</span>
-              </div>`
-            : `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
-                 title="Click para conciliar"
-                 onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')">🔴 PEND.</span>`;
+                <span style="font-family:monospace;font-size:9px;color:${emitido?'#22c55e':'#D69E2E'}">${movs.length>1?`${movs.length} movs.`:escapar(movs[0].nro_operacion_bancaria||'')}</span>
+              </div>`;
+          }
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>

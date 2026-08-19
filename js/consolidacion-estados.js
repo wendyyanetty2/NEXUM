@@ -7,7 +7,31 @@
    Funciones públicas:
      consolidarMovimientoVinculado(movId)  — auto-trigger tras cada vinculación
      consolidarEstadosRetroactivo()        — proceso retroactivo masivo (botón UI)
+     _conCobertura(movsVinculados, total)  — Estado Parcial (punto 1.7), soporta N:M
    ============================================================ */
+
+// ── Cobertura de un comprobante frente a los movimientos bancarios vinculados
+//    (regla de oro N:M — un comprobante puede cubrirse con varios movimientos,
+//    y viceversa; ver punto 1.7). Recibe el array de movimientos ya filtrados
+//    por nro_factura_doc y el total del comprobante. NO toca la base de datos.
+function _conCobertura(movsVinculados, totalComprobante) {
+  const suma  = (movsVinculados || []).reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
+  const total = Number(totalComprobante) || 0;
+  const TOL   = 0.01;
+  const round = n => Math.round(n * 100) / 100;
+
+  if (!movsVinculados?.length || suma <= TOL) {
+    return { estado: 'PENDIENTE', suma: round(suma), total: round(total), falta: round(total) };
+  }
+  if (suma < total - TOL) {
+    return { estado: 'PARCIAL', suma: round(suma), total: round(total), falta: round(total - suma) };
+  }
+  const todosEmitidos = movsVinculados.every(m => m.entrega_doc === 'EMITIDO');
+  return {
+    estado: todosEmitidos ? 'COMPLETO_EMITIDO' : 'COMPLETO_OBSERVADO',
+    suma: round(suma), total: round(total), falta: 0,
+  };
+}
 
 // ── Evalúa completitud de los 5 campos requeridos (fórmula histórica,
 //    2 niveles: EMITIDO/OBSERVADO). Usada hoy solo por "🔄 Consolidar
