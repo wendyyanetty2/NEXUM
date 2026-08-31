@@ -39,6 +39,7 @@
         <button class="tab-btn"        id="tab-proyectos"      onclick="activarTab('proyectos')">🏗️ Proyectos</button>
         <button class="tab-btn"        id="tab-mediospago"     onclick="activarTab('mediospago')">💳 Medios de pago</button>
         <button class="tab-btn"        id="tab-trabajadores"   onclick="activarTab('trabajadores')">👷 Trabajadores</button>
+        <button class="tab-btn"        id="tab-crb"            onclick="activarTab('crb')">🏦 Conceptos recurrentes bancarios</button>
       </div>
 
       <div id="contenido-tab">
@@ -68,6 +69,7 @@
 <script src="../../modules/catalogos/modules/cat-proyectos.js"></script>
 <script src="../../modules/catalogos/modules/cat-mediospago.js"></script>
 <script src="../../modules/catalogos/modules/cat-trabajadores.js"></script>
+<script src="../../modules/catalogos/modules/cat-conceptos-recurrentes-bancarios.js"></script>
 
 <script>
 let perfil_usuario = null;
@@ -93,6 +95,7 @@ function activarTab(tab) {
     proyectos:      () => renderTabProyectos(area),
     mediospago:     () => renderTabMediosPago(area),
     trabajadores:   () => renderTabTrabajadores(area),
+    crb:            () => renderTabConceptosRecurrentesBancarios(area),
   };
   if (mapa[tab]) mapa[tab]();
 }

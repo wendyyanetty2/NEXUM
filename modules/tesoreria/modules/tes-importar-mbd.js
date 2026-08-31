@@ -564,10 +564,13 @@ async function guardarMBD(id) {
     // Alerta de movimiento bancario duplicado (3.1) — mismo monto + misma descripción,
     // solo al registrar movimientos NUEVOS (no aplica al Estado Parcial: varios
     // movimientos distintos vinculados al mismo comprobante son normales).
-    const dups = await _dupBuscarMovimientoBancario({ monto: payload.monto, descripcion: payload.descripcion });
+    const dups = await _dupBuscarMovimientoBancario({
+      monto: payload.monto, descripcion: payload.descripcion,
+      fecha_deposito: payload.fecha_deposito, nro_factura_doc: payload.nro_factura_doc,
+    });
     if (dups.length) {
       const ok = await confirmar(
-        `⚠️ Ya existe un movimiento bancario con el mismo monto, descripción y comprobante vinculado:\n\n${_dupDetalleMovimientos(dups)}\n\n¿Está segura de registrarlo de todas formas?`,
+        `⚠️ Ya existe un movimiento bancario similar (mismo monto y descripción, y mismo comprobante o misma fecha si es un cargo recurrente):\n\n${_dupDetalleMovimientos(dups)}\n\n¿Está segura de registrarlo de todas formas?`,
         { btnOk: 'Sí, registrar de todas formas', btnColor: '#C53030' }
       );
       if (!ok) return;
@@ -1042,18 +1045,21 @@ async function confirmarImportMBD() {
   // Alerta de duplicados (3.1) — mismo monto + misma descripción, tanto contra
   // lo ya existente en BD como entre filas del propio archivo que se va a importar.
   if (typeof _dupMismoMovimiento === 'function') {
-    const { data: existentes } = await _supabase.from('tesoreria_mbd').select('monto,descripcion,nro_operacion_bancaria,fecha_deposito,entrega_doc').eq('empresa_id', empresa_activa.id);
+    const [{ data: existentes }, conceptosRecurrentes] = await Promise.all([
+      _supabase.from('tesoreria_mbd').select('monto,descripcion,nro_operacion_bancaria,nro_factura_doc,fecha_deposito,entrega_doc').eq('empresa_id', empresa_activa.id),
+      _dupCargarConceptosRecurrentes(),
+    ]);
     let posiblesDup = 0;
     const vistosEnLote = [];
     for (const fila of validos) {
-      const chocaConExistente = (existentes || []).some(e => _dupMismoMovimiento(e, fila));
-      const chocaConLote = vistosEnLote.some(v => _dupMismoMovimiento(v, fila));
+      const chocaConExistente = (existentes || []).some(e => _dupMismoMovimiento(e, fila, conceptosRecurrentes));
+      const chocaConLote = vistosEnLote.some(v => _dupMismoMovimiento(v, fila, conceptosRecurrentes));
       if (chocaConExistente || chocaConLote) posiblesDup++;
       vistosEnLote.push(fila);
     }
     if (posiblesDup > 0) {
       const ok = await confirmar(
-        `⚠️ ${posiblesDup} de ${validos.length} movimiento(s) de este archivo parecen estar duplicados (mismo monto, descripción y comprobante vinculado que uno ya existente, o repetido dentro del mismo archivo).\n\n¿Está segura de importar todo de todas formas?`,
+        `⚠️ ${posiblesDup} de ${validos.length} movimiento(s) de este archivo parecen estar duplicados (mismo monto y descripción, y mismo comprobante vinculado o misma fecha si es un cargo recurrente, que uno ya existente o repetido dentro del mismo archivo).\n\n¿Está segura de importar todo de todas formas?`,
         { btnOk: 'Sí, importar de todas formas', btnColor: '#C53030' }
       );
       if (!ok) return;

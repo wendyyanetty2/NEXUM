@@ -139,21 +139,58 @@ async function _dupReporteHistoricoRH() {
 // vinculados al MISMO comprobante (nro_factura_doc). Si no hay
 // comprobante vinculado en alguno de los dos, o están vinculados a
 // comprobantes distintos, no se considera duplicado.
+//
+// Corregido 2026-08-31 (feedback Wendy, 42 falsos positivos): el
+// banco exporta "00000000" (u otro valor de puros ceros) como
+// nro_factura_doc/N° operación para cargos como ITF y comisiones —
+// no es un comprobante real, así que ya NO cuenta como "mismo
+// comprobante" solo por coincidir ese placeholder. Para esos casos
+// (descripción dentro del catálogo por empresa "conceptos_recurrentes_
+// bancarios") se exige en cambio que ambos movimientos caigan en la
+// MISMA fecha exacta para considerarse sospechosos de duplicado real.
 // ════════════════════════════════════════════════════════════════
-function _dupMismoMovimiento(a, b) {
+function _esComprobantePlaceholder(v) {
+  if (!v) return true;
+  const t = String(v).trim();
+  return !t || /^0+$/.test(t);
+}
+
+async function _dupCargarConceptosRecurrentes() {
+  const { data } = await _supabase.from('conceptos_recurrentes_bancarios')
+    .select('nombre').eq('empresa_operadora_id', empresa_activa.id).eq('activo', true);
+  return new Set((data || []).map(c => c.nombre.trim().toLowerCase()));
+}
+
+// Devuelve la razón del posible duplicado ('comprobante' | 'recurrente') o null si no aplica.
+function _dupRazonMovimiento(a, b, conceptosRecurrentes) {
   const montoOk = Math.abs(Math.abs(Number(a.monto)||0) - Math.abs(Number(b.monto)||0)) < 0.01;
+  if (!montoOk) return null;
   const descA = (a.descripcion || '').trim().toLowerCase();
   const descB = (b.descripcion || '').trim().toLowerCase();
-  const descOk = descA && descB && descA === descB;
-  const mismoComprobante = !!(a.nro_factura_doc && b.nro_factura_doc && a.nro_factura_doc === b.nro_factura_doc);
-  return montoOk && descOk && mismoComprobante;
+  if (!descA || descA !== descB) return null;
+
+  const compA = _esComprobantePlaceholder(a.nro_factura_doc) ? null : String(a.nro_factura_doc).trim();
+  const compB = _esComprobantePlaceholder(b.nro_factura_doc) ? null : String(b.nro_factura_doc).trim();
+  if (compA && compB && compA === compB) return 'comprobante';
+
+  if (conceptosRecurrentes && conceptosRecurrentes.has(descA)) {
+    const fechaA = (a.fecha_deposito || '').slice(0, 10);
+    const fechaB = (b.fecha_deposito || '').slice(0, 10);
+    if (fechaA && fechaA === fechaB) return 'recurrente';
+  }
+  return null;
+}
+
+function _dupMismoMovimiento(a, b, conceptosRecurrentes) {
+  return !!_dupRazonMovimiento(a, b, conceptosRecurrentes);
 }
 
 async function _dupBuscarMovimientoBancario(candidato, excluirId = null) {
+  const conceptosRecurrentes = await _dupCargarConceptosRecurrentes();
   let q = _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empresa_activa.id);
   if (excluirId) q = q.neq('id', excluirId);
   const { data } = await q;
-  return (data || []).filter(r => _dupMismoMovimiento(r, candidato));
+  return (data || []).filter(r => _dupMismoMovimiento(r, candidato, conceptosRecurrentes));
 }
 
 function _dupDetalleMovimientos(candidatos) {
@@ -162,18 +199,32 @@ function _dupDetalleMovimientos(candidatos) {
   ).join('\n');
 }
 
+const _DUP_CRITERIO_LABEL = {
+  comprobante: 'Comprobante real idéntico',
+  recurrente:  'Concepto recurrente — misma fecha',
+};
+
 async function _dupReporteHistoricoMovimientos() {
   mostrarToast('Buscando movimientos bancarios duplicados…', 'atencion');
-  const { data } = await _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empresa_activa.id);
+  const [{ data }, conceptosRecurrentes] = await Promise.all([
+    _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empresa_activa.id),
+    _dupCargarConceptosRecurrentes(),
+  ]);
   const filas = data || [];
 
-  const grupos = _dupAgruparClusters(filas, _dupMismoMovimiento);
+  const grupos = _dupAgruparClusters(filas, (a, b) => _dupMismoMovimiento(a, b, conceptosRecurrentes));
 
-  _dupRenderReporte(grupos.map(g => g.map(r => ({
-    id: r.id,
-    label: `Op. ${r.nro_operacion_bancaria || '—'} · ${(r.descripcion||'').slice(0,40)}`,
-    periodo: r.fecha_deposito ? r.fecha_deposito.slice(0,7) : '', fecha: r.fecha_deposito, total: r.monto,
-  }))), 'Movimientos Bancarios', 'abrirModalMBD', 'Mismo monto + misma descripción + vinculados al mismo comprobante');
+  _dupRenderReporte(grupos.map(g => {
+    const anchor = g[0];
+    const razones = new Set(g.slice(1).map(m => _dupRazonMovimiento(anchor, m, conceptosRecurrentes)));
+    const criterio = razones.size === 1 ? _DUP_CRITERIO_LABEL[[...razones][0]] : 'Mixto (revisar)';
+    return g.map(r => ({
+      id: r.id,
+      label: `Op. ${r.nro_operacion_bancaria || '—'} · ${(r.descripcion||'').slice(0,40)}`,
+      periodo: r.fecha_deposito ? r.fecha_deposito.slice(0,7) : '', fecha: r.fecha_deposito, total: r.monto,
+      criterio,
+    }));
+  }), 'Movimientos Bancarios', 'abrirModalMBD', 'Comprobante real idéntico, o concepto recurrente (catálogo por empresa) con la misma fecha exacta');
 }
 
 function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir, criterioTxt) {
@@ -203,7 +254,9 @@ function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir, criterioTxt) {
           </p>
           ${grupos.map((g, i) => `
             <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">
-              <div style="font-size:11px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;margin-bottom:8px">Grupo ${i+1} — ${g.length} registros similares</div>
+              <div style="font-size:11px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;margin-bottom:8px">
+                Grupo ${i+1} — ${g.length} registros similares${g[0].criterio ? ` · <span style="color:var(--color-secundario)">${escapar(g[0].criterio)}</span>` : ''}
+              </div>
               ${g.map(r => `
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--color-borde);font-size:12px">
                   <span>${escapar(r.label)} — ${escapar(r.periodo||'')} (${formatearFecha(r.fecha)})</span>
