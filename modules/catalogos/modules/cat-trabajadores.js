@@ -11,7 +11,9 @@ async function renderTabTrabajadores(area) {
     <div class="fadeIn">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input id="trab-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar nombre o DNI…"
+          <input id="trab-buscar" type="text" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+               data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+               class="input-buscar" placeholder="Buscar nombre o DNI…"
                  oninput="filtrarTrabajadores()" style="max-width:240px">
           <select id="trab-contrato" onchange="filtrarTrabajadores()" class="input-buscar" style="max-width:180px">
             <option value="">Todos los contratos</option>

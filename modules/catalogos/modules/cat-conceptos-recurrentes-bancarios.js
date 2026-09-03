@@ -17,7 +17,9 @@ async function renderTabConceptosRecurrentesBancarios(area) {
         El buscador de duplicados de Tesorería solo los agrupa como posible duplicado si además caen en la misma fecha exacta.
       </p>
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
-        <input id="crb-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar concepto…"
+        <input id="crb-buscar" type="text" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+               data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+               class="input-buscar" placeholder="Buscar concepto…"
                oninput="renderTablaCRB()" style="max-width:280px">
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="precargarCRB()" title="Insertar conceptos predefinidos (omite los que ya existen)">📋 Precargar datos</button>

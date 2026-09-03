@@ -62,7 +62,9 @@ async function renderTabMovimientos(area) {
           </div>
           <div>
             <label class="label-filtro">Buscar</label>
-            <input type="text" id="mov-buscar" autocomplete="off" oninput="filtrarMovimientos()" class="input-buscar w-full"
+            <input type="text" id="mov-buscar" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                   data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+                   oninput="filtrarMovimientos()" class="input-buscar w-full"
                    placeholder="Buscar en cualquier columna…">
           </div>
         </div>

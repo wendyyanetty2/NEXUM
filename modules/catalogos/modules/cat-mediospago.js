@@ -9,7 +9,9 @@ async function renderTabMediosPago(area) {
     <div class="fadeIn">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input id="mp-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar medio de pago…"
+          <input id="mp-buscar" type="text" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                 data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+                 class="input-buscar" placeholder="Buscar medio de pago…"
                  oninput="renderTablaMediosPago()" style="max-width:240px">
           <select id="mp-tipo" onchange="renderTablaMediosPago()" class="input-buscar" style="max-width:160px">
             <option value="">Todos los tipos</option>

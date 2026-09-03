@@ -15,21 +15,24 @@ let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPag
 let _pendientesGrupos = {};
 
 async function _mbdCargarCatalogos() {
-  // Carga sin filtro de empresa para que todas las compañías compartan el mismo catálogo.
-  // El módulo Catálogos sigue gestionando ítems por empresa; aquí solo leemos para el modal.
+  // Catálogo propio de la empresa activa (igual que el módulo Catálogos).
+  const eid = empresa_activa.id;
   const [rc, re, ra, rm, rproy, rprest] = await Promise.all([
-    _supabase.from('conceptos').select('nombre').eq('activo', true).order('nombre'),
-    _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('activo', true).order('nombre'),
-    _supabase.from('autorizaciones').select('nombre').eq('activo', true).order('nombre'),
-    _supabase.from('medios_pago').select('nombre').eq('activo', true).order('nombre'),
-    _supabase.from('proyectos').select('nombre').eq('activo', true).order('nombre'),
-    _supabase.from('prestadores_servicios').select('nombre,dni').eq('activo', true).order('nombre'),
+    _supabase.from('conceptos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('autorizaciones').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('medios_pago').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('proyectos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('prestadores_servicios').select('nombre,dni').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
   ]);
 
-  // De-duplicar por nombre (puede haber ítems con el mismo nombre en distintas empresas)
+  // De-duplicar por nombre (por si hubiera ítems repetidos con distinta tilde/espacios
+  // dentro de la misma empresa)
+  const _normNombre = (s) => (s || '').toString().trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
   const _uniq = (arr) => {
     const seen = new Set();
-    return arr.filter(v => { const k = v.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    return arr.filter(v => { const k = _normNombre(v); if (!k || seen.has(k)) return false; seen.add(k); return true; });
   };
 
   _mbdCatalogos.conceptos      = _uniq((rc.data || []).map(r => r.nombre));
@@ -43,7 +46,7 @@ async function _mbdCargarCatalogos() {
   const provPres = (rprest.data || []).map(r => ({ nombre: r.nombre, doc: r.dni || '' }));
   const seen = new Set();
   _mbdCatalogos.proveedores = [...provEmp, ...provPres].filter(p => {
-    const k = p.nombre.toLowerCase();
+    const k = _normNombre(p.nombre);
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -77,7 +80,9 @@ function renderTabImportarMBD(area) {
           <select id="mbd-filtro-anio" style="${estiloSelect()}">
             ${[anioActual-1, anioActual, anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('')}
           </select>
-          <input id="mbd-buscar" type="text" autocomplete="off" placeholder="Buscar…" style="${estiloInput()};width:180px">
+          <input id="mbd-buscar" type="text" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                 data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+                 placeholder="Buscar…" style="${estiloInput()};width:180px">
           <select id="mbd-filtro-estado" style="${estiloSelect()}">
             <option value="">Todos los estados</option>
             <option value="PENDIENTE">🔴 PENDIENTE</option>

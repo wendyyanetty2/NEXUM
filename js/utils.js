@@ -133,6 +133,49 @@ function truncar(texto, largo = 30) {
   return texto.length > largo ? texto.substring(0, largo) + '…' : texto;
 }
 
+// ── Blindaje contra autocompletado no deseado (Chrome / LastPass / 1Password / Bitwarden / Dashlane) ──
+// Los campos del sistema (buscadores, montos, RUC, N° doc, etc.) no deben autocompletarse
+// con datos guardados del navegador. Se excluye el formulario de login/recuperar, donde
+// SÍ queremos que el navegador ofrezca el correo/contraseña guardados.
+(function blindarAutocompletado() {
+  const FORMULARIOS_EXCLUIDOS = ['form-login', 'form-recuperar'];
+  const TIPOS_EXCLUIDOS = ['password','checkbox','radio','hidden','file','submit','button',
+    'range','color','date','month','week','time','datetime-local'];
+
+  function blindarInput(input) {
+    if (!input || input.tagName !== 'INPUT' || input.dataset.afBlindado) return;
+    const form = input.closest('form');
+    if (form && FORMULARIOS_EXCLUIDOS.includes(form.id)) return;
+    const tipo = (input.type || 'text').toLowerCase();
+    if (TIPOS_EXCLUIDOS.includes(tipo)) return;
+
+    input.dataset.afBlindado = '1';
+    if (!input.hasAttribute('autocomplete')) input.setAttribute('autocomplete', 'off');
+    input.setAttribute('data-lpignore', 'true');
+    input.setAttribute('data-1p-ignore', 'true');
+    input.setAttribute('data-bwignore', 'true');
+    input.setAttribute('data-form-type', 'other');
+
+    if (!input.readOnly && !input.disabled) {
+      input.setAttribute('readonly', 'readonly');
+      input.addEventListener('focus', () => input.removeAttribute('readonly'), { once: true });
+    }
+  }
+
+  function blindarTodos(raiz) {
+    if (raiz.tagName === 'INPUT') blindarInput(raiz);
+    if (raiz.querySelectorAll) raiz.querySelectorAll('input').forEach(blindarInput);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => blindarTodos(document));
+
+  new MutationObserver(mutaciones => {
+    for (const m of mutaciones) {
+      m.addedNodes.forEach(nodo => { if (nodo.nodeType === 1) blindarTodos(nodo); });
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+
 // ── Animaciones CSS dinámicas ──────────────────────────────────────────────────
 (function inyectarAnimaciones() {
   if (document.getElementById('nexum-animations')) return;

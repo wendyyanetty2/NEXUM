@@ -31,7 +31,9 @@ function renderTabRHRecibidas(area) {
             <option value="PENDIENTE">Pendiente</option>
             <option value="CANCELADO">Cancelado</option>
           </select>
-          <input type="text" id="rhr-buscar" autocomplete="off" placeholder="Buscar emisor, N° RH, N° doc, monto…"
+          <input type="text" id="rhr-buscar" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                 data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+                 placeholder="Buscar emisor, N° RH, N° doc, monto…"
             style="width:220px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
           <button onclick="cargarRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Filtrar</button>
         </div>

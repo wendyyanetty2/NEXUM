@@ -8,7 +8,9 @@ async function renderTabAutorizaciones(area) {
   area.innerHTML = `
     <div class="fadeIn">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
-        <input id="aut-buscar" type="text" autocomplete="off" class="input-buscar" placeholder="Buscar nombre o cargo…"
+        <input id="aut-buscar" type="text" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+               data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+               class="input-buscar" placeholder="Buscar nombre o cargo…"
                oninput="renderTablaAutorizaciones()" style="max-width:280px">
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarAutorizacionesExcel()">⬇ Excel</button>

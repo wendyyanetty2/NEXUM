@@ -670,7 +670,9 @@ async function _rhVincularManualLegado(rhId, nombre) {
           <div style="margin-top:14px;border-top:1px solid var(--color-borde);padding-top:12px">
             <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:8px">🔢 Buscar por N° de operación:</p>
             <div style="display:flex;gap:8px">
-              <input type="text" id="rhr-manual-q" placeholder="Ingresa el N° de operación bancaria"
+              <input type="text" id="rhr-manual-q" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
+                placeholder="Ingresa el N° de operación bancaria"
                 style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)"
                 onkeydown="if(event.key==='Enter') rhBuscarNroOp('${rhId}','${escapar(nroRH)}','${escapar(nombre)}')">
               <button onclick="rhBuscarNroOp('${rhId}','${escapar(nroRH)}','${escapar(nombre)}')"
