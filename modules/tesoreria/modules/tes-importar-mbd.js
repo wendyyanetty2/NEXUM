@@ -17,13 +17,21 @@ let _pendientesGrupos = {};
 async function _mbdCargarCatalogos() {
   // Catálogo propio de la empresa activa (igual que el módulo Catálogos).
   const eid = empresa_activa.id;
-  const [rc, re, ra, rm, rproy, rprest] = await Promise.all([
+  const [rc, re, ra, rm, rproy, rmov] = await Promise.all([
     _supabase.from('conceptos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('autorizaciones').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('medios_pago').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('proyectos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
-    _supabase.from('prestadores_servicios').select('nombre,dni').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    // Proveedor / Empresa / Personal: SOLO nombres que ya existen en los reportes
+    // de movimientos bancarios de esta empresa (no el catálogo de Clientes/Proveedores).
+    // Así el autocompletado nunca "memoriza" un nombre nuevo o mal escrito hasta que
+    // haya quedado guardado de verdad en un movimiento.
+    _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni')
+      .eq('empresa_id', eid)
+      .not('proveedor_empresa_personal', 'is', null)
+      .order('fecha_deposito', { ascending: false })
+      .limit(5000),
   ]);
 
   // De-duplicar por nombre (por si hubiera ítems repetidos con distinta tilde/espacios
@@ -41,19 +49,22 @@ async function _mbdCargarCatalogos() {
   _mbdCatalogos.mediosPago     = _uniq((rm.data || []).map(r => r.nombre));
   _mbdCatalogos.proyectos      = _uniq((rproy.data || []).map(r => r.nombre));
 
-  // Combinar empresas_clientes (RUC) + prestadores_servicios (DNI) — sin duplicados
-  const provEmp  = (re.data || []).map(r => ({ nombre: r.nombre, doc: r.ruc_dni || '' }));
-  const provPres = (rprest.data || []).map(r => ({ nombre: r.nombre, doc: r.dni || '' }));
-  const seen = new Set();
-  _mbdCatalogos.proveedores = [...provEmp, ...provPres].filter(p => {
-    const k = _normNombre(p.nombre);
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  }).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  // Nombres distintos ya usados en movimientos reales (más reciente primero,
+  // así se conserva el RUC/DNI más reciente visto para cada nombre)
+  const seenProv = new Set();
+  _mbdCatalogos.proveedores = (rmov.data || [])
+    .filter(r => (r.proveedor_empresa_personal || '').trim())
+    .filter(r => {
+      const k = _normNombre(r.proveedor_empresa_personal);
+      if (seenProv.has(k)) return false;
+      seenProv.add(k);
+      return true;
+    })
+    .map(r => ({ nombre: r.proveedor_empresa_personal.trim(), doc: r.ruc_dni || '' }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre));
 }
 
-// Auto-completar RUC/DNI al seleccionar proveedor del catálogo
+// Auto-completar RUC/DNI al seleccionar un proveedor ya usado en movimientos anteriores
 function _mbdFillRucFromProveedor(val) {
   const rucEl = document.getElementById('mbd-ruc-dni');
   if (!val || !rucEl || rucEl.value) return;
