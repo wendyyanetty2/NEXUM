@@ -17,21 +17,29 @@ let _pendientesGrupos = {};
 async function _mbdCargarCatalogos() {
   // Catálogo propio de la empresa activa (igual que el módulo Catálogos).
   const eid = empresa_activa.id;
-  const [rc, re, ra, rm, rproy, rmov] = await Promise.all([
+  const [rc, re, ra, rm, rproy, rmov, rComp, rVent, rRh] = await Promise.all([
     _supabase.from('conceptos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('autorizaciones').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('medios_pago').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('proyectos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
-    // Proveedor / Empresa / Personal: SOLO nombres que ya existen en los reportes
-    // de movimientos bancarios de esta empresa (no el catálogo de Clientes/Proveedores).
-    // Así el autocompletado nunca "memoriza" un nombre nuevo o mal escrito hasta que
-    // haya quedado guardado de verdad en un movimiento.
+    // Proveedor / Empresa / Personal: SOLO nombres que ya existen en registros reales
+    // de esta empresa (movimientos bancarios, compras, ventas y RH) — no el catálogo
+    // de Clientes/Proveedores. Así el autocompletado nunca "memoriza" un nombre nuevo
+    // o mal escrito hasta que haya quedado guardado de verdad en uno de esos módulos.
+    // Solo lectura: no toca ni depende de la lógica de vinculación/migración con
+    // Tesorería (_qkEjecutar y afines), que sigue igual.
     _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni')
       .eq('empresa_id', eid)
       .not('proveedor_empresa_personal', 'is', null)
       .order('fecha_deposito', { ascending: false })
       .limit(5000),
+    _supabase.from('registro_compras').select('nombre_proveedor,ruc_proveedor')
+      .eq('empresa_operadora_id', eid).not('nombre_proveedor', 'is', null).limit(5000),
+    _supabase.from('registro_ventas').select('nombre_cliente,ruc_cliente')
+      .eq('empresa_operadora_id', eid).not('nombre_cliente', 'is', null).limit(5000),
+    _supabase.from('rh_registros').select('prestadores_servicios(nombre,dni)')
+      .eq('empresa_operadora_id', eid).limit(5000),
   ]);
 
   // De-duplicar por nombre (por si hubiera ítems repetidos con distinta tilde/espacios
@@ -49,22 +57,29 @@ async function _mbdCargarCatalogos() {
   _mbdCatalogos.mediosPago     = _uniq((rm.data || []).map(r => r.nombre));
   _mbdCatalogos.proyectos      = _uniq((rproy.data || []).map(r => r.nombre));
 
-  // Nombres distintos ya usados en movimientos reales (más reciente primero,
-  // así se conserva el RUC/DNI más reciente visto para cada nombre)
+  // Nombres distintos ya usados en registros reales de Movimientos Bancarios,
+  // Compras, Ventas y RH (en ese orden de prioridad para el RUC/DNI mostrado)
+  const candidatosProv = [
+    ...(rmov.data  || []).map(r => ({ nombre: r.proveedor_empresa_personal, doc: r.ruc_dni })),
+    ...(rComp.data || []).map(r => ({ nombre: r.nombre_proveedor,           doc: r.ruc_proveedor })),
+    ...(rVent.data || []).map(r => ({ nombre: r.nombre_cliente,             doc: r.ruc_cliente })),
+    ...(rRh.data   || []).map(r => ({ nombre: r.prestadores_servicios?.nombre, doc: r.prestadores_servicios?.dni })),
+  ];
   const seenProv = new Set();
-  _mbdCatalogos.proveedores = (rmov.data || [])
-    .filter(r => (r.proveedor_empresa_personal || '').trim())
+  _mbdCatalogos.proveedores = candidatosProv
+    .filter(r => (r.nombre || '').trim())
     .filter(r => {
-      const k = _normNombre(r.proveedor_empresa_personal);
+      const k = _normNombre(r.nombre);
       if (seenProv.has(k)) return false;
       seenProv.add(k);
       return true;
     })
-    .map(r => ({ nombre: r.proveedor_empresa_personal.trim(), doc: r.ruc_dni || '' }))
+    .map(r => ({ nombre: r.nombre.trim(), doc: r.doc || '' }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
 }
 
-// Auto-completar RUC/DNI al seleccionar un proveedor ya usado en movimientos anteriores
+// Auto-completar RUC/DNI al seleccionar un proveedor ya registrado en Movimientos
+// Bancarios, Compras, Ventas o RH
 function _mbdFillRucFromProveedor(val) {
   const rucEl = document.getElementById('mbd-ruc-dni');
   if (!val || !rucEl || rucEl.value) return;
