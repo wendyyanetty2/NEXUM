@@ -492,6 +492,10 @@ async function abrirModalMBD(id = null) {
       </div>
     </div>
   `;
+
+  // Autocompletar RUC/DNI si el proveedor ya viene con nombre pero sin RUC/DNI
+  // (al editar, el campo se llena vía value="" y eso no dispara oninput/onchange)
+  _mbdFillRucFromProveedor(document.getElementById('mbd-proveedor')?.value || '');
 }
 
 function cerrarModalMBD() {
