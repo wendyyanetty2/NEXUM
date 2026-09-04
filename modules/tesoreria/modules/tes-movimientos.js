@@ -717,7 +717,18 @@ async function _movEditarMasivo() {
       const rucInp = document.getElementById('mas-ruc_dni');
       if (!rucInp || rucInp.value) return;
       const found = _mbdCatalogos.proveedores.find(p => p.nombre.toLowerCase() === provInp.value.toLowerCase());
-      if (found?.doc) rucInp.value = found.doc;
+      if (!found?.doc) return;
+      rucInp.value = found.doc;
+      // Activar también su ☑ y habilitar el campo, si no se marca no se guarda al
+      // aplicar la edición masiva. No usa _movToggleCampo() para no robar el foco
+      // del campo Proveedor mientras el usuario sigue escribiendo/seleccionando.
+      const chkRuc = document.getElementById('chk-mas-ruc_dni');
+      if (chkRuc && !chkRuc.checked) {
+        chkRuc.checked = true;
+        rucInp.disabled = false;
+        rucInp.style.opacity = '1';
+        rucInp.style.cursor = '';
+      }
     });
   }
 }
