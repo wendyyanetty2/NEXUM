@@ -166,6 +166,28 @@ function truncar(texto, largo = 30) {
       input.setAttribute('readonly', 'readonly');
       input.addEventListener('focus', () => input.removeAttribute('readonly'), { once: true });
     }
+
+    // Red de seguridad final: en Chrome, "autocomplete=off/new-password" y el
+    // truco de readonly no siempre alcanzan — el propio navegador puede seguir
+    // insertando un valor guardado (correo, nombre) sin que el usuario haya
+    // tecleado nada. Cuando el navegador autocompleta, el evento "input" que
+    // dispara trae inputType "insertReplacementText" (o ninguno); cuando el
+    // usuario escribe de verdad, siempre es "insertText". Si detectamos ese
+    // patrón, se borra el valor al instante.
+    //
+    // Se EXCLUYEN los campos con list="..." (datalist): ahí el autocompletado
+    // de proveedor/cuenta contable SÍ es una función propia de NEXUM y debe
+    // funcionar normal — no es el autorrelleno no deseado del navegador.
+    if (!input.hasAttribute('list')) {
+      input.addEventListener('input', (e) => {
+        const pareceAutocompletadoNavegador =
+          e.inputType === 'insertReplacementText' || e.inputType === 'insertFromDrop' || !e.inputType;
+        if (pareceAutocompletadoNavegador && input.value) {
+          input.value = '';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
+    }
   }
 
   function blindarTodos(raiz) {
