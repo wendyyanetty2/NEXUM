@@ -80,8 +80,8 @@ async function renderTabPlanCuentas(area) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>Código</th><th>Nombre</th><th>Tipo</th><th>Naturaleza</th>
             <th>Nivel</th><th>Acepta mov.</th><th>Estado</th><th>Acciones</th>

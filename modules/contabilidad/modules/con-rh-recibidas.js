@@ -250,26 +250,28 @@ function _renderRHRTabla() {
 
   const resumen = document.getElementById('rhr-resumen');
   if (resumen) resumen.innerHTML = `
-    <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">RENTA BRUTA</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalBruto)}</div>
+    <div class="resumen-cards">
+    <div class="resumen-card" style="background:var(--color-secundario)">
+      <div class="rc-label">RENTA BRUTA</div>
+      <div class="rc-valor">${formatearMoneda(totalBruto)}</div>
     </div>
-    <div style="background:var(--color-critico);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">RETENCIÓN</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalRet)}</div>
+    <div class="resumen-card" style="background:var(--color-critico)">
+      <div class="rc-label">RETENCIÓN</div>
+      <div class="rc-valor">${formatearMoneda(totalRet)}</div>
     </div>
-    <div style="background:var(--color-exito);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">RENTA NETA A PAGAR</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalNeto)}</div>
+    <div class="resumen-card" style="background:var(--color-exito)">
+      <div class="rc-label">RENTA NETA A PAGAR</div>
+      <div class="rc-valor">${formatearMoneda(totalNeto)}</div>
     </div>
-    <div style="background:${pendientes>0?'var(--color-atencion)':'#4A5568'};color:#fff;padding:12px 16px;border-radius:8px;min-width:120px">
-      <div style="font-size:11px;opacity:.8">PENDIENTES</div>
-      <div style="font-size:18px;font-weight:700">${pendientes}</div>
+    <div class="resumen-card" style="background:${pendientes>0?'var(--color-atencion)':'#4A5568'}">
+      <div class="rc-label">PENDIENTES</div>
+      <div class="rc-valor">${pendientes}</div>
     </div>
-    ${posibles>0?`<div style="background:#D69E2E;color:#fff;padding:12px 16px;border-radius:8px;min-width:120px">
-      <div style="font-size:11px;opacity:.8">POSIBLES MATCH</div>
-      <div style="font-size:18px;font-weight:700">${posibles}</div>
+    ${posibles>0?`<div class="resumen-card" style="background:#D69E2E">
+      <div class="rc-label">POSIBLES MATCH</div>
+      <div class="rc-valor">${posibles}</div>
     </div>`:''}
+    </div>
   `;
 
   if (!filasFiltradas.length) {
@@ -278,6 +280,7 @@ function _renderRHRTabla() {
   }
 
   wrap.innerHTML = `
+    <div class="tabla-nexum-wrap">
     <table class="tabla-nexum">
       <thead><tr>
         <th>Fecha</th><th>N° RH</th><th>N° Doc</th>
@@ -298,30 +301,31 @@ function _renderRHRTabla() {
           return `
           <tr>
             <td style="white-space:nowrap">${formatearFecha(r.fecha_emision)}</td>
-            <td style="font-weight:600">${escapar(r.numero_rh||'—')}</td>
-            <td>${escapar(docNum)}</td>
-            <td>${escapar(truncar(nombre,25))}</td>
-            <td>${escapar(truncar(r.concepto||'—',28))}</td>
-            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--color-texto-suave)" title="${escapar(r.observaciones||'')}">${escapar(r.observaciones||'—')}</td>
-            <td>${escapar(r.moneda||'PEN')}</td>
-            <td style="text-align:right">${formatearMoneda(r.monto_bruto, mon)}</td>
-            <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.monto_retencion, mon)}</td>
-            <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.monto_neto, mon)}</td>
+            <td style="font-weight:600;white-space:nowrap">${escapar(r.numero_rh||'—')}</td>
+            <td style="white-space:nowrap">${escapar(docNum)}</td>
+            <td class="celda-truncar" style="--w:170px" title="${escapar(nombre)}">${escapar(nombre)}</td>
+            <td class="celda-truncar" style="--w:190px" title="${escapar(r.concepto||'')}">${escapar(r.concepto||'—')}</td>
+            <td class="celda-truncar" style="--w:200px;font-size:12px;color:var(--color-texto-suave)" title="${escapar(r.observaciones||'')}">${escapar(r.observaciones||'—')}</td>
+            <td style="white-space:nowrap">${escapar(r.moneda||'PEN')}</td>
+            <td class="celda-monto">${formatearMoneda(r.monto_bruto, mon)}</td>
+            <td class="celda-monto" style="color:var(--color-critico)">${formatearMoneda(r.monto_retencion, mon)}</td>
+            <td class="celda-monto" style="font-weight:600;color:var(--color-exito)">${formatearMoneda(r.monto_neto, mon)}</td>
             <td>
-              <span ${tieneLinks ? `onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Click para ver el/los movimiento(s) vinculado(s)"` : ''}
-                style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${estInfo.color};color:#fff;white-space:nowrap${tieneLinks ? ';cursor:pointer' : ''}">${estInfo.etiqueta}</span>
+              <span class="badge-estado" ${tieneLinks ? `onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Click para ver el/los movimiento(s) vinculado(s)"` : ''}
+                style="background:${estInfo.color}${tieneLinks ? ';cursor:pointer' : ''}">${estInfo.etiqueta}</span>
             </td>
             <td style="text-align:center;white-space:nowrap">
-              ${tienePosible ? `<button onclick="rhConfirmarPosible('${r.id}')" title="Confirmar match posible" style="padding:4px 8px;background:rgba(214,158,46,.2);color:#D69E2E;border:1px solid #D69E2E;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">✓</button>` : ''}
-              ${tieneLinks ? `<button onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Ver movimientos vinculados" style="padding:4px 8px;background:rgba(44,82,130,.1);color:#3182CE;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-right:2px">🔗</button>` : ''}
-              <button onclick="_bmBuscarMov('RH','${r.id}','${escapar(r.numero_rh||'')}','${escapar(nombre)}',${Number(r.monto_neto||0)},'${r.fecha_emision||''}','${escapar(docNum!=='—'?docNum:'')}')" title="Buscar y vincular operación(es) bancaria(s)" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px;margin-right:2px">🔍</button>
-              <button onclick="abrirModalRHR('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
-              <button onclick="eliminarRHR('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
+              ${tienePosible ? `<button class="btn-tabla-accion" onclick="rhConfirmarPosible('${r.id}')" title="Confirmar match posible" style="background:rgba(214,158,46,.2);color:#D69E2E;border:1px solid #D69E2E;margin-right:2px">✓</button>` : ''}
+              ${tieneLinks ? `<button class="btn-tabla-accion" onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Ver movimientos vinculados" style="background:rgba(44,82,130,.1);color:#3182CE;margin-right:2px">🔗</button>` : ''}
+              <button class="btn-tabla-accion" onclick="_bmBuscarMov('RH','${r.id}','${escapar(r.numero_rh||'')}','${escapar(nombre)}',${Number(r.monto_neto||0)},'${r.fecha_emision||''}','${escapar(docNum!=='—'?docNum:'')}')" title="Buscar y vincular operación(es) bancaria(s)" style="background:rgba(113,71,224,.1);color:#553C9A;margin-right:2px">🔍</button>
+              <button class="btn-tabla-accion" onclick="abrirModalRHR('${r.id}')" title="Editar" style="background:rgba(44,82,130,.1);color:var(--color-secundario)">✏️</button>
+              <button class="btn-tabla-accion" onclick="eliminarRHR('${r.id}')" title="Eliminar" style="background:rgba(197,48,48,.1);color:#C53030">🗑️</button>
             </td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
+    </div>
   `;
 }
 
@@ -1037,8 +1041,8 @@ function procesarImportRHR(input) {
                         <td style="font-size:11px;color:var(--color-texto-suave)">${r._fila}</td>
                         <td style="white-space:nowrap">${r.fecha_emision || `<span style="color:#C53030">${r._error}</span>`}</td>
                         <td style="font-weight:600">${escapar(r.nro_rh||'—')}</td>
-                        <td style="font-size:11px">${escapar((r.nombre_emisor||'—').slice(0,20))}</td>
-                        <td style="font-size:11px">${escapar((r.descripcion||'—').slice(0,20))}</td>
+                        <td class="celda-truncar" style="--w:130px;font-size:11px" title="${escapar(r.nombre_emisor||'')}">${escapar(r.nombre_emisor||'—')}</td>
+                        <td class="celda-truncar" style="--w:130px;font-size:11px" title="${escapar(r.descripcion||'')}">${escapar(r.descripcion||'—')}</td>
                         <td>${escapar(r.moneda||'—')}</td>
                         <td style="text-align:right">${formatearMoneda(r.renta_bruta)}</td>
                         <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.retencion)}</td>

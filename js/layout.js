@@ -125,6 +125,7 @@ function _renderHeader(perfil, empresa, misEmpresas) {
     <div class="header-der" style="gap:8px">
       ${selectorHTML}
       ${rolBadge}
+      <button class="btn-densidad" onclick="alternarDensidad()" title="Densidad visual">🔍 100%</button>
       <button class="btn-tema" onclick="alternarTema()" title="Cambiar tema">🌙</button>
       <div class="header-usuario">
         <div class="avatar">${perfil.nombre.charAt(0).toUpperCase()}</div>
@@ -132,6 +133,7 @@ function _renderHeader(perfil, empresa, misEmpresas) {
       </div>
     </div>`;
   actualizarIconoTema();
+  actualizarIconoDensidad();
 }
 
 function _iniciales(nombre) {

@@ -129,39 +129,42 @@ async function _renderVentasFiltradas() {
 
   const resumen = document.getElementById('v-resumen');
   if (resumen) resumen.innerHTML = `
+    <div class="resumen-cards">
     <div style="width:100%;flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
       padding:8px 12px;background:rgba(128,128,128,.05);border:1px solid var(--color-borde);
       border-radius:8px;font-size:11px;font-weight:600;box-sizing:border-box">
-      <span style="background:#2F855A;color:#fff;padding:3px 10px;border-radius:12px">✅ APLICADO ${countAplicV}</span>
-      <span style="background:#D69E2E;color:#fff;padding:3px 10px;border-radius:12px">🟡 PARCIAL ${countParcV}</span>
-      <span style="background:#C53030;color:#fff;padding:3px 10px;border-radius:12px">🔴 PENDIENTE ${countPendV}</span>
+      <span class="badge-estado" style="background:#2F855A">✅ APLICADO ${countAplicV}</span>
+      <span class="badge-estado" style="background:#D69E2E">🟡 PARCIAL ${countParcV}</span>
+      <span class="badge-estado" style="background:#C53030">🔴 PENDIENTE ${countPendV}</span>
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicV}% conciliado</span>
     </div>
-    <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
-      <div style="font-size:11px;opacity:.8">BASE IMPONIBLE</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalBI)}</div>
+    <div class="resumen-card" style="background:var(--color-secundario)">
+      <div class="rc-label">BASE IMPONIBLE</div>
+      <div class="rc-valor">${formatearMoneda(totalBI)}</div>
     </div>
-    <div style="background:#2C7A7B;color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
-      <div style="font-size:11px;opacity:.8">IGV / IPM</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalIGV)}</div>
+    <div class="resumen-card" style="background:#2C7A7B">
+      <div class="rc-label">IGV / IPM</div>
+      <div class="rc-valor">${formatearMoneda(totalIGV)}</div>
     </div>
-    <div style="background:var(--color-exito);color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
-      <div style="font-size:11px;opacity:.8">TOTAL</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalCP)}</div>
+    <div class="resumen-card" style="background:var(--color-exito)">
+      <div class="rc-label">TOTAL</div>
+      <div class="rc-valor">${formatearMoneda(totalCP)}</div>
     </div>
-    <div style="background:#276749;color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
-      <div style="font-size:11px;opacity:.8">✅ APLICADOS</div>
-      <div style="font-size:18px;font-weight:700">${countAplicV}</div>
-      <div style="font-size:11px;opacity:.75">${formatearMoneda(montoAplicV)}</div>
+    <div class="resumen-card" style="background:#276749">
+      <div class="rc-label">✅ APLICADOS</div>
+      <div class="rc-valor">${countAplicV}</div>
+      <div class="rc-sub">${formatearMoneda(montoAplicV)}</div>
     </div>
-    <div style="background:#C53030;color:#fff;padding:12px 16px;border-radius:8px;min-width:130px">
-      <div style="font-size:11px;opacity:.8">🔴 PENDIENTES</div>
-      <div style="font-size:18px;font-weight:700">${countPendV}</div>
-      <div style="font-size:11px;opacity:.75">${formatearMoneda(montoPendV)}</div>
+    <div class="resumen-card" style="background:#C53030">
+      <div class="rc-label">🔴 PENDIENTES</div>
+      <div class="rc-valor">${countPendV}</div>
+      <div class="rc-sub">${formatearMoneda(montoPendV)}</div>
+    </div>
     </div>
   `;
 
   wrap.innerHTML = `
+    <div class="tabla-nexum-wrap">
     <table class="tabla-nexum">
       <thead><tr>
         <th>Período</th><th>Fecha Emisión</th><th>Tipo CP</th><th>Serie</th><th>N° Inicial</th>
@@ -211,22 +214,23 @@ async function _renderVentasFiltradas() {
             <td style="text-align:right">${escapar(String(r.nro_cp_inicial))}</td>
             <td>${escapar(TIPOS_DOC_ID_V[r.tipo_doc_identidad]||r.tipo_doc_identidad)}</td>
             <td>${escapar(r.nro_doc_identidad)}</td>
-            <td>${escapar(truncar(r.cliente,28))}</td>
-            <td style="text-align:right">${formatearMoneda(r.bi_gravada, r.moneda==='USD'?'USD':'PEN')}</td>
-            <td style="text-align:right">${formatearMoneda(r.igv_ipm, r.moneda==='USD'?'USD':'PEN')}</td>
-            <td style="text-align:right;font-weight:600">${formatearMoneda(r.total_cp, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td class="celda-truncar" style="--w:190px" title="${escapar(r.cliente||'')}">${escapar(r.cliente||'—')}</td>
+            <td class="celda-monto">${formatearMoneda(r.bi_gravada, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td class="celda-monto">${formatearMoneda(r.igv_ipm, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td class="celda-monto" style="font-weight:600">${formatearMoneda(r.total_cp, r.moneda==='USD'?'USD':'PEN')}</td>
             <td>${escapar(r.moneda)}</td>
             <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">
-              <button onclick="abrirModalVenta('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Editar">✏️</button>
-              <button onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Conciliar con movimiento bancario" style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔗</button>
-              <button onclick="_bmBuscarMov('VENTA','${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Buscar movimiento bancario manualmente" style="padding:4px 8px;background:rgba(85,60,154,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px">🔍</button>
-              <button onclick="eliminarVenta('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px" title="Eliminar">🗑️</button>
+              <button class="btn-tabla-accion" onclick="abrirModalVenta('${r.id}')" style="background:rgba(44,82,130,.1);color:var(--color-secundario)" title="Editar">✏️</button>
+              <button class="btn-tabla-accion" onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Conciliar con movimiento bancario" style="background:rgba(113,71,224,.1);color:#7147e0">🔗</button>
+              <button class="btn-tabla-accion" onclick="_bmBuscarMov('VENTA','${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Buscar movimiento bancario manualmente" style="background:rgba(85,60,154,.1);color:#553C9A">🔍</button>
+              <button class="btn-tabla-accion" onclick="eliminarVenta('${r.id}')" style="background:rgba(197,48,48,.1);color:#C53030" title="Eliminar">🗑️</button>
             </td>
           </tr>
         `}).join('')}
       </tbody>
     </table>
+    </div>
     <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} comprobante(s)</p>
   `;
 }
@@ -655,7 +659,7 @@ function _vSunatHandleFile(input) {
                       return `<tr>
                         <td class="text-mono">${escapar(r._clave)}</td>
                         <td style="white-space:nowrap">${r.fecha_emision||'—'}</td>
-                        <td style="font-size:11px">${escapar((r.cliente||'—').slice(0,25))}</td>
+                        <td class="celda-truncar" style="--w:160px;font-size:11px" title="${escapar(r.cliente||'')}">${escapar(r.cliente||'—')}</td>
                         <td style="text-align:right">${formatearMoneda(r.bi_gravada,r.moneda==='USD'?'USD':'PEN')}</td>
                         <td style="text-align:right">${formatearMoneda(r.igv_ipm,r.moneda==='USD'?'USD':'PEN')}</td>
                         <td style="text-align:right;font-weight:600">${formatearMoneda(r.total_cp,r.moneda==='USD'?'USD':'PEN')}</td>

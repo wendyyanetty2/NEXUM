@@ -58,8 +58,8 @@ async function renderTabAsientos(area) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>Número</th><th>Fecha</th><th>Glosa</th><th>Tipo</th>
             <th class="text-right">Debe</th><th class="text-right">Haber</th><th>Estado</th><th>Acciones</th>
@@ -219,10 +219,10 @@ function renderTablaAsientos() {
     <tr>
       <td class="text-mono text-sm">${escapar(a.numero_asiento || '—')}</td>
       <td>${formatearFecha(a.fecha)}</td>
-      <td>${escapar((a.glosa||'').slice(0,50))}${(a.glosa||'').length>50?'…':''}</td>
+      <td class="celda-truncar" style="--w:280px" title="${escapar(a.glosa||'')}">${escapar(a.glosa||'—')}</td>
       <td class="text-sm">${a.tipo}</td>
-      <td class="text-right text-mono">${formatearMoneda(a.total_debe)}</td>
-      <td class="text-right text-mono">${formatearMoneda(a.total_haber)}</td>
+      <td class="celda-monto">${formatearMoneda(a.total_debe)}</td>
+      <td class="celda-monto">${formatearMoneda(a.total_haber)}</td>
       <td><span class="badge ${coloresEstado[a.estado] || 'badge-info'}" style="font-size:11px">${a.estado}</span></td>
       <td>
         <button class="btn-icono" onclick="abrirModalAsiento('${a.id}')" title="Ver/Editar">✏️</button>

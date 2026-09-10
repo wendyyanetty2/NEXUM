@@ -88,8 +88,8 @@ async function consultarMayor() {
     return `<tr>
       <td>${formatearFecha(l.asientos.fecha)}</td>
       <td class="text-mono text-sm">${escapar(l.asientos.numero_asiento || '—')}</td>
-      <td class="text-sm">${escapar((l.asientos.glosa||'').slice(0,50))}${(l.asientos.glosa||'').length>50?'…':''}</td>
-      <td>${escapar(l.descripcion||'—')}</td>
+      <td class="celda-truncar" style="--w:220px" title="${escapar(l.asientos.glosa||'')}">${escapar(l.asientos.glosa||'—')}</td>
+      <td class="celda-truncar" style="--w:180px" title="${escapar(l.descripcion||'')}">${escapar(l.descripcion||'—')}</td>
       <td class="text-right text-mono">${debe > 0 ? formatearMoneda(debe) : '—'}</td>
       <td class="text-right text-mono">${haber > 0 ? formatearMoneda(haber) : '—'}</td>
       <td class="text-right text-mono ${saldoClass}">${formatearMoneda(Math.abs(saldo))} ${saldo < 0 ? '(Acr.)' : ''}</td>
@@ -111,8 +111,8 @@ async function consultarMayor() {
         </div>
         <button class="btn btn-secundario btn-sm" onclick="exportarMayorExcel('${escapar(codigo)}','${escapar(cuenta?.nombre||codigo)}')">⬇ Excel</button>
       </div>
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>Fecha</th><th>Nro Asiento</th><th>Glosa</th><th>Descripción</th>
             <th class="text-right">Debe</th><th class="text-right">Haber</th><th class="text-right">Saldo acum.</th>

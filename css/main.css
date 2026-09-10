@@ -259,6 +259,127 @@ h4 { font-size: 1rem;     font-weight: 600; }
 /* ── Tabla con scroll horizontal en móvil ─────────────────────── */
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+/* ═══════════════════════════════════════════════════════════════
+   Sistema de densidad visual NEXUM (opción interna, NO es zoom)
+   Normal = estándar oficial al 100%. Compacta/Muy compacta solo
+   reducen padding/espaciado — nunca esconden info ni cambian datos.
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  --nx-fs-tabla:   14px;
+  --nx-fs-th:      13px;
+  --nx-pad-td-v:   10px;
+  --nx-pad-td-h:   13px;
+  --nx-pad-th-v:   11px;
+  --nx-pad-th-h:   13px;
+  --nx-card-pad-v: 12px;
+  --nx-card-pad-h: 16px;
+  --nx-card-gap:   12px;
+}
+html[data-densidad="compacta"] {
+  --nx-pad-td-v:   7px;
+  --nx-pad-td-h:   11px;
+  --nx-pad-th-v:   8px;
+  --nx-pad-th-h:   11px;
+  --nx-card-pad-v: 9px;
+  --nx-card-pad-h: 13px;
+  --nx-card-gap:   9px;
+}
+html[data-densidad="muy-compacta"] {
+  --nx-fs-tabla:   13px;
+  --nx-fs-th:      12px;
+  --nx-pad-td-v:   5px;
+  --nx-pad-td-h:   9px;
+  --nx-pad-th-v:   6px;
+  --nx-pad-th-h:   9px;
+  --nx-card-pad-v: 7px;
+  --nx-card-pad-h: 11px;
+  --nx-card-gap:   7px;
+}
+
+.btn-densidad {
+  padding: 6px 10px; border-radius: var(--radio);
+  border: 1px solid var(--color-borde); background: var(--color-bg-card);
+  color: var(--color-texto); font-size: 12px; font-weight: 500;
+  font-family: var(--font); cursor: pointer; white-space: nowrap;
+  transition: all var(--transicion);
+}
+.btn-densidad:hover { background: var(--color-hover); border-color: var(--color-secundario); }
+
+/* ═══════════════════════════════════════════════════════════════
+   Tabla NEXUM estándar — usada por RH Recibidas, Reg. Ventas,
+   Reg. Compras. Reemplaza la clase "tabla-nexum" que antes no
+   tenía ningún estilo asociado (causa del texto partido en varias
+   líneas). Respeta el sistema de densidad visual.
+   ═══════════════════════════════════════════════════════════════ */
+.tabla-nexum-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  border-radius: var(--radio-lg);
+  border: 1px solid var(--color-borde);
+  box-shadow: var(--sombra-sm);
+}
+.tabla-nexum {
+  width: 100%; border-collapse: collapse;
+  font-size: var(--nx-fs-tabla);
+  background: var(--color-bg-card);
+}
+.tabla-nexum thead th {
+  background: var(--color-primario); color: #fff;
+  padding: var(--nx-pad-th-v) var(--nx-pad-th-h);
+  text-align: left; font-weight: 600;
+  font-size: var(--nx-fs-th); white-space: nowrap;
+}
+.tabla-nexum thead th:first-child { border-radius: var(--radio-lg) 0 0 0; }
+.tabla-nexum thead th:last-child  { border-radius: 0 var(--radio-lg) 0 0; }
+.tabla-nexum tbody tr { border-bottom: 1px solid var(--color-borde); }
+.tabla-nexum tbody tr:last-child { border-bottom: none; }
+.tabla-nexum tbody tr:hover { background: var(--color-hover); }
+.tabla-nexum tbody td {
+  padding: var(--nx-pad-td-v) var(--nx-pad-td-h);
+  color: var(--color-texto); vertical-align: middle; line-height: 1.35;
+}
+[data-tema="oscuro"] .tabla-nexum thead th { background: #252836; }
+
+/* ── Utilidades de celda: truncado con tooltip + montos ───────── */
+.celda-truncar {
+  max-width: var(--w, 220px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.celda-monto {
+  text-align: right; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Badge de estado estándar (color se define inline por estado) ─ */
+.badge-estado {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 12px;
+  font-size: 11px; font-weight: 700; color: #fff;
+  white-space: nowrap; line-height: 1.4;
+}
+
+/* ── Acciones compactas de tabla ───────────────────────────────── */
+.btn-tabla-accion {
+  padding: 4px 8px; border: none; border-radius: 4px;
+  cursor: pointer; font-size: 13px; line-height: 1;
+  transition: filter var(--transicion);
+}
+.btn-tabla-accion:hover { filter: brightness(0.92); }
+[data-tema="oscuro"] .btn-tabla-accion:hover { filter: brightness(1.35); }
+
+/* ── Tarjetas de resumen estándar (RH, Ventas, Compras, Reportes) ─ */
+.resumen-cards {
+  display: flex; gap: var(--nx-card-gap); flex-wrap: wrap; margin-bottom: 16px;
+}
+.resumen-card {
+  color: #fff; padding: var(--nx-card-pad-v) var(--nx-card-pad-h);
+  border-radius: 8px; min-width: 130px;
+}
+.resumen-card .rc-label {
+  font-size: 11px; opacity: .8; text-transform: uppercase; letter-spacing: .3px;
+}
+.resumen-card .rc-valor { font-size: 18px; font-weight: 700; }
+.resumen-card .rc-sub { font-size: 11px; opacity: .75; margin-top: 2px; }
+
 /* ── Estado vacío ────────────────────────────────────────────── */
 .estado-vacio {
   text-align: center; padding: 48px 24px;
