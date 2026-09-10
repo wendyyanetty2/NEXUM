@@ -221,6 +221,7 @@ async function _renderVentasFiltradas() {
             <td>${escapar(r.moneda)}</td>
             <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">
+              <button class="btn-tabla-accion" onclick="verDetalleVenta('${r.id}')" title="Ver detalle completo" style="background:rgba(74,85,104,.1);color:var(--color-texto-suave)">👁️</button>
               <button class="btn-tabla-accion" onclick="abrirModalVenta('${r.id}')" style="background:rgba(44,82,130,.1);color:var(--color-secundario)" title="Editar">✏️</button>
               <button class="btn-tabla-accion" onclick="_conciliarVentaIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Conciliar con movimiento bancario" style="background:rgba(113,71,224,.1);color:#7147e0">🔗</button>
               <button class="btn-tabla-accion" onclick="_bmBuscarMov('VENTA','${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Buscar movimiento bancario manualmente" style="background:rgba(85,60,154,.1);color:#553C9A">🔍</button>
@@ -233,6 +234,46 @@ async function _renderVentasFiltradas() {
     </div>
     <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} comprobante(s)</p>
   `;
+}
+
+// ── Vista de detalle (solo lectura) — usa los datos ya cargados en memoria ─
+function verDetalleVenta(id) {
+  const r = _ventasRawData.find(x => x.id === id);
+  if (!r) return;
+  const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+  const mon  = r.moneda === 'USD' ? 'USD' : 'PEN';
+
+  const fila = (label, valor) => `
+    <div style="display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--color-borde)">
+      <span style="color:var(--color-texto-suave);font-size:12px">${label}</span>
+      <span style="text-align:right;font-size:13px;max-width:65%">${valor}</span>
+    </div>`;
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:520px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>👁️ Detalle del comprobante — ${escapar(nDoc||'—')}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          ${fila('Período', escapar(r.periodo))}
+          ${fila('Fecha emisión', formatearFecha(r.fecha_emision))}
+          ${fila('Tipo CP / Serie-N°', `${escapar(String(r.tipo_cp_doc))} — ${escapar(nDoc)}`)}
+          ${fila('Tipo/N° Doc. identidad', `${escapar(TIPOS_DOC_ID_V[r.tipo_doc_identidad]||r.tipo_doc_identidad)} ${escapar(r.nro_doc_identidad)}`)}
+          ${fila('Cliente', escapar(r.cliente||'—'))}
+          ${fila('B.I. Gravada', formatearMoneda(r.bi_gravada, mon))}
+          ${fila('IGV/IPM', formatearMoneda(r.igv_ipm, mon))}
+          ${fila('Total CP', `<strong>${formatearMoneda(r.total_cp, mon)}</strong>`)}
+          ${fila('Moneda', escapar(r.moneda))}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+          <button class="btn btn-primario" onclick="this.closest('.modal-overlay').remove();abrirModalVenta('${r.id}')">✏️ Editar</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 async function abrirModalVenta(id = null) {

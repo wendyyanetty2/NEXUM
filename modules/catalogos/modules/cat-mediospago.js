@@ -30,8 +30,8 @@ async function renderTabMediosPago(area) {
           <button class="btn btn-primario btn-sm"   onclick="abrirModalMedioPago(null)">+ Nuevo</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr><th>Nombre</th><th>Tipo</th><th>Banco</th><th>Cuenta / CCI</th><th>Moneda</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody id="tbody-mediospago"></tbody>
         </table>
@@ -137,7 +137,7 @@ function renderTablaMediosPago() {
   if (!tbody) return;
   tbody.innerHTML = filt.length ? filt.map(m => `
     <tr>
-      <td>${escapar(m.nombre)}</td>
+      <td class="celda-truncar" style="--w:180px" title="${escapar(m.nombre)}">${escapar(m.nombre)}</td>
       <td><span class="badge badge-info">${m.tipo}</span></td>
       <td>${escapar(m.banco_codigo || '—')}</td>
       <td class="text-sm">${escapar(m.numero_cuenta || '—')}${m.cci ? '<br><span class="text-muted">CCI: ' + escapar(m.cci) + '</span>' : ''}</td>

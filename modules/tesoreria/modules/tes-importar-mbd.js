@@ -328,21 +328,21 @@ function renderResumenMBD(filas) {
   const totalD = filas.filter(r=>r.moneda==='USD').reduce((s,r)=>s+Number(r.monto),0);
   const pendientes = filas.filter(r=>r.entrega_doc==='PENDIENTE').length;
   div.innerHTML = `
-    <div style="${estiloCard('var(--color-exito)')}">
-      <div style="font-size:11px;opacity:.8">TOTAL SOLES</div>
-      <div style="font-size:20px;font-weight:700">${formatearMoneda(totalS,'PEN')}</div>
+    <div class="resumen-card" style="background:var(--color-exito)">
+      <div class="rc-label">Total soles</div>
+      <div class="rc-valor">${formatearMoneda(totalS,'PEN')}</div>
     </div>
-    ${totalD ? `<div style="${estiloCard('#2B6CB0')}">
-      <div style="font-size:11px;opacity:.8">TOTAL USD</div>
-      <div style="font-size:20px;font-weight:700">${formatearMoneda(totalD,'USD')}</div>
+    ${totalD ? `<div class="resumen-card" style="background:#2B6CB0">
+      <div class="rc-label">Total USD</div>
+      <div class="rc-valor">${formatearMoneda(totalD,'USD')}</div>
     </div>` : ''}
-    <div style="${estiloCard(pendientes>0?'var(--color-atencion)':'#4A5568')}">
-      <div style="font-size:11px;opacity:.8">PENDIENTES DE DOC</div>
-      <div style="font-size:20px;font-weight:700">${pendientes}</div>
+    <div class="resumen-card" style="background:${pendientes>0?'var(--color-atencion)':'#4A5568'}">
+      <div class="rc-label">Pendientes de doc</div>
+      <div class="rc-valor">${pendientes}</div>
     </div>
-    <div style="${estiloCard('#4A5568')}">
-      <div style="font-size:11px;opacity:.8">TOTAL MOVIMIENTOS</div>
-      <div style="font-size:20px;font-weight:700">${filas.length}</div>
+    <div class="resumen-card" style="background:#4A5568">
+      <div class="rc-label">Total movimientos</div>
+      <div class="rc-valor">${filas.length}</div>
     </div>
   `;
 }
@@ -1305,9 +1305,9 @@ async function renderPanelPendientesMBD() {
                   <td style="padding:6px 10px;font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria || '—')}</td>
                   <td style="padding:6px 10px;white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
                   <td style="padding:6px 10px;text-align:right;font-weight:600;color:${r.monto < 0 ? 'var(--color-critico)' : 'var(--color-exito)'};white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
-                  <td style="padding:6px 10px;font-size:11px">${escapar(r.descripcion || '—')}</td>
+                  <td class="celda-truncar" style="--w:180px;padding:6px 10px;font-size:11px" title="${escapar(r.descripcion || '')}">${escapar(r.descripcion || '—')}</td>
                   <td style="padding:6px 10px;white-space:nowrap">${escapar(r.concepto || '—')}</td>
-                  <td style="padding:6px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.observaciones_2 || '—')}</td>
+                  <td class="celda-truncar" style="--w:160px;padding:6px 10px;font-size:11px;color:var(--color-texto-suave)" title="${escapar(r.observaciones_2 || '')}">${escapar(r.observaciones_2 || '—')}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -1364,7 +1364,7 @@ function _abrirModalConciliacionMBD(idGrupo, ids) {
                     <td style="padding:5px 10px;font-family:monospace;font-size:11px">${escapar(r.nro_operacion_bancaria || '—')}</td>
                     <td style="padding:5px 10px;white-space:nowrap">${formatearFecha(r.fecha_deposito)}</td>
                     <td style="padding:5px 10px;text-align:right;font-weight:600;color:var(--color-exito);white-space:nowrap">${formatearMoneda(r.monto, 'PEN')}</td>
-                    <td style="padding:5px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(r.descripcion || '—')}</td>
+                    <td class="celda-truncar" style="--w:200px;padding:5px 10px;font-size:11px;color:var(--color-texto-suave)" title="${escapar(r.descripcion || '')}">${escapar(r.descripcion || '—')}</td>
                   </tr>`).join('')}
               </tbody>
             </table>

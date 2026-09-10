@@ -47,8 +47,8 @@ async function renderTabImportar(area) {
           <h3>👁️ Vista previa — <span id="imp-preview-count">0</span> registros</h3>
           <div id="imp-preview-resumen" class="text-sm text-muted"></div>
         </div>
-        <div class="table-wrap" style="max-height:300px;overflow-y:auto">
-          <table class="tabla" id="tabla-preview">
+        <div class="table-wrap tabla-nexum-wrap" style="max-height:300px;overflow-y:auto">
+          <table class="tabla-nexum" id="tabla-preview">
             <thead><tr><th>#</th><th>Fecha</th><th>Naturaleza</th><th>Importe</th><th>Descripción</th><th>Nro Op.</th><th>Estado</th></tr></thead>
             <tbody id="tbody-preview"></tbody>
           </table>
@@ -193,7 +193,7 @@ function procesarImportacion() {
           <td>${r.fecha || '<span style="color:red">—</span>'}</td>
           <td>${r.naturaleza || '<span style="color:red">—</span>'}</td>
           <td class="text-right">${r.importe ? formatearMoneda(r.importe, r.moneda) : '<span style="color:red">—</span>'}</td>
-          <td class="text-sm">${escapar((r.descripcion||'').slice(0,40))}</td>
+          <td class="celda-truncar text-sm" style="--w:200px" title="${escapar(r.descripcion||'')}">${escapar(r.descripcion||'—')}</td>
           <td class="text-mono text-sm">${escapar(r.numero_operacion||'—')}</td>
           <td>${r._ok ? '<span class="badge badge-activo" style="font-size:10px">OK</span>' : '<span class="badge badge-inactivo" style="font-size:10px">Error</span>'}</td>
         </tr>`).join('');
@@ -315,8 +315,8 @@ async function cargarHistorialImportaciones() {
 
   const colores = { COMPLETADO: 'badge-activo', PROCESANDO: 'badge-warning', ERROR: 'badge-inactivo' };
   cont.innerHTML = `
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:13px">
+    <div class="table-wrap tabla-nexum-wrap">
+      <table class="tabla-nexum" style="font-size:13px">
         <thead><tr><th>Fecha</th><th>Archivo</th><th>Cuenta</th><th>Fuente</th><th>Total</th><th>OK</th><th>Errores</th><th>Estado</th><th>Acc.</th></tr></thead>
         <tbody>${lista.map(l => `
           <tr>
@@ -584,8 +584,8 @@ function _impRenderValidacion() {
       </div>
     </div>
     ${avisoObservados}
-    <div class="table-wrap" style="max-height:380px;overflow-y:auto">
-      <table class="tabla" style="font-size:12px">
+    <div class="table-wrap tabla-nexum-wrap" style="max-height:380px;overflow-y:auto">
+      <table class="tabla-nexum" style="font-size:12px">
         <thead>
           <tr>
             <th style="min-width:120px">Estado</th>
@@ -616,7 +616,7 @@ function _impRenderValidacion() {
                 <td class="text-right ${match?.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
                   ${match ? `${match.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(match.importe, match.moneda)}` : '<span class="text-muted">—</span>'}
                 </td>
-                <td class="text-sm">${match ? escapar((match.descripcion||'—').slice(0,32)) : '<span class="text-muted">Sin movimiento registrado</span>'}</td>
+                <td class="celda-truncar text-sm" style="--w:200px" title="${match ? escapar(match.descripcion||'') : ''}">${match ? escapar(match.descripcion||'—') : '<span class="text-muted">Sin movimiento registrado</span>'}</td>
               </tr>`;
           }).join('')}
         </tbody>

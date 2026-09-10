@@ -72,8 +72,8 @@ async function renderTabImportarSunat(area) {
           </h3>
           <div id="sunat-preview-resumen" class="text-sm text-muted"></div>
         </div>
-        <div class="table-wrap" style="max-height:360px;overflow-y:auto">
-          <table class="tabla" style="font-size:12px">
+        <div class="table-wrap tabla-nexum-wrap" style="max-height:360px;overflow-y:auto">
+          <table class="tabla-nexum" style="font-size:12px">
             <thead>
               <tr>
                 <th>Fecha</th><th>T.Doc</th><th>CDP (Serie-Número)</th>
@@ -116,8 +116,8 @@ async function renderTabImportarSunat(area) {
           Indica si cada comprobante importado tiene un movimiento bancario vinculado
           en MBD (campo <em>N° Factura/Doc</em>).
         </p>
-        <div class="table-wrap" style="max-height:400px;overflow-y:auto">
-          <table class="tabla" style="font-size:12px">
+        <div class="table-wrap tabla-nexum-wrap" style="max-height:400px;overflow-y:auto">
+          <table class="tabla-nexum" style="font-size:12px">
             <thead><tr>
               <th>Fecha</th><th>CDP</th><th>Proveedor / Cliente</th><th>RUC</th>
               <th class="text-right">Total</th><th>Mon.</th><th>Estado conciliación</th>
@@ -494,8 +494,8 @@ async function _sunatCargarHistorial() {
   if (!lista.length) { cont.innerHTML = '<p class="text-center text-muted">Sin historial</p>'; return; }
 
   cont.innerHTML = `
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:13px">
+    <div class="table-wrap tabla-nexum-wrap">
+      <table class="tabla-nexum" style="font-size:13px">
         <thead><tr><th>Fecha</th><th>Tipo</th><th>Archivo</th><th>OK</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${lista.map(l => `

@@ -82,25 +82,25 @@ async function renderTabConciliar(area) {
 
           <!-- Stats por estado -->
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
-            <div style="padding:10px 14px;background:#16a34a;border-radius:8px;color:#fff">
-              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">✅ Emitidos</div>
-              <div id="pan-emit-n" style="font-size:22px;font-weight:700">0</div>
-              <div id="pan-emit-s" style="font-size:11px;opacity:.8"></div>
+            <div class="resumen-card" style="background:#16a34a">
+              <div class="rc-label">✅ Emitidos</div>
+              <div id="pan-emit-n" class="rc-valor">0</div>
+              <div id="pan-emit-s" class="rc-sub"></div>
             </div>
-            <div style="padding:10px 14px;background:#b45309;border-radius:8px;color:#fff">
-              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">⚠️ Observados</div>
-              <div id="pan-obs-n"  style="font-size:22px;font-weight:700">0</div>
-              <div id="pan-obs-s"  style="font-size:11px;opacity:.8"></div>
+            <div class="resumen-card" style="background:#b45309">
+              <div class="rc-label">⚠️ Observados</div>
+              <div id="pan-obs-n"  class="rc-valor">0</div>
+              <div id="pan-obs-s"  class="rc-sub"></div>
             </div>
-            <div style="padding:10px 14px;background:#dc2626;border-radius:8px;color:#fff">
-              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">🔴 Pendientes</div>
-              <div id="pan-pend-n" style="font-size:22px;font-weight:700">0</div>
-              <div id="pan-pend-s" style="font-size:11px;opacity:.8"></div>
+            <div class="resumen-card" style="background:#dc2626">
+              <div class="rc-label">🔴 Pendientes</div>
+              <div id="pan-pend-n" class="rc-valor">0</div>
+              <div id="pan-pend-s" class="rc-sub"></div>
             </div>
-            <div style="padding:10px 14px;background:var(--color-primario);border-radius:8px;color:#fff">
-              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85">📋 Total</div>
-              <div id="pan-total-n" style="font-size:22px;font-weight:700">0</div>
-              <div id="pan-total-s" style="font-size:11px;opacity:.8"></div>
+            <div class="resumen-card" style="background:var(--color-primario)">
+              <div class="rc-label">📋 Total</div>
+              <div id="pan-total-n" class="rc-valor">0</div>
+              <div id="pan-total-s" class="rc-sub"></div>
             </div>
           </div>
         </div>

@@ -33,8 +33,8 @@ async function renderTabTrabajadores(area) {
           <button class="btn btn-primario btn-sm"   onclick="abrirModalTrabajador(null)">+ Nuevo</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>DNI</th><th>Nombre completo</th><th>Cargo</th><th>Área</th>
             <th>Contrato</th><th>Sueldo base</th><th>AFP</th><th>Estado</th><th>Acciones</th>
@@ -186,21 +186,24 @@ function renderTablaTrabajadores() {
   const pagina = trabajadores_filtrada.slice(inicio, inicio + TRAB_POR_PAG);
   const tbody  = document.getElementById('tbody-trabajadores');
   if (!tbody) return;
-  tbody.innerHTML = pagina.length ? pagina.map(t => `
+  tbody.innerHTML = pagina.length ? pagina.map(t => {
+    const nombreCompleto = [t.apellido_paterno, t.apellido_materno, t.nombre].filter(Boolean).join(' ');
+    return `
     <tr>
       <td>${escapar(t.dni || '—')}</td>
-      <td>${escapar([t.apellido_paterno, t.apellido_materno, t.nombre].filter(Boolean).join(' '))}</td>
-      <td>${escapar(t.cargo || '—')}</td>
-      <td>${escapar(t.area || '—')}</td>
+      <td class="celda-truncar" style="--w:200px" title="${escapar(nombreCompleto)}">${escapar(nombreCompleto)}</td>
+      <td class="celda-truncar" style="--w:140px" title="${escapar(t.cargo || '')}">${escapar(t.cargo || '—')}</td>
+      <td class="celda-truncar" style="--w:120px" title="${escapar(t.area || '')}">${escapar(t.area || '—')}</td>
       <td><span class="badge badge-info" style="font-size:11px">${(t.tipo_contrato || '').replace('_', ' ')}</span></td>
-      <td>${t.sueldo_base ? formatearMoneda(t.sueldo_base) : '—'}</td>
+      <td class="celda-monto">${t.sueldo_base ? formatearMoneda(t.sueldo_base) : '—'}</td>
       <td>${escapar(t.afp || 'ONP')}</td>
       <td><span class="badge ${t.activo ? 'badge-activo' : 'badge-inactivo'}">${t.activo ? 'Activo' : 'Cesado'}</span></td>
       <td>
         <button class="btn-icono" onclick="abrirModalTrabajador('${t.id}')">✏️</button>
         <button class="btn-icono peligro" onclick="eliminarTrabajador('${t.id}','${escapar(t.nombre)}')">🗑️</button>
       </td>
-    </tr>`).join('') :
+    </tr>`;
+  }).join('') :
     '<tr><td colspan="9" class="text-center text-muted">Sin resultados</td></tr>';
 
   const total = trabajadores_filtrada.length;

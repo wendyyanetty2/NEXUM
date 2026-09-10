@@ -97,8 +97,8 @@ async function renderTabPeriodos(area) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>Año</th><th>Mes</th><th>Tipo</th><th>Estado</th>
             <th class="text-right">Remuneraciones</th>
@@ -261,9 +261,9 @@ function renderTablaPeriodos() {
       <td>${MESES_NOMBRE[p.mes] || p.mes}</td>
       <td><span class="badge badge-primario" style="font-size:11px">${TIPO_PERIODO_LABEL[p.tipo] || p.tipo}</span></td>
       <td><span class="badge ${ESTADO_PERIODO_BADGE[p.estado] || 'badge-info'}" style="font-size:11px">${p.estado}</span></td>
-      <td class="text-right">${p.total_remuneraciones ? formatearMoneda(p.total_remuneraciones) : '<span class="text-muted">—</span>'}</td>
-      <td class="text-right">${p.total_descuentos    ? formatearMoneda(p.total_descuentos)    : '<span class="text-muted">—</span>'}</td>
-      <td class="text-right"><strong>${p.total_neto ? formatearMoneda(p.total_neto) : '<span class="text-muted">—</span>'}</strong></td>
+      <td class="celda-monto">${p.total_remuneraciones ? formatearMoneda(p.total_remuneraciones) : '<span class="text-muted">—</span>'}</td>
+      <td class="celda-monto">${p.total_descuentos    ? formatearMoneda(p.total_descuentos)    : '<span class="text-muted">—</span>'}</td>
+      <td class="celda-monto"><strong>${p.total_neto ? formatearMoneda(p.total_neto) : '<span class="text-muted">—</span>'}</strong></td>
       <td class="text-sm">${p.fecha_pago ? formatearFecha(p.fecha_pago) : '<span class="text-muted">—</span>'}</td>
       <td>
         <button class="btn-icono" onclick="abrirModalPeriodo('${p.id}')" title="Editar">✏️</button>

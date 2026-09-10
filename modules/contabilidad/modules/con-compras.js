@@ -223,6 +223,7 @@ async function _renderComprasFiltradas() {
             <td>${escapar(r.moneda)}</td>
             <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">
+              <button class="btn-tabla-accion" onclick="verDetalleCompra('${r.id}')" title="Ver detalle completo" style="background:rgba(74,85,104,.1);color:var(--color-texto-suave)">👁️</button>
               <button class="btn-tabla-accion" onclick="abrirModalCompra('${r.id}')" title="Editar" style="background:rgba(44,82,130,.1);color:var(--color-secundario)">✏️</button>
               <button class="btn-tabla-accion" onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Conciliar con movimiento bancario" style="background:rgba(113,71,224,.1);color:#7147e0">🔗</button>
               <button class="btn-tabla-accion" onclick="_bmBuscarMov('COMPRA','${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Buscar movimiento bancario manualmente" style="background:rgba(85,60,154,.1);color:#553C9A">🔍</button>
@@ -235,6 +236,46 @@ async function _renderComprasFiltradas() {
     </div>
     <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} comprobante(s)</p>
   `;
+}
+
+// ── Vista de detalle (solo lectura) — usa los datos ya cargados en memoria ─
+function verDetalleCompra(id) {
+  const r = _comprasRawData.find(x => x.id === id);
+  if (!r) return;
+  const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+  const mon  = r.moneda === 'USD' ? 'USD' : 'PEN';
+
+  const fila = (label, valor) => `
+    <div style="display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--color-borde)">
+      <span style="color:var(--color-texto-suave);font-size:12px">${label}</span>
+      <span style="text-align:right;font-size:13px;max-width:65%">${valor}</span>
+    </div>`;
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:520px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>👁️ Detalle del comprobante — ${escapar(nDoc||'—')}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          ${fila('Período', escapar(r.periodo))}
+          ${fila('Fecha emisión', formatearFecha(r.fecha_emision))}
+          ${fila('Tipo CP / Serie-N°', `${escapar(String(r.tipo_cp_doc))} — ${escapar(nDoc)}`)}
+          ${fila('Tipo/N° Doc. identidad', `${escapar(TIPOS_DOC_ID_C[r.tipo_doc_identidad]||r.tipo_doc_identidad)} ${escapar(r.nro_doc_identidad)}`)}
+          ${fila('Proveedor', escapar(r.proveedor||'—'))}
+          ${fila('B.I. Gravado DG', formatearMoneda(r.bi_gravado_dg, mon))}
+          ${fila('IGV/IPM DG', formatearMoneda(r.igv_ipm_dg, mon))}
+          ${fila('Total CP', `<strong>${formatearMoneda(r.total_cp, mon)}</strong>`)}
+          ${fila('Moneda', escapar(r.moneda))}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+          <button class="btn btn-primario" onclick="this.closest('.modal-overlay').remove();abrirModalCompra('${r.id}')">✏️ Editar</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 async function abrirModalCompra(id = null) {

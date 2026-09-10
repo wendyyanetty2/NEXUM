@@ -34,8 +34,8 @@ async function renderTabClientes(area) {
           <button class="btn btn-primario btn-sm"   onclick="abrirModalCliente(null)">+ Nuevo</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table class="tabla" id="tabla-clientes">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum" id="tabla-clientes">
           <thead><tr>
             <th>Nombre</th><th>RUC / DNI</th><th>Tipo</th>
             <th>Email</th><th>Teléfono</th><th>Estado</th><th>Acciones</th>
@@ -142,10 +142,10 @@ function renderTablaClientes() {
   } else {
     tbody.innerHTML = pagina.map(c => `
       <tr>
-        <td>${escapar(c.nombre)}</td>
+        <td class="celda-truncar" style="--w:200px" title="${escapar(c.nombre)}">${escapar(c.nombre)}</td>
         <td>${escapar(c.ruc_dni || '—')}</td>
         <td><span class="badge ${c.tipo === 'CLIENTE' ? 'badge-primario' : c.tipo === 'PROVEEDOR' ? 'badge-warning' : 'badge-info'}">${c.tipo}</span></td>
-        <td>${escapar(c.email || '—')}</td>
+        <td class="celda-truncar" style="--w:180px" title="${escapar(c.email || '')}">${escapar(c.email || '—')}</td>
         <td>${escapar(c.telefono || '—')}</td>
         <td><span class="badge ${c.activo ? 'badge-activo' : 'badge-inactivo'}">${c.activo ? 'Activo' : 'Inactivo'}</span></td>
         <td>

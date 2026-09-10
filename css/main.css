@@ -494,4 +494,13 @@ html[data-densidad="muy-compacta"] {
     text-transform: uppercase; margin-bottom: 2px;
   }
   .tabla tbody tr { border-bottom: 2px solid var(--color-borde); }
+
+  /* celda-truncar depende de :hover para el tooltip, que no existe en
+     touch — en pantallas chicas se desactiva el truncamiento (texto
+     completo, salto de línea normal) en vez de esconder información
+     sin forma de consultarla. */
+  .celda-truncar {
+    max-width: none; white-space: normal;
+    overflow: visible; text-overflow: clip; word-break: break-word;
+  }
 }

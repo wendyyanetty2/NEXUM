@@ -46,8 +46,8 @@ async function renderTabRH(area) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>Fecha</th><th>N° RH</th><th>Prestador</th><th>Concepto</th>
             <th>Bruto</th><th>Retención</th><th>Neto</th><th>Estado</th><th>Banco</th><th>Acciones</th>
@@ -230,10 +230,10 @@ async function _renderTablaRH() {
       <td>${formatearFecha(r.fecha_emision)}</td>
       <td class="text-mono text-sm">${escapar(r.numero_rh || '—')}</td>
       <td class="text-sm">
-        <div style="font-weight:500">${escapar(r.prestadores_servicios?.nombre || '—')}</div>
+        <div class="celda-truncar" style="--w:170px;font-weight:500" title="${escapar(r.prestadores_servicios?.nombre || '')}">${escapar(r.prestadores_servicios?.nombre || '—')}</div>
         <div class="text-muted" style="font-size:11px">${escapar(r.prestadores_servicios?.dni || '')}</div>
       </td>
-      <td class="text-sm">${escapar((r.concepto||'').slice(0,45))}${(r.concepto||'').length>45?'…':''}</td>
+      <td class="celda-truncar" style="--w:220px" title="${escapar(r.concepto||'')}">${escapar(r.concepto||'—')}</td>
       <td class="text-right">${formatearMoneda(r.monto_bruto)}</td>
       <td class="text-right text-rojo">${r.monto_retencion > 0 ? '-'+formatearMoneda(r.monto_retencion) : '—'}</td>
       <td class="text-right text-verde font-medium">${formatearMoneda(r.monto_neto)}</td>

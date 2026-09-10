@@ -99,7 +99,7 @@ function renderTablaProyectos() {
     <tr>
       <td>${escapar(p.nombre)}</td>
       <td>${escapar(p.empresas_clientes?.nombre || '—')}</td>
-      <td class="text-muted text-sm">${escapar((p.descripcion || '').slice(0, 60))}${p.descripcion?.length > 60 ? '…' : ''}</td>
+      <td class="text-muted text-sm celda-truncar" style="--w:260px" title="${escapar(p.descripcion || '')}">${escapar(p.descripcion || '—')}</td>
       <td><span class="badge ${p.activo ? 'badge-activo' : 'badge-inactivo'}">${p.activo ? 'Activo' : 'Inactivo'}</span></td>
       <td>
         <button class="btn-icono" onclick="abrirModalProyecto('${p.id}')">✏️</button>

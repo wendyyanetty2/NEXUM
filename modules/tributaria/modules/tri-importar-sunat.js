@@ -72,8 +72,8 @@ async function renderTabImportarSunat(area) {
           <div id="tri-preview-resumen" class="text-sm text-muted"></div>
         </div>
 
-        <div class="table-wrap" style="max-height:420px;overflow-y:auto">
-          <table class="tabla" style="font-size:12px">
+        <div class="tabla-nexum-wrap" style="max-height:420px;overflow-y:auto">
+          <table class="tabla-nexum" style="font-size:12px">
             <thead><tr id="tri-preview-head"></tr></thead>
             <tbody id="tri-preview-body"></tbody>
           </table>
@@ -100,8 +100,8 @@ async function renderTabImportarSunat(area) {
       <!-- Detalle de errores (aparece tras importar si hay filas inválidas) -->
       <div id="tri-errores-section" style="display:none" class="card">
         <h3 style="margin-bottom:12px">⚠️ Filas omitidas por errores</h3>
-        <div class="table-wrap">
-          <table class="tabla" style="font-size:12px">
+        <div class="tabla-nexum-wrap">
+          <table class="tabla-nexum" style="font-size:12px">
             <thead><tr>
               <th>Fila</th><th>CDP (Serie-Número)</th>
               <th>RUC / Nombre</th><th>Motivo del error</th>
@@ -284,7 +284,7 @@ function _triImportMostrarPreview() {
       <td class="text-mono text-sm">${escapar(f.tipo_documento_codigo || '—')}</td>
       <td class="text-mono text-sm">${escapar(f.cdp || '—')}</td>
       <td class="text-mono text-sm">${escapar(ruc || '—')}</td>
-      <td class="text-sm">${escapar((entidad || '—').slice(0, 28))}</td>
+      <td class="celda-truncar" style="--w:170px" title="${escapar(entidad || '')}">${escapar(entidad || '—')}</td>
       <td class="text-right">${f.base_imponible ? formatearMoneda(f.base_imponible, f.moneda) : '—'}</td>
       <td class="text-right">${f.igv ? formatearMoneda(f.igv, f.moneda) : '—'}</td>
       <td class="text-right" style="font-weight:600">${formatearMoneda(f.total, f.moneda)}</td>
@@ -423,7 +423,7 @@ async function _triImportConfirmar() {
       return `<tr>
         <td class="text-mono text-sm">${f._fila}</td>
         <td class="text-mono text-sm">${escapar(f.cdp || '—')}</td>
-        <td class="text-sm">${escapar(ruc || '')} ${escapar((entidad || '').slice(0, 30))}</td>
+        <td class="celda-truncar" style="--w:200px" title="${escapar(ruc || '')} ${escapar(entidad || '')}">${escapar(ruc || '')} ${escapar(entidad || '')}</td>
         <td class="text-sm" style="color:#C53030">${f._errores.join(' · ')}</td>
       </tr>`;
     }).join('');
@@ -549,7 +549,7 @@ function _mostrarPreviewSUNAT(datos, tipo, nombre) {
       <td>${r.fecha || '—'}</td>
       <td class="text-mono text-sm">${escapar(r.numero_rh || '—')}</td>
       <td class="text-mono text-sm">${escapar(r.ruc_dni_prestador || '—')}</td>
-      <td class="text-sm">${escapar((r.nombre_prestador || '—').slice(0, 30))}</td>
+      <td class="celda-truncar" style="--w:180px" title="${escapar(r.nombre_prestador || '')}">${escapar(r.nombre_prestador || '—')}</td>
       <td class="text-right">${formatearMoneda(r.monto_bruto)}</td>
       <td class="text-right">${formatearMoneda(r.monto_retencion)}</td>
       <td class="text-right" style="font-weight:600">${formatearMoneda(r.monto_neto)}</td>
@@ -578,8 +578,8 @@ function _mostrarPreviewSUNAT(datos, tipo, nombre) {
             ℹ Prestadores nuevos se crearán automáticamente en Prestadores de Servicios.
           </span>
         </div>
-        <div class="table-wrap" style="max-height:360px;overflow-y:auto">
-          <table class="tabla" style="font-size:12px">
+        <div class="tabla-nexum-wrap" style="max-height:360px;overflow-y:auto">
+          <table class="tabla-nexum" style="font-size:12px">
             <thead><tr>${th}</tr></thead>
             <tbody>${td}${datos.length > 8 ? `<tr><td colspan="8" class="text-center text-muted text-sm" style="padding:8px">…y ${datos.length - 8} filas más</td></tr>` : ''}</tbody>
           </table>

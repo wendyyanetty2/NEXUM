@@ -315,6 +315,7 @@ function _renderRHRTabla() {
                 style="background:${estInfo.color}${tieneLinks ? ';cursor:pointer' : ''}">${estInfo.etiqueta}</span>
             </td>
             <td style="text-align:center;white-space:nowrap">
+              <button class="btn-tabla-accion" onclick="rhVerDetalle('${r.id}')" title="Ver detalle completo" style="background:rgba(74,85,104,.1);color:var(--color-texto-suave);margin-right:2px">👁️</button>
               ${tienePosible ? `<button class="btn-tabla-accion" onclick="rhConfirmarPosible('${r.id}')" title="Confirmar match posible" style="background:rgba(214,158,46,.2);color:#D69E2E;border:1px solid #D69E2E;margin-right:2px">✓</button>` : ''}
               ${tieneLinks ? `<button class="btn-tabla-accion" onclick="rhVerLinks('${r.id}','${escapar(nombre)}')" title="Ver movimientos vinculados" style="background:rgba(44,82,130,.1);color:#3182CE;margin-right:2px">🔗</button>` : ''}
               <button class="btn-tabla-accion" onclick="_bmBuscarMov('RH','${r.id}','${escapar(r.numero_rh||'')}','${escapar(nombre)}',${Number(r.monto_neto||0)},'${r.fecha_emision||''}','${escapar(docNum!=='—'?docNum:'')}')" title="Buscar y vincular operación(es) bancaria(s)" style="background:rgba(113,71,224,.1);color:#553C9A;margin-right:2px">🔍</button>
@@ -327,6 +328,52 @@ function _renderRHRTabla() {
     </table>
     </div>
   `;
+}
+
+// ── Vista de detalle (solo lectura) — usa los datos ya cargados en memoria ─
+function rhVerDetalle(rhId) {
+  const r = _rhrRawFilas.find(x => x.id === rhId);
+  if (!r) return;
+  const estInfo = _rhrEstadosMap[rhId] || {};
+  const mon     = r.moneda === 'USD' ? 'USD' : 'PEN';
+  const nombre  = r.prestadores_servicios?.nombre || r.nombre_emisor || '—';
+  const docNum  = r.prestadores_servicios?.dni    || r.nro_doc_emisor || '—';
+
+  const fila = (label, valor) => `
+    <div style="display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--color-borde)">
+      <span style="color:var(--color-texto-suave);font-size:12px">${label}</span>
+      <span style="text-align:right;font-size:13px;max-width:65%">${valor}</span>
+    </div>`;
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:520px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>👁️ Detalle del RH — ${escapar(r.numero_rh||'—')}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          ${fila('Fecha emisión', formatearFecha(r.fecha_emision))}
+          ${fila('N° RH', escapar(r.numero_rh||'—'))}
+          ${fila('N° Doc. emisor', escapar(docNum))}
+          ${fila('Emisor', escapar(nombre))}
+          ${fila('Concepto', escapar(r.concepto||'—'))}
+          ${fila('Observaciones', escapar(r.observaciones||'—'))}
+          ${fila('Moneda', escapar(r.moneda||'PEN'))}
+          ${fila('Renta Bruta', formatearMoneda(r.monto_bruto, mon))}
+          ${fila('Retención', formatearMoneda(r.monto_retencion, mon))}
+          ${fila('Renta Neta', `<strong>${formatearMoneda(r.monto_neto, mon)}</strong>`)}
+          ${fila('Estado', `<span class="badge-estado" style="background:${estInfo.color||'#4A5568'}">${estInfo.etiqueta||r.estado||'—'}</span>`)}
+          ${estInfo.montoPagado != null ? fila('Monto vinculado (Tesorería)', formatearMoneda(estInfo.montoPagado, mon)) : ''}
+          ${(estInfo.links?.length) ? fila('Movimientos vinculados', String(estInfo.links.length)) : ''}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+          <button class="btn btn-primario" onclick="this.closest('.modal-overlay').remove();abrirModalRHR('${r.id}')">✏️ Editar</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 // ── Conciliación automática — muestra PREVIEW antes de guardar ────

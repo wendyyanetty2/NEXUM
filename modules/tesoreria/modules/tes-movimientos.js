@@ -261,21 +261,21 @@ function _renderResumenMov() {
   const totD   = filas.filter(r => r.moneda === 'USD').reduce((s,r)=>s+Number(r.monto),0);
   const pend   = filas.filter(r => r.entrega_doc === 'PENDIENTE').length;
   div.innerHTML = `
-    <div style="background:var(--color-exito);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">TOTAL SOLES</div>
-      <div style="font-size:18px;font-weight:700">S/ ${_fmtMov(totS)}</div>
+    <div class="resumen-card" style="background:var(--color-exito)">
+      <div class="rc-label">Total soles</div>
+      <div class="rc-valor">S/ ${_fmtMov(totS)}</div>
     </div>
-    ${totD ? `<div style="background:#2B6CB0;color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">TOTAL USD</div>
-      <div style="font-size:18px;font-weight:700">$ ${_fmtMov(totD)}</div>
+    ${totD ? `<div class="resumen-card" style="background:#2B6CB0">
+      <div class="rc-label">Total USD</div>
+      <div class="rc-valor">$ ${_fmtMov(totD)}</div>
     </div>` : ''}
-    <div style="background:${pend>0?'var(--color-atencion)':'#4A5568'};color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">PENDIENTES DOC</div>
-      <div style="font-size:18px;font-weight:700">${pend}</div>
+    <div class="resumen-card" style="background:${pend>0?'var(--color-atencion)':'#4A5568'}">
+      <div class="rc-label">Pendientes doc</div>
+      <div class="rc-valor">${pend}</div>
     </div>
-    <div style="background:#4A5568;color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">TOTAL MOVIMIENTOS</div>
-      <div style="font-size:18px;font-weight:700">${filas.length}</div>
+    <div class="resumen-card" style="background:#4A5568">
+      <div class="rc-label">Total movimientos</div>
+      <div class="rc-valor">${filas.length}</div>
     </div>`;
 }
 
@@ -327,18 +327,18 @@ function renderTablaMovimientos() {
         <td style="${_TD}max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.detalles_compra_servicio||'')}">${escapar(r.detalles_compra_servicio||'—')}</td>
         <td style="${_TD}max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.observaciones_2||'')}">${escapar(r.observaciones_2||'—')}</td>
         <td style="${_TD}text-align:center;white-space:nowrap">
-          <button onclick="abrirModalMovimiento('${r.id}')"
+          <button class="btn-tabla-accion" onclick="abrirModalMovimiento('${r.id}')"
             title="Editar este movimiento individualmente"
-            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
-          <button onclick="_abrirModalDividirMBD('${r.id}')"
+            style="background:rgba(44,82,130,.1);color:var(--color-secundario)">✏️</button>
+          <button class="btn-tabla-accion" onclick="_abrirModalDividirMBD('${r.id}')"
             title="Dividir este movimiento en varios comprobantes"
-            style="padding:4px 7px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✂️</button>
-          <button onclick="_bmBuscarDoc('${r.id}','${escapar(r.nro_operacion_bancaria||'')}',${r.monto},'${r.fecha_deposito}','tesoreria_mbd')"
+            style="background:rgba(44,82,130,.1);color:var(--color-secundario)">✂️</button>
+          <button class="btn-tabla-accion" onclick="_bmBuscarDoc('${r.id}','${escapar(r.nro_operacion_bancaria||'')}',${r.monto},'${r.fecha_deposito}','tesoreria_mbd')"
             title="Vincular con comprobante (Compras / Ventas / RH)"
-            style="padding:4px 7px;background:rgba(85,60,154,.1);color:#553C9A;border:none;border-radius:4px;cursor:pointer;font-size:13px">📂</button>
-          <button onclick="eliminarMovimiento('${r.id}')"
+            style="background:rgba(85,60,154,.1);color:#553C9A">📂</button>
+          <button class="btn-tabla-accion" onclick="eliminarMovimiento('${r.id}')"
             title="Eliminar solo este movimiento"
-            style="padding:4px 7px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
+            style="background:rgba(197,48,48,.1);color:#C53030">🗑️</button>
         </td>
       </tr>`;
     }).join('');

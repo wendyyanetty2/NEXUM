@@ -52,8 +52,8 @@ async function renderTabVentas(area) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>Fecha</th><th>Tipo Doc.</th><th>Serie-Número</th>
             <th>Cliente</th><th>RUC</th><th>Base Imponible</th>
@@ -248,7 +248,7 @@ async function renderTablaVentas() {
       <td>${formatearFecha(v.fecha_emision)}</td>
       <td class="text-sm">${escapar(v.tipo_documento_codigo || '—')}</td>
       <td class="text-mono">${escapar((v.serie || '') + '-' + (v.numero || ''))}</td>
-      <td class="text-sm">${escapar((v.nombre_cliente || '—').slice(0,30))}</td>
+      <td class="celda-truncar" style="--w:190px" title="${escapar(v.nombre_cliente || '')}">${escapar(v.nombre_cliente || '—')}</td>
       <td class="text-mono text-sm">${escapar(v.ruc_cliente || '—')}</td>
       <td class="text-right">${formatearMoneda(v.base_imponible || 0)}</td>
       <td class="text-right">${formatearMoneda(v.igv || 0)}</td>

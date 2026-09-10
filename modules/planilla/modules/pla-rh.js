@@ -33,8 +33,8 @@ function renderTabRH(area) {
           <button onclick="abrirModalRH()" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">+ Nuevo RH</button>
         </div>
       </div>
-      <div id="rh-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
-      <div id="rh-tabla-wrap" style="overflow-x:auto;">
+      <div id="rh-resumen"></div>
+      <div id="rh-tabla-wrap" class="tabla-nexum-wrap">
         <div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>
       </div>
     </div>
@@ -72,25 +72,27 @@ async function cargarRH() {
 
   const resumen = document.getElementById('rh-resumen');
   if (resumen) resumen.innerHTML = `
-    <div style="background:var(--color-secundario);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">RENTA BRUTA</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalBruta)}</div>
-    </div>
-    <div style="background:var(--color-critico);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">IMPUESTO A LA RENTA</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalIR)}</div>
-    </div>
-    <div style="background:var(--color-exito);color:#fff;padding:12px 16px;border-radius:8px;min-width:140px">
-      <div style="font-size:11px;opacity:.8">RENTA NETA</div>
-      <div style="font-size:18px;font-weight:700">${formatearMoneda(totalNeta)}</div>
-    </div>
-    <div style="background:${pendientes>0?'var(--color-atencion)':'#4A5568'};color:#fff;padding:12px 16px;border-radius:8px;min-width:120px">
-      <div style="font-size:11px;opacity:.8">CON SALDO PENDIENTE</div>
-      <div style="font-size:18px;font-weight:700">${pendientes}</div>
-    </div>
-    <div style="background:#4A5568;color:#fff;padding:12px 16px;border-radius:8px;min-width:120px">
-      <div style="font-size:11px;opacity:.8">TOTAL RH</div>
-      <div style="font-size:18px;font-weight:700">${(data||[]).length}</div>
+    <div class="resumen-cards">
+      <div class="resumen-card" style="background:var(--color-secundario)">
+        <div class="rc-label">RENTA BRUTA</div>
+        <div class="rc-valor">${formatearMoneda(totalBruta)}</div>
+      </div>
+      <div class="resumen-card" style="background:var(--color-critico)">
+        <div class="rc-label">IMPUESTO A LA RENTA</div>
+        <div class="rc-valor">${formatearMoneda(totalIR)}</div>
+      </div>
+      <div class="resumen-card" style="background:var(--color-exito)">
+        <div class="rc-label">RENTA NETA</div>
+        <div class="rc-valor">${formatearMoneda(totalNeta)}</div>
+      </div>
+      <div class="resumen-card" style="background:${pendientes>0?'var(--color-atencion)':'#4A5568'}">
+        <div class="rc-label">CON SALDO PENDIENTE</div>
+        <div class="rc-valor">${pendientes}</div>
+      </div>
+      <div class="resumen-card" style="background:#4A5568">
+        <div class="rc-label">TOTAL RH</div>
+        <div class="rc-valor">${(data||[]).length}</div>
+      </div>
     </div>
   `;
 
@@ -117,20 +119,20 @@ async function cargarRH() {
           <tr style="${r.estado_doc_emitido==='ANULADO'?'opacity:.5;text-decoration:line-through':''}">
             <td style="white-space:nowrap">${formatearFecha(r.fecha_emision)}</td>
             <td style="font-weight:600">${escapar(r.nro_doc_emitido)}</td>
-            <td><span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${r.estado_doc_emitido==='NO ANULADO'?'#2F855A':'#C53030'};color:#fff">${escapar(r.estado_doc_emitido)}</span></td>
+            <td><span class="badge-estado" style="background:${r.estado_doc_emitido==='NO ANULADO'?'#2F855A':'#C53030'}">${escapar(r.estado_doc_emitido)}</span></td>
             <td>${escapar(r.tipo_doc_emisor)}</td>
             <td>${escapar(r.nro_doc_emisor)}</td>
-            <td>${escapar(truncar(r.apellidos_nombres_razon_social,22))}</td>
-            <td><span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--color-secundario);color:#fff" title="${r.tipo_renta==='A'?'4ta Categoría':'5ta Categoría'}">${escapar(r.tipo_renta)}</span></td>
-            <td>${escapar(truncar(r.descripcion,25))}</td>
+            <td class="celda-truncar" style="--w:160px" title="${escapar(r.apellidos_nombres_razon_social||'')}">${escapar(truncar(r.apellidos_nombres_razon_social,22))}</td>
+            <td><span class="badge-estado" style="background:var(--color-secundario)" title="${r.tipo_renta==='A'?'4ta Categoría':'5ta Categoría'}">${escapar(r.tipo_renta)}</span></td>
+            <td class="celda-truncar" style="--w:180px" title="${escapar(r.descripcion||'')}">${escapar(truncar(r.descripcion,25))}</td>
             <td>${escapar(r.moneda_operacion==='SOLES'?'S/':'$')}</td>
-            <td style="text-align:right">${formatearMoneda(r.renta_bruta, r.moneda_operacion==='DOLARES'?'USD':'PEN')}</td>
-            <td style="text-align:right;color:var(--color-critico)">${formatearMoneda(r.impuesto_renta, r.moneda_operacion==='DOLARES'?'USD':'PEN')}</td>
-            <td style="text-align:right;font-weight:600;color:var(--color-exito)">${formatearMoneda(r.renta_neta, r.moneda_operacion==='DOLARES'?'USD':'PEN')}</td>
-            <td style="text-align:right;color:${Number(r.monto_neto_pendiente_pago||0)>0?'var(--color-atencion)':'var(--color-texto-suave)'}">${Number(r.monto_neto_pendiente_pago||0)>0?formatearMoneda(r.monto_neto_pendiente_pago, r.moneda_operacion==='DOLARES'?'USD':'PEN'):'—'}</td>
+            <td class="celda-monto">${formatearMoneda(r.renta_bruta, r.moneda_operacion==='DOLARES'?'USD':'PEN')}</td>
+            <td class="celda-monto" style="color:var(--color-critico)">${formatearMoneda(r.impuesto_renta, r.moneda_operacion==='DOLARES'?'USD':'PEN')}</td>
+            <td class="celda-monto" style="font-weight:600;color:var(--color-exito)">${formatearMoneda(r.renta_neta, r.moneda_operacion==='DOLARES'?'USD':'PEN')}</td>
+            <td class="celda-monto" style="color:${Number(r.monto_neto_pendiente_pago||0)>0?'var(--color-atencion)':'var(--color-texto-suave)'}">${Number(r.monto_neto_pendiente_pago||0)>0?formatearMoneda(r.monto_neto_pendiente_pago, r.moneda_operacion==='DOLARES'?'USD':'PEN'):'—'}</td>
             <td style="text-align:center;white-space:nowrap">
-              <button onclick="abrirModalRH('${r.id}')" style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>
-              <button onclick="eliminarRH('${r.id}')" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
+              <button class="btn-tabla-accion" onclick="abrirModalRH('${r.id}')" style="background:rgba(44,82,130,.1);color:var(--color-secundario)">✏️</button>
+              <button class="btn-tabla-accion" onclick="eliminarRH('${r.id}')" style="background:rgba(197,48,48,.1);color:#C53030">🗑️</button>
             </td>
           </tr>
         `).join('')}

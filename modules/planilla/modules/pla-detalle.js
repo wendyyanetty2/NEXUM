@@ -117,8 +117,8 @@ function _renderDetalleCompleto(area) {
       </div>
 
       <!-- Tabla detalle -->
-      <div class="table-wrap">
-        <table class="tabla" style="font-size:12px">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>Trabajador</th>
             <th class="text-center">Días</th>
@@ -266,16 +266,16 @@ function renderTablaDetalle() {
           <div class="text-muted text-sm">${escapar(t.cargo || '')} ${t.afp ? '· ' + t.afp : '· ONP'}</div>
         </td>
         <td class="text-center">${d.dias_trabajados}</td>
-        <td class="text-right">${formatearMoneda(d.sueldo_base)}</td>
-        <td class="text-right">${formatearMoneda(d.remuneracion_bruta)}</td>
-        <td class="text-right">
+        <td class="celda-monto">${formatearMoneda(d.sueldo_base)}</td>
+        <td class="celda-monto">${formatearMoneda(d.remuneracion_bruta)}</td>
+        <td class="celda-monto">
           <span class="badge badge-info" style="font-size:10px">${labelSistema}</span>
           ${formatearMoneda(descSistema)}
         </td>
-        <td class="text-right">${d.descuento_renta5ta > 0 ? formatearMoneda(d.descuento_renta5ta) : '<span class="text-muted">—</span>'}</td>
-        <td class="text-right">${d.otros_descuentos > 0 ? formatearMoneda(d.otros_descuentos) : '<span class="text-muted">—</span>'}</td>
-        <td class="text-right"><strong>${formatearMoneda(d.remuneracion_neta)}</strong></td>
-        <td class="text-right text-sm">${formatearMoneda(d.aporte_essalud)}</td>
+        <td class="celda-monto">${d.descuento_renta5ta > 0 ? formatearMoneda(d.descuento_renta5ta) : '<span class="text-muted">—</span>'}</td>
+        <td class="celda-monto">${d.otros_descuentos > 0 ? formatearMoneda(d.otros_descuentos) : '<span class="text-muted">—</span>'}</td>
+        <td class="celda-monto"><strong>${formatearMoneda(d.remuneracion_neta)}</strong></td>
+        <td class="celda-monto text-sm">${formatearMoneda(d.aporte_essalud)}</td>
         <td class="text-center">
           ${d.pagado
             ? `<span class="badge badge-activo" style="font-size:11px">✓ Pagado</span>`

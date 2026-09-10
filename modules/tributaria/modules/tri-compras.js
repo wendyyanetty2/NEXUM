@@ -50,8 +50,8 @@ async function renderTabCompras(area) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="tabla">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead><tr>
             <th>F. Emisión</th><th>F. Vencimiento</th><th>Tipo Doc.</th><th>Serie-Número</th>
             <th>Proveedor</th><th>RUC</th><th>Base</th><th>IGV</th>
@@ -273,7 +273,7 @@ async function renderTablaCompras() {
       <td class="text-sm">${c.fecha_vencimiento ? formatearFecha(c.fecha_vencimiento) : '—'}</td>
       <td class="text-sm">${escapar(c.tipo_documento_codigo || '—')}</td>
       <td class="text-mono text-sm">${escapar((c.serie||'') + '-' + (c.numero||''))}</td>
-      <td class="text-sm">${escapar((c.nombre_proveedor||'—').slice(0,28))}</td>
+      <td class="celda-truncar" style="--w:180px" title="${escapar(c.nombre_proveedor || '')}">${escapar(c.nombre_proveedor || '—')}</td>
       <td class="text-mono text-sm">${escapar(c.ruc_proveedor || '—')}</td>
       <td class="text-right">${formatearMoneda(c.base_imponible || 0)}</td>
       <td class="text-right">${formatearMoneda(c.igv || 0)}</td>

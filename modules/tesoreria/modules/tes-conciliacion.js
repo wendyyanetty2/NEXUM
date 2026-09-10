@@ -74,8 +74,8 @@ async function renderTabConciliacion(area) {
             </h3>
             <span style="font-size:11px;color:var(--color-texto-suave)">Clic para seleccionar</span>
           </div>
-          <div class="table-wrap" style="max-height:340px;overflow-y:auto">
-            <table class="tabla" style="font-size:12px">
+          <div class="table-wrap tabla-nexum-wrap" style="max-height:340px;overflow-y:auto">
+            <table class="tabla-nexum" style="font-size:12px">
               <thead><tr><th>Fecha</th><th>Tipo</th><th>Doc / Emisor</th><th class="text-right">Importe</th></tr></thead>
               <tbody id="conc-tbody-docs"></tbody>
             </table>
@@ -88,8 +88,8 @@ async function renderTabConciliacion(area) {
             </h3>
             <span style="font-size:11px;color:var(--color-texto-suave)">Clic para seleccionar</span>
           </div>
-          <div class="table-wrap" style="max-height:340px;overflow-y:auto">
-            <table class="tabla" style="font-size:12px">
+          <div class="table-wrap tabla-nexum-wrap" style="max-height:340px;overflow-y:auto">
+            <table class="tabla-nexum" style="font-size:12px">
               <thead><tr><th>Fecha</th><th>Descripción</th><th class="text-right">Importe</th><th>Nat.</th><th title="Buscar comprobante manualmente">📂</th></tr></thead>
               <tbody id="conc-tbody-banco"></tbody>
             </table>
@@ -497,8 +497,8 @@ function _concRenderSugerencias() {
   }
 
   cont.innerHTML = `
-    <div style="overflow-x:auto">
-      <table class="tabla" style="font-size:12px">
+    <div class="tabla-nexum-wrap" style="overflow-x:auto">
+      <table class="tabla-nexum" style="font-size:12px">
         <thead>
           <tr>
             <th style="min-width:130px">Confianza</th>
@@ -570,8 +570,8 @@ function _concRenderSugerencias() {
           Un movimiento bancario coincide con la suma de varios recibos por honorarios
         </span>
       </p>
-      <div style="overflow-x:auto">
-        <table class="tabla" style="font-size:12px">
+      <div class="tabla-nexum-wrap" style="overflow-x:auto">
+        <table class="tabla-nexum" style="font-size:12px">
           <thead>
             <tr>
               <th>Banco — Fecha / Monto</th>
@@ -986,20 +986,20 @@ async function _concCargarHistorial(mes) {
 
   const tablaCompras = compras.length ? `
     <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">🛒 Compras conciliadas</p>
-    <div class="table-wrap" style="margin-bottom:16px">
-      <table class="tabla" style="font-size:12px">${thead}<tbody>${compras.map(filaCompra).join('')}</tbody></table>
+    <div class="table-wrap tabla-nexum-wrap" style="margin-bottom:16px">
+      <table class="tabla-nexum" style="font-size:12px">${thead}<tbody>${compras.map(filaCompra).join('')}</tbody></table>
     </div>` : '';
 
   const tablaVentas = ventas.length ? `
     <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">💰 Ventas conciliadas</p>
-    <div class="table-wrap" style="margin-bottom:16px">
-      <table class="tabla" style="font-size:12px">${thead}<tbody>${ventas.map(filaVenta).join('')}</tbody></table>
+    <div class="table-wrap tabla-nexum-wrap" style="margin-bottom:16px">
+      <table class="tabla-nexum" style="font-size:12px">${thead}<tbody>${ventas.map(filaVenta).join('')}</tbody></table>
     </div>` : '';
 
   const tablaRH = rh.length ? `
     <p style="font-size:12px;font-weight:600;color:var(--color-texto-suave);margin-bottom:6px">🧾 RH conciliados</p>
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:12px">${thead}<tbody>${rh.map(filaRH).join('')}</tbody></table>
+    <div class="table-wrap tabla-nexum-wrap">
+      <table class="tabla-nexum" style="font-size:12px">${thead}<tbody>${rh.map(filaRH).join('')}</tbody></table>
     </div>` : '';
 
   cont.innerHTML = tablaCompras + tablaVentas + tablaRH;

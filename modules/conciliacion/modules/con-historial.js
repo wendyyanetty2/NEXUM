@@ -116,8 +116,8 @@ async function cargarHistorialConciliacion(pag) {
   const colorDocTipo   = { COMPRA: 'badge-info', VENTA: 'badge-activo', RH: 'badge-warning', OTRO: 'badge-inactivo' };
 
   if (wrap) wrap.innerHTML = `
-    <div class="table-wrap">
-      <table class="tabla" style="font-size:12px">
+    <div class="table-wrap tabla-nexum-wrap">
+      <table class="tabla-nexum" style="font-size:12px">
         <thead>
           <tr>
             <th>Fecha conciliación</th>
@@ -137,7 +137,7 @@ async function cargarHistorialConciliacion(pag) {
               <tr>
                 <td style="white-space:nowrap">${formatearFecha(r.fecha_conciliacion?.slice(0,10))}</td>
                 <td class="text-sm">
-                  <div style="font-weight:500">${escapar((mov?.descripcion || '').slice(0, 40))}</div>
+                  <div class="celda-truncar" style="--w:220px;font-weight:500" title="${escapar(mov?.descripcion || '')}">${escapar(mov?.descripcion || '—')}</div>
                   <div class="text-muted" style="font-size:11px">${formatearFecha(mov?.fecha)} · ${escapar(mov?.numero_operacion || '—')}</div>
                 </td>
                 <td style="white-space:nowrap">

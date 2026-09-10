@@ -208,8 +208,8 @@ async function cargarListaPlanillas() {
       <span style="font-size:13px;color:var(--color-texto-suave)">${count || lista.length} planilla(s)</span>
       <span style="font-size:13px;font-weight:700;color:var(--color-secundario)">Total: ${formatearMoneda(totalGastos)}</span>
     </div>
-    <div style="overflow-x:auto">
-      <table class="tabla" style="font-size:12px">
+    <div class="tabla-nexum-wrap">
+      <table class="tabla-nexum">
         <thead>
           <tr>
             <th>N° Planilla</th>
@@ -229,32 +229,28 @@ async function cargarListaPlanillas() {
               <tr onmouseover="this.style.background='var(--color-hover)'" onmouseout="this.style.background=''">
                 <td style="font-family:monospace;font-weight:700;color:var(--color-secundario)">${escapar(r.numero_planilla)}</td>
                 <td style="white-space:nowrap">${escapar(r.mes)}</td>
-                <td style="max-width:200px">
-                  <div style="font-weight:500;font-size:12px">${escapar(r.trabajador_nombre)}</div>
-                </td>
+                <td class="celda-truncar" style="--w:200px;font-weight:500" title="${escapar(r.trabajador_nombre)}">${escapar(r.trabajador_nombre)}</td>
                 <td style="font-family:monospace;font-size:11px">${escapar(r.trabajador_dni)}</td>
-                <td style="text-align:right;font-weight:700;color:var(--color-secundario)">${formatearMoneda(r.total_gastos)}</td>
+                <td class="celda-monto" style="font-weight:700;color:var(--color-secundario)">${formatearMoneda(r.total_gastos)}</td>
                 <td style="text-align:center">
-                  <span style="background:${ec.bg};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">
-                    ${ec.label}
-                  </span>
+                  <span class="badge-estado" style="background:${ec.bg};font-size:10px">${ec.label}</span>
                 </td>
                 <td style="text-align:center;font-size:16px">${r.firma_trabajador ? '✅' : '⬜'}</td>
                 <td style="text-align:center;white-space:nowrap">
-                  <button onclick="_pmlVerDetalle('${r.id}')" title="Ver detalle"
-                    style="padding:4px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:13px">👁️</button>
+                  <button class="btn-tabla-accion" onclick="_pmlVerDetalle('${r.id}')" title="Ver detalle"
+                    style="background:rgba(44,82,130,.1);color:var(--color-secundario)">👁️</button>
                   ${r.estado === 'BORRADOR' ? `
-                  <button onclick="_pmlEditar('${r.id}')" title="Editar"
-                    style="padding:4px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:13px">✏️</button>` : ''}
-                  <button onclick="_pmlExportarWord('${r.id}')" title="Exportar Word (.doc)"
-                    style="padding:4px 8px;background:rgba(44,82,130,.12);color:#2C5282;border:none;border-radius:4px;cursor:pointer;font-size:13px">📝</button>
-                  <button onclick="_pmlExportarPDF('${r.id}')" title="Exportar PDF (imprimir)"
-                    style="padding:4px 8px;background:rgba(197,134,48,.1);color:#b7791f;border:none;border-radius:4px;cursor:pointer;font-size:13px">📄</button>
+                  <button class="btn-tabla-accion" onclick="_pmlEditar('${r.id}')" title="Editar"
+                    style="background:rgba(113,71,224,.1);color:#7147e0">✏️</button>` : ''}
+                  <button class="btn-tabla-accion" onclick="_pmlExportarWord('${r.id}')" title="Exportar Word (.doc)"
+                    style="background:rgba(44,82,130,.12);color:#2C5282">📝</button>
+                  <button class="btn-tabla-accion" onclick="_pmlExportarPDF('${r.id}')" title="Exportar PDF (imprimir)"
+                    style="background:rgba(197,134,48,.1);color:#b7791f">📄</button>
                   ${r.estado !== 'APROBADO' ? `
-                  <button onclick="_pmlCambiarEstado('${r.id}','${r.estado}')" title="Avanzar estado"
-                    style="padding:4px 8px;background:rgba(39,103,73,.1);color:#276749;border:none;border-radius:4px;cursor:pointer;font-size:13px">▶️</button>` : ''}
-                  <button onclick="_pmlEliminar('${r.id}','${escapar(r.numero_planilla)}')" title="Eliminar"
-                    style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px">🗑️</button>
+                  <button class="btn-tabla-accion" onclick="_pmlCambiarEstado('${r.id}','${r.estado}')" title="Avanzar estado"
+                    style="background:rgba(39,103,73,.1);color:#276749">▶️</button>` : ''}
+                  <button class="btn-tabla-accion" onclick="_pmlEliminar('${r.id}','${escapar(r.numero_planilla)}')" title="Eliminar"
+                    style="background:rgba(197,48,48,.1);color:#C53030">🗑️</button>
                 </td>
               </tr>`;
           }).join('')}
@@ -292,7 +288,7 @@ async function _pmlVerDetalle(id) {
             PLANILLA POR GASTOS DE MOVILIDAD — N° ${escapar(p.numero_planilla)}
           </div>
         </div>
-        <span style="background:${ec.bg};color:#fff;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700">${ec.label}</span>
+        <span class="badge-estado" style="background:${ec.bg}">${ec.label}</span>
         <button onclick="this.closest('[style*=fixed]').remove()"
           style="background:rgba(255,255,255,.2);border:none;border-radius:50%;width:30px;height:30px;cursor:pointer;color:#fff;font-size:18px">✕</button>
       </div>
@@ -332,12 +328,12 @@ async function _pmlVerDetalle(id) {
               <tr style="border-bottom:1px solid var(--color-borde);${i%2===0?'background:var(--color-bg-card)':'background:var(--color-fondo-2)'}">
                 <td style="padding:7px 10px;color:var(--color-texto-suave)">${i+1}</td>
                 <td style="padding:7px 10px;white-space:nowrap">${formatearFecha(d.fecha)}</td>
-                <td style="padding:7px 10px;max-width:200px">${escapar(d.motivo)}</td>
-                <td style="padding:7px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(d.origen||'—')}</td>
-                <td style="padding:7px 10px;font-size:11px;color:var(--color-texto-suave)">${escapar(d.destino||'—')}</td>
-                <td style="padding:7px 10px;font-size:11px">${escapar(d.proyecto||'—')}</td>
-                <td style="padding:7px 10px;font-size:11px">${escapar(d.empresa_cliente||'—')}</td>
-                <td style="padding:7px 10px;text-align:right;font-weight:600;color:var(--color-secundario)">${formatearMoneda(d.monto)}</td>
+                <td class="celda-truncar" style="padding:7px 10px;--w:200px" title="${escapar(d.motivo||'')}">${escapar(d.motivo)}</td>
+                <td class="celda-truncar" style="padding:7px 10px;font-size:11px;color:var(--color-texto-suave);--w:110px" title="${escapar(d.origen||'')}">${escapar(d.origen||'—')}</td>
+                <td class="celda-truncar" style="padding:7px 10px;font-size:11px;color:var(--color-texto-suave);--w:110px" title="${escapar(d.destino||'')}">${escapar(d.destino||'—')}</td>
+                <td class="celda-truncar" style="padding:7px 10px;font-size:11px;--w:140px" title="${escapar(d.proyecto||'')}">${escapar(d.proyecto||'—')}</td>
+                <td class="celda-truncar" style="padding:7px 10px;font-size:11px;--w:140px" title="${escapar(d.empresa_cliente||'')}">${escapar(d.empresa_cliente||'—')}</td>
+                <td class="celda-monto" style="padding:7px 10px;font-weight:600;color:var(--color-secundario)">${formatearMoneda(d.monto)}</td>
               </tr>`).join('')}
           </tbody>
         </table>` : `<p class="text-center text-muted text-sm" style="padding:24px">Sin filas de detalle registradas</p>`}
@@ -684,8 +680,8 @@ async function _prepCargar() {
       <div style="padding:12px 16px;border-bottom:1px solid var(--color-borde);font-weight:600;font-size:13px">
         👤 Gastos por trabajador
       </div>
-      <div style="overflow-x:auto">
-        <table class="tabla" style="font-size:12px">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead>
             <tr>
               <th>Trabajador</th><th>DNI</th>
@@ -698,12 +694,12 @@ async function _prepCargar() {
           <tbody>
             ${trabRows.map(t => `
               <tr>
-                <td style="font-weight:500">${escapar(t.nombre)}</td>
+                <td class="celda-truncar" style="--w:180px;font-weight:500" title="${escapar(t.nombre)}">${escapar(t.nombre)}</td>
                 <td style="font-family:monospace;font-size:11px">${escapar(t.dni)}</td>
                 <td style="text-align:center">${t.planillas}</td>
                 <td style="text-align:center">${t.filas}</td>
-                <td style="text-align:right;font-weight:700;color:var(--color-secundario)">${formatearMoneda(t.total)}</td>
-                <td style="text-align:right;color:var(--color-texto-suave)">${formatearMoneda(t.total / t.planillas)}</td>
+                <td class="celda-monto" style="font-weight:700;color:var(--color-secundario)">${formatearMoneda(t.total)}</td>
+                <td class="celda-monto" style="color:var(--color-texto-suave)">${formatearMoneda(t.total / t.planillas)}</td>
               </tr>`).join('')}
           </tbody>
           <tfoot>
@@ -722,8 +718,8 @@ async function _prepCargar() {
       <div style="padding:12px 16px;border-bottom:1px solid var(--color-borde);font-weight:600;font-size:13px">
         📅 Gastos por mes
       </div>
-      <div style="overflow-x:auto">
-        <table class="tabla" style="font-size:12px">
+      <div class="tabla-nexum-wrap">
+        <table class="tabla-nexum">
           <thead>
             <tr>
               <th>Mes</th>
@@ -736,7 +732,7 @@ async function _prepCargar() {
               <tr>
                 <td style="font-weight:500">${escapar(mes)}</td>
                 <td style="text-align:center">${v.planillas}</td>
-                <td style="text-align:right;font-weight:700;color:var(--color-secundario)">${formatearMoneda(v.total)}</td>
+                <td class="celda-monto" style="font-weight:700;color:var(--color-secundario)">${formatearMoneda(v.total)}</td>
               </tr>`).join('')}
           </tbody>
         </table>
@@ -1093,7 +1089,7 @@ function _pmiMostrarPreview(data) {
           <div style="font-weight:700;font-size:14px">Vista previa — Planilla ${escapar(meta.numero_planilla || '(sin número)')}</div>
           <div style="font-size:11px;opacity:.85">Fecha: ${escapar(meta.fecha_emision || '—')}</div>
         </div>
-        <span style="background:rgba(255,255,255,.22);padding:3px 12px;border-radius:10px;font-size:11px;font-weight:700">${etiqueta}</span>
+        <span class="badge-estado" style="background:rgba(255,255,255,.22)">${etiqueta}</span>
       </div>
 
       <div style="padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;border-bottom:1px solid var(--color-borde);font-size:12px">
@@ -1128,12 +1124,12 @@ function _pmiMostrarPreview(data) {
               <tr style="border-bottom:1px solid var(--color-borde);${i%2===0?'':'background:var(--color-fondo-2)'}">
                 <td style="padding:5px 8px;text-align:center;color:var(--color-texto-suave)">${i+1}</td>
                 <td style="padding:5px 8px;white-space:nowrap">${escapar(d.fecha || '—')}</td>
-                <td style="padding:5px 8px;max-width:200px">${escapar(d.motivo || '—')}</td>
-                <td style="padding:5px 8px">${escapar(d.origen || '—')}</td>
-                <td style="padding:5px 8px">${escapar(d.destino || '—')}</td>
-                <td style="padding:5px 8px">${escapar(d.proyecto || '—')}</td>
-                <td style="padding:5px 8px">${escapar(d.empresa_cliente || '—')}</td>
-                <td style="padding:5px 8px;text-align:right;font-weight:600;color:var(--color-secundario)">${Number(d.monto||0).toFixed(2)}</td>
+                <td class="celda-truncar" style="padding:5px 8px;--w:200px" title="${escapar(d.motivo || '')}">${escapar(d.motivo || '—')}</td>
+                <td class="celda-truncar" style="padding:5px 8px;--w:110px" title="${escapar(d.origen || '')}">${escapar(d.origen || '—')}</td>
+                <td class="celda-truncar" style="padding:5px 8px;--w:110px" title="${escapar(d.destino || '')}">${escapar(d.destino || '—')}</td>
+                <td class="celda-truncar" style="padding:5px 8px;--w:140px" title="${escapar(d.proyecto || '')}">${escapar(d.proyecto || '—')}</td>
+                <td class="celda-truncar" style="padding:5px 8px;--w:140px" title="${escapar(d.empresa_cliente || '')}">${escapar(d.empresa_cliente || '—')}</td>
+                <td class="celda-monto" style="padding:5px 8px;font-weight:600;color:var(--color-secundario)">${Number(d.monto||0).toFixed(2)}</td>
               </tr>`).join('')}
           </tbody>
         </table>
