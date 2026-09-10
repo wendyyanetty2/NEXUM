@@ -150,7 +150,13 @@ function truncar(texto, largo = 30) {
     if (TIPOS_EXCLUIDOS.includes(tipo)) return;
 
     input.dataset.afBlindado = '1';
-    if (!input.hasAttribute('autocomplete')) input.setAttribute('autocomplete', 'off');
+    // Chrome ignora "autocomplete=off" en campos que su heurística de direcciones/
+    // contactos reconoce (nombre, email, teléfono) — es un comportamiento del propio
+    // navegador, no de un gestor de contraseñas. "new-password" sí lo respeta en la
+    // práctica porque Chrome lo trata como campo sensible y no ofrece autocompletar
+    // datos de perfil guardados. Se fuerza siempre, aunque el input ya traiga
+    // autocomplete="off" puesto manualmente, para blindar parejo todo el sistema.
+    input.setAttribute('autocomplete', 'new-password');
     input.setAttribute('data-lpignore', 'true');
     input.setAttribute('data-1p-ignore', 'true');
     input.setAttribute('data-bwignore', 'true');
