@@ -35,12 +35,12 @@
         </div>
       </div>
 
-      <!-- Selector de empresa (super admin puede ver todas) -->
+      <!-- Empresa: siempre la activa de la sesión (igual que el resto de NEXUM) -->
       <div class="card" style="padding:16px;margin-bottom:20px">
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;align-items:end">
           <div class="campo" style="margin:0">
             <label class="label-filtro">Empresa</label>
-            <select id="rep-empresa" class="input-buscar w-full"></select>
+            <select id="rep-empresa" class="input-buscar w-full" disabled></select>
           </div>
           <div class="campo" style="margin:0">
             <label class="label-filtro">Periodo desde</label>
@@ -155,22 +155,11 @@ async function cargarEmpresasReporte() {
   const sel = document.getElementById('rep-empresa');
   if (!sel) return;
 
-  // Super admin puede ver todas
-  const esSA = await esSuperAdmin();
-  let lista = [];
-  if (esSA) {
-    const { data } = await _supabase.from('empresas_operadoras').select('id,nombre').eq('activa', true).order('nombre');
-    lista = data || [];
-  } else {
-    // Usuario normal: solo sus empresas
-    const { data } = await _supabase.from('usuarios_empresas')
-      .select('empresa_operadora_id, empresas_operadoras(id,nombre)')
-      .eq('usuario_id', perfil_usuario.id)
-      .eq('activo', true);
-    lista = (data || []).map(ue => ue.empresas_operadoras).filter(Boolean);
-  }
-  rep_empresas = lista;
-  sel.innerHTML = lista.map(e => `<option value="${e.id}" ${e.id === empresa_activa.id ? 'selected' : ''}>${escapar(e.nombre)}</option>`).join('');
+  // Reportes siempre trabaja sobre la empresa activa de la sesión — igual que
+  // el resto de NEXUM. Para ver otra empresa, se cambia desde "Cambiar empresa"
+  // en el menú (arriba a la derecha), no aquí.
+  rep_empresas = [empresa_activa];
+  sel.innerHTML = `<option value="${empresa_activa.id}" selected>${escapar(empresa_activa.nombre)}</option>`;
 }
 
 function _getParams() {

@@ -180,7 +180,7 @@ async function consolidarEstadosRetroactivo() {
   }
 
   const btn = document.getElementById('btn-consolidar-estados');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Consolidando…'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Reparando…'; }
 
   try {
     const hoy   = new Date().toISOString().slice(0, 10);
@@ -347,12 +347,17 @@ async function consolidarEstadosRetroactivo() {
     }
 
     // ── Resumen ──────────────────────────────────────────────────
+    // Nota (2026-09): el reporte de montos que no coinciden se movió a
+    // Conciliación → "⚠️ Verificar montos" (detectarDiscrepanciasMontos),
+    // porque no es una reparación de estado — es una verificación de
+    // conciliación. Este botón solo repara, y si encuentra discrepancias
+    // avisa dónde revisarlas, en vez de abrir el reporte aquí mismo.
     const discrepancias = discrepanciasDetalle.length;
     const parts = [`${movs.length} mov. revisados`];
     if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
     if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
-    if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revisar manualmente`);
+    if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revísalas en Conciliación → Verificar montos`);
     if (!actualizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
     mostrarToast((discrepancias ? '⚠️ ' : '✅ ') + parts.join(' · '), discrepancias ? 'atencion' : 'exito');
 
@@ -362,21 +367,89 @@ async function consolidarEstadosRetroactivo() {
     if (typeof cargarVentas      === 'function') cargarVentas();
     if (typeof _concCargarDatos  === 'function') _concCargarDatos();
 
-    // ── Reporte visual de discrepancias (solo lectura) ────────────
-    if (discrepancias) _conRenderDiscrepancias(discrepanciasDetalle);
-
   } catch (err) {
     mostrarToast('Error en consolidación: ' + err.message, 'error');
     console.error('[consolidacion-estados]', err);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔄 Consolidar estados'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🔧 Reparar estados'; }
   }
 }
 
-// ── Reporte visual de discrepancias detectadas por "Consolidar estados"
-//    (monto del movimiento bancario no coincide con el total del
-//    comprobante vinculado). Solo lectura — no modifica nada; cada fila
-//    tiene un botón "Ver" para abrir el movimiento y revisarlo a mano.
+// ════════════════════════════════════════════════════════════════
+// VERIFICACIÓN DE MONTOS (solo lectura, vive en Conciliación)
+// Detecta comprobantes de Compras/Ventas vinculados a un movimiento
+// bancario cuyo monto NO coincide (>2%) — no repara nada, solo avisa
+// para revisión manual. Antes vivía dentro de "Consolidar estados";
+// se separó porque es un reporte de conciliación, no de reparación.
+// ════════════════════════════════════════════════════════════════
+async function detectarDiscrepanciasMontos() {
+  if (typeof empresa_activa === 'undefined' || !empresa_activa?.id) return [];
+  const empId = empresa_activa.id;
+
+  const { data: movsCrudos } = await _supabase
+    .from('tesoreria_mbd')
+    .select('id,proveedor_empresa_personal,nro_factura_doc,tipo_doc,entrega_doc,fecha_deposito,monto,nro_operacion_bancaria')
+    .eq('empresa_id', empId)
+    .not('nro_factura_doc', 'is', null)
+    .in('tipo_doc', ['COMPRA', 'VENTA']);
+
+  const movs = (movsCrudos || []).filter(m => m.entrega_doc !== 'CANCELADO');
+  const discrepanciasDetalle = [];
+  if (!movs.length) return discrepanciasDetalle;
+
+  let comprasMap = new Map();
+  if (movs.some(m => m.tipo_doc === 'COMPRA')) {
+    const { data: compras } = await _supabase.from('contabilidad_compras')
+      .select('serie_cdp,nro_cp_inicial,proveedor,periodo,total_cp').eq('empresa_id', empId);
+    (compras || []).forEach(c => {
+      const k = [c.serie_cdp, c.nro_cp_inicial].filter(Boolean).join('-');
+      if (k) { if (!comprasMap.has(k)) comprasMap.set(k, []); comprasMap.get(k).push({ proveedor: c.proveedor||'', periodo: c.periodo||'', total: Number(c.total_cp)||0 }); }
+    });
+  }
+  let ventasMap = new Map();
+  if (movs.some(m => m.tipo_doc === 'VENTA')) {
+    const { data: ventas } = await _supabase.from('contabilidad_ventas')
+      .select('serie_cdp,nro_cp_inicial,cliente,periodo,total_cp').eq('empresa_id', empId);
+    (ventas || []).forEach(v => {
+      const k = [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-');
+      if (k) { if (!ventasMap.has(k)) ventasMap.set(k, []); ventasMap.get(k).push({ proveedor: v.cliente||'', periodo: v.periodo||'', total: Number(v.total_cp)||0 }); }
+    });
+  }
+
+  for (const mov of movs) {
+    const periodoMov = _conPeriodoFromFecha(mov.fecha_deposito);
+    const mapa = mov.tipo_doc === 'COMPRA' ? comprasMap : ventasMap;
+    const candidatos = mapa.get(mov.nro_factura_doc) || [];
+    const matchNombrePeriodo = candidatos.filter(c =>
+      _conNombreCoincide(mov.proveedor_empresa_personal, c.proveedor) && _conPeriodoCercano(periodoMov, c.periodo));
+    if (!matchNombrePeriodo.length) continue;
+    const montoOk = matchNombrePeriodo.some(c =>
+      Math.abs(Math.abs(Number(mov.monto) || 0) - c.total) < Math.max(c.total * 0.02, 1));
+    if (!montoOk) {
+      const mejorCandidato = matchNombrePeriodo.reduce((a, b) =>
+        Math.abs(Math.abs(Number(mov.monto)||0) - a.total) <= Math.abs(Math.abs(Number(mov.monto)||0) - b.total) ? a : b);
+      discrepanciasDetalle.push({
+        id: mov.id, nDoc: mov.nro_factura_doc, tipoDoc: mov.tipo_doc,
+        nroOp: mov.nro_operacion_bancaria, fecha: mov.fecha_deposito,
+        montoMov: Math.abs(Number(mov.monto)||0), montoComprobante: mejorCandidato.total,
+        proveedor: mejorCandidato.proveedor,
+      });
+    }
+  }
+  return discrepanciasDetalle;
+}
+
+// ── Botón "⚠️ Verificar montos" en Conciliación ───────────────────
+async function _conVerificarMontosClick() {
+  mostrarToast('Verificando montos vinculados…', 'info');
+  const discrepancias = await detectarDiscrepanciasMontos();
+  if (!discrepancias.length) { mostrarToast('✅ No se encontraron montos que no coincidan', 'exito'); return; }
+  _conRenderDiscrepancias(discrepancias);
+}
+
+// ── Reporte visual de discrepancias detectadas (solo lectura) ────
+//    Cada fila tiene la info del movimiento y el comprobante para
+//    revisarlo a mano — no modifica nada.
 function _conRenderDiscrepancias(detalle) {
   const mc = document.getElementById('modal-container');
   if (!mc) return;

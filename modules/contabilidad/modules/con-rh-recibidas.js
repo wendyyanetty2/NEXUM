@@ -39,7 +39,7 @@ function renderTabRHRecibidas(area) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="rhConciliarAutomatico()" id="btn-rhr-auto" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">⚡ Conciliar automáticamente</button>
-          <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔄 Consolidar estados</button>
+          <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔧 Reparar estados</button>
           <button onclick="_dupReporteHistoricoRH()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Buscar duplicados</button>
           <button onclick="exportarExcelRHRecibidas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar Excel</button>
           <button onclick="document.getElementById('rhr-file-input').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📂 Importar Excel</button>
@@ -383,8 +383,15 @@ async function rhConciliarAutomatico() {
   const btn  = document.getElementById('btn-rhr-auto');
   if (!btn) return;
 
-  btn.disabled = true;
-  btn.textContent = '⏳ Calculando…';
+  // Mismo patrón de carga que "Conciliar con banco" en Reg. Ventas/Compras:
+  // modal con spinner mientras busca, en vez de solo deshabilitar el botón.
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" style="display:flex">
+      <div class="modal" style="max-width:500px;width:95%;padding:32px;text-align:center">
+        <div class="spinner" style="margin:0 auto 12px"></div>
+        <div style="color:var(--color-texto-suave)">Buscando coincidencias…</div>
+      </div>
+    </div>`;
 
   let resultado;
   try {
@@ -392,14 +399,12 @@ async function rhConciliarAutomatico() {
       empresa_activa.id, Number(mes), Number(anio)
     );
   } catch (e) {
+    document.querySelector('.modal-overlay')?.remove();
     mostrarToast('Error al calcular matches: ' + e.message, 'error');
-    btn.disabled = false;
-    btn.textContent = '⚡ Conciliar automáticamente';
     return;
   }
 
-  btn.disabled = false;
-  btn.textContent = '⚡ Conciliar automáticamente';
+  document.querySelector('.modal-overlay')?.remove();
 
   if (!resultado.total) {
     mostrarToast('No hay RH en este periodo', 'atencion');

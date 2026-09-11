@@ -5,6 +5,13 @@
 const TIPOS_DOC_ID_C = {'1':'DNI','4':'Carnet Extranjería','6':'RUC','7':'Pasaporte','0':'Otros'};
 let _mbdLinkCache = []; // Cache para modal de movimiento bancario vinculado
 
+// ── Período del filtro (mes+año seleccionados) en formato YYYYMM ───
+function _cPeriodoActual() {
+  const mes  = document.getElementById('c-mes')?.value;
+  const anio = document.getElementById('c-anio')?.value;
+  return (mes && anio) ? `${anio}${mes}` : '';
+}
+
 function renderTabCompras(area) {
   const hoy = new Date();
   const mesActual = String(hoy.getMonth() + 1).padStart(2, '0');
@@ -15,8 +22,16 @@ function renderTabCompras(area) {
     <div class="fadeIn">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <input type="text" id="c-periodo" value="${periodoActual}" placeholder="YYYYMM"
-            style="width:100px;padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+          <select id="c-mes" style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+            ${Array.from({length:12},(_,i)=>{
+              const m = String(i+1).padStart(2,'0');
+              const nom = new Date(2000,i,1).toLocaleString('es-PE',{month:'long'});
+              return `<option value="${m}" ${m===mesActual?'selected':''}>${nom.charAt(0).toUpperCase()+nom.slice(1)}</option>`;
+            }).join('')}
+          </select>
+          <select id="c-anio" style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+            ${[anioActual-1, anioActual, anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('')}
+          </select>
           <input type="text" id="c-buscar" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
                  data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
                  placeholder="Buscar proveedor, serie…"
@@ -25,7 +40,7 @@ function renderTabCompras(area) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="_conciliarLoteCompras()" style="padding:8px 14px;background:#2C5282;color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔗 Conciliar con banco</button>
-          <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔄 Consolidar estados</button>
+          <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔧 Reparar estados</button>
           <button onclick="_dupReporteHistorico('contabilidad_compras','proveedor','Compras','abrirModalCompra')" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Buscar duplicados</button>
           <button onclick="exportarExcelCompras()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar PLE</button>
           <button onclick="document.getElementById('c-sunat-file').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📊 Importar SUNAT</button>
@@ -67,7 +82,7 @@ function _filtrarComprasBuscar(filas, buscar) {
 }
 
 async function cargarCompras() {
-  const periodo = document.getElementById('c-periodo')?.value.trim();
+  const periodo = _cPeriodoActual();
   const wrap    = document.getElementById('c-tabla-wrap');
   if (!wrap) return;
   wrap.innerHTML = '<div class="cargando"><div class="spinner"></div><span>Cargando…</span></div>';
@@ -528,7 +543,7 @@ async function eliminarCompra(id) {
 }
 
 async function exportarExcelCompras() {
-  const periodo = document.getElementById('c-periodo')?.value.trim();
+  const periodo = _cPeriodoActual();
   let q = _supabase.from('contabilidad_compras').select('*')
     .eq('empresa_id', empresa_activa.id).order('fecha_emision');
   if (periodo) q = q.eq('periodo', periodo);
@@ -643,7 +658,7 @@ function _cSunatHandleFile(input) {
         };
       }).filter(Boolean);
 
-      const periodo = document.getElementById('c-periodo')?.value.trim() ||
+      const periodo = _cPeriodoActual() ||
         (_cSunatDatos[0]?.periodo || '');
 
       const { data: existentes } = await _supabase
@@ -798,7 +813,7 @@ async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fech
 
 // ── Conciliar lote — todos los PEND. del periodo actual ──────────
 async function _conciliarLoteCompras() {
-  const periodo = document.getElementById('c-periodo')?.value.trim();
+  const periodo = _cPeriodoActual();
   if (!periodo) { mostrarToast('Selecciona un periodo primero', 'atencion'); return; }
 
   const mc = document.getElementById('modal-container');

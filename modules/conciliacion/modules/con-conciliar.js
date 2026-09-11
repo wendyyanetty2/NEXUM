@@ -24,6 +24,7 @@ async function renderTabConciliar(area) {
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
           <h3 style="margin:0">Seleccionar periodo</h3>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="_conVerificarMontosClick()" style="padding:6px 12px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)" title="Revisa comprobantes vinculados a un movimiento bancario cuyo monto no coincide">⚠️ Verificar montos</button>
             <button onclick="_conBorrarMes()" style="padding:6px 12px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">🗑️ Borrar mes</button>
             <button onclick="_conBorrarAnio()" style="padding:6px 12px;background:rgba(197,48,48,.1);color:#C53030;border:1px solid #C53030;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font)">🗑️ Borrar año</button>
           </div>
