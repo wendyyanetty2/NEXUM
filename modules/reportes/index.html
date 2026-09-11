@@ -16,6 +16,7 @@
   <script src="../../js/tema.js"></script>
   <script src="../../js/notas.js?v=2&t=20260510"></script>
   <script src="../../js/layout.js"></script>
+  <script src="../../js/historico.js?v=1"></script>
 </head>
 <body>
 <div class="nexum-layout">
@@ -41,11 +42,11 @@
           </div>
           <div class="campo" style="margin:0">
             <label class="label-filtro">Periodo desde</label>
-            <input type="month" id="rep-desde" class="input-buscar w-full" value="${new Date().toISOString().slice(0,7)}">
+            <input type="month" id="rep-desde" class="input-buscar w-full">
           </div>
           <div class="campo" style="margin:0">
             <label class="label-filtro">Periodo hasta</label>
-            <input type="month" id="rep-hasta" class="input-buscar w-full" value="${new Date().toISOString().slice(0,7)}">
+            <input type="month" id="rep-hasta" class="input-buscar w-full">
           </div>
         </div>
       </div>
@@ -111,6 +112,25 @@
 
       </div>
 
+      <!-- Histórico / Respaldo mensual -->
+      <div class="card" style="padding:20px;margin-bottom:20px;border:1px solid var(--color-secundario)">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+          <div>
+            <h3>📦 Histórico y Respaldo</h3>
+            <p class="text-muted text-sm" style="margin-top:4px">
+              Genera un Excel integral y restaurable de TODO lo trabajado en un período (MBD, EECC, Contabilidad, Tributaria, RH, Planilla, Movilidad, Asientos, conciliaciones y notas/alertas). Descárgalo y guárdalo donde decidas — NEXUM no conserva una copia.
+            </p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+            <div class="campo" style="margin:0">
+              <label class="label-filtro">Período</label>
+              <input type="month" id="hist-periodo" class="input-buscar">
+            </div>
+            <button class="btn btn-primario btn-sm" onclick="_histGenerarClick()">📦 Generar histórico</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Sección de resúmenes visuales -->
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -141,6 +161,10 @@ let rep_empresas   = [];
   perfil_usuario = resultado.perfil;
   empresa_activa = resultado.empresa;
   setBreadcrumb('Reportes');
+  const mesActual = new Date().toISOString().slice(0,7);
+  document.getElementById('rep-desde').value    = mesActual;
+  document.getElementById('rep-hasta').value    = mesActual;
+  document.getElementById('hist-periodo').value = mesActual;
   await cargarEmpresasReporte();
 })();
 
@@ -354,6 +378,14 @@ async function exportarReporteIGV() {
 
   _descargarExcel([{ nombre: 'ResumenIGV', datos: rows }], `resumen_igv_${empNom}_${desde}_${hasta}.xlsx`);
   mostrarToast('Resumen IGV exportado', 'exito');
+}
+
+function _histGenerarClick() {
+  const empId    = document.getElementById('rep-empresa')?.value || empresa_activa.id;
+  const empNom   = rep_empresas.find(e => e.id === empId)?.nombre || empresa_activa.nombre;
+  const periodo  = document.getElementById('hist-periodo')?.value;
+  if (!periodo) { mostrarToast('Selecciona el período a respaldar', 'atencion'); return; }
+  generarHistorico(empId, periodo, empNom);
 }
 
 async function exportarReporteGlobal() {
