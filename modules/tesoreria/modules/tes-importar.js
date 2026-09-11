@@ -236,9 +236,38 @@ async function confirmarImportacion() {
   if (!validos.length) { mostrarToast('No hay registros válidos para importar', 'atencion'); return; }
 
   const btn = document.getElementById('btn-confirmar-imp');
-  btn.disabled = true; btn.textContent = 'Importando…';
+  btn.disabled = true; btn.textContent = 'Analizando…';
 
-  // Crear lote de importación
+  // Este es el "cierre del mes completo" — cada fila se compara contra lo
+  // que ya existe en tesoreria_mbd (venga de MBD o de una EECC anterior)
+  // usando el mismo motor que "Importar MBD": últimos 6 dígitos del N° de
+  // operación + fecha + monto + moneda + descripción. Así, aunque la banca
+  // repita movimientos de días anteriores en la descarga de hoy, NEXUM no
+  // los vuelve a crear. Ver js/duplicados.js — _dupClasificarLoteMovimientos.
+  const candidatos = validos.map(r => ({
+    fecha: r.fecha, descripcion: r.descripcion, moneda: r.moneda,
+    monto: r.importe, numero_operacion: r.numero_operacion, _orig: r,
+  }));
+  const clasificados = await _dupClasificarLoteMovimientos(candidatos);
+
+  const nuevos    = clasificados.filter(c => c.estado === 'nuevo');
+  const yaExisten = clasificados.filter(c => c.estado === 'ya_existe');
+  const posibles  = clasificados.filter(c => c.estado === 'posible');
+
+  let decisiones = [];
+  if (posibles.length) {
+    btn.disabled = false; btn.textContent = '✅ Confirmar e importar';
+    decisiones = await _dupRevisarPosibles(posibles.map(p => ({ fila: p.fila, match: p.match, razon: p.razon })));
+    if (decisiones === null) { mostrarToast('Importación cancelada.', 'atencion'); return; }
+    btn.disabled = true; btn.textContent = 'Importando…';
+  }
+
+  const paraInsertar   = [...nuevos];
+  posibles.forEach((p, i) => { if (decisiones[i] === 'nuevo') paraInsertar.push(p); });
+  const paraActualizar = [...yaExisten];
+  posibles.forEach((p, i) => { if (decisiones[i] === 'existente') paraActualizar.push(p); });
+
+  // Crear lote de importación (historial — igual que antes)
   const nombreArchivo = document.getElementById('imp-archivo')?.files[0]?.name || 'importacion.xlsx';
   const { data: lote, error: errLote } = await _supabase
     .from('lotes_importacion')
@@ -260,8 +289,35 @@ async function confirmarImportacion() {
     return;
   }
 
-  // Insertar movimientos en lotes de 50
-  const movs = validos.map(r => ({
+  // Insertar en tesoreria_mbd (el registro de negocio que usan Contabilidad/
+  // Conciliación/Dashboard) solo lo genuinamente nuevo, con el motor de
+  // coincidencia de arriba.
+  const movsMbd = paraInsertar.map(c => ({
+    empresa_id:                 empresa_activa.id,
+    nro_operacion_bancaria:     c.fila.numero_operacion || null,
+    fecha_deposito:             c.fila.fecha,
+    descripcion:                c.fila.descripcion || null,
+    moneda:                     c.fila.moneda || 'S/',
+    monto:                      c.fila.monto,
+    entrega_doc:                'PENDIENTE',
+    origen_importacion:         'EECC',
+    lote_importacion:           lote.id,
+  }));
+
+  let ok = 0; let err = 0;
+  for (let i = 0; i < movsMbd.length; i += 50) {
+    const chunk = movsMbd.slice(i, i + 50);
+    const { error } = await _supabase.from('tesoreria_mbd').insert(chunk);
+    if (error) err += chunk.length;
+    else ok += chunk.length;
+  }
+
+  // Además, se conserva el registro en "movimientos" tal como antes — esa
+  // tabla es la que usa "🏦 Cuentas bancarias" para reconciliar el saldo por
+  // cuenta (tesoreria_mbd no guarda a qué cuenta pertenece cada movimiento).
+  // Aquí SÍ se guardan todas las filas válidas del archivo (no solo las
+  // nuevas): es el libro bancario en crudo, no el registro de negocio.
+  const movsCuenta = validos.map(r => ({
     empresa_operadora_id: empresa_activa.id,
     cuenta_bancaria_id:   cuenta,
     fecha:                r.fecha,
@@ -274,13 +330,16 @@ async function confirmarImportacion() {
     lote_importacion:     lote.id,
     usuario_id:           perfil_usuario?.id || null,
   }));
+  for (let i = 0; i < movsCuenta.length; i += 50) {
+    await _supabase.from('movimientos').insert(movsCuenta.slice(i, i + 50));
+  }
 
-  let ok = 0; let err = 0;
-  for (let i = 0; i < movs.length; i += 50) {
-    const chunk = movs.slice(i, i + 50);
-    const { error } = await _supabase.from('movimientos').insert(chunk);
-    if (error) err += chunk.length;
-    else ok += chunk.length;
+  // Lo que ya existía: conservar el N° de operación de EECC como "alt" si el
+  // registro (creado por MBD) todavía no tenía uno guardado.
+  for (const c of paraActualizar) {
+    if (!c.match.nro_operacion_alt && c.fila.numero_operacion && c.fila.numero_operacion !== c.match.nro_operacion_bancaria) {
+      await _supabase.from('tesoreria_mbd').update({ nro_operacion_alt: c.fila.numero_operacion }).eq('id', c.match.id);
+    }
   }
 
   // Actualizar estado del lote
@@ -291,7 +350,11 @@ async function confirmarImportacion() {
   }).eq('id', lote.id);
 
   btn.disabled = false; btn.textContent = '✅ Confirmar e importar';
-  mostrarToast(`Importación completada: ${ok} registros. ${err ? err + ' errores.' : ''}`, 'exito');
+  const partes = [];
+  if (ok) partes.push(`${ok} nuevo(s) importado(s)`);
+  if (paraActualizar.length) partes.push(`${paraActualizar.length} ya existían (omitidos)`);
+  if (err) partes.push(`${err} error(es)`);
+  mostrarToast(partes.length ? partes.join(' · ') : 'Nada nuevo para importar — todo ya estaba registrado.', err ? 'atencion' : 'exito');
   cancelarPreview();
   await cargarHistorialImportaciones();
 }
@@ -355,6 +418,12 @@ async function eliminarLoteEECC(loteId, cantMovimientos) {
     const { error: errMov } = await _supabase
       .from('movimientos').delete().eq('lote_importacion', loteId);
     if (errMov) { mostrarToast('Error al eliminar movimientos: ' + errMov.message, 'error'); return; }
+
+    // También los que este mismo lote haya creado en tesoreria_mbd (el
+    // registro de negocio) — si no, quedarían huérfanos ahí.
+    const { error: errMbd } = await _supabase
+      .from('tesoreria_mbd').delete().eq('lote_importacion', loteId);
+    if (errMbd) { mostrarToast('Error al eliminar movimientos (MBD): ' + errMbd.message, 'error'); return; }
   }
 
   const { error: errLote } = await _supabase

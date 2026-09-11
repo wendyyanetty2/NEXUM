@@ -274,3 +274,165 @@ function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir, criterioTxt) {
       </div>
     </div>`;
 }
+
+/* ============================================================
+   Motor de coincidencia MBD ↔ EECC (punto 6, acordado con Wendy)
+
+   Al importar por "Importar MBD" (últimos 20 movimientos) o por
+   "Importar EECC" (cierre del mes completo), ambos deben terminar
+   en el mismo registro de tesoreria_mbd sin duplicarse — aunque el
+   N° de operación venga con los 2 primeros dígitos distintos entre
+   fuentes (ej. 04597853 en MBD vs 00597853 en EECC, mismo movimiento
+   real). No reemplaza a _dupRazonMovimiento (que es para "🔍 Buscar
+   duplicados" dentro de Movimientos ya cargados) — este es el
+   criterio para decidir, AL MOMENTO DE IMPORTAR, si una fila del
+   Excel ya existe, es nueva, o es dudosa y hay que revisarla a mano.
+   ============================================================ */
+
+// Últimos 6 dígitos del N° de operación, o null si es un placeholder
+// (vacío o solo ceros) que no sirve como clave de coincidencia.
+function _dupUltimos6(numOp) {
+  const s = (numOp || '').toString().trim();
+  if (!s || /^0+$/.test(s)) return null;
+  return s.slice(-6);
+}
+
+// Clasifica una fila candidata (de un Excel recién leído) contra los
+// movimientos ya existentes en tesoreria_mbd para esa empresa.
+// candidato: { fecha, descripcion, moneda, monto, numero_operacion }
+// existentes: filas de tesoreria_mbd (fecha_deposito, descripcion, moneda, monto, nro_operacion_bancaria, nro_operacion_alt, ...)
+// Devuelve { estado: 'ya_existe'|'posible'|'nuevo', match: fila existente o null, razon }
+function _dupClasificarMovimiento(candidato, existentes, conceptosRecurrentes) {
+  const clave6Cand = _dupUltimos6(candidato.numero_operacion);
+  const fechaCand  = (candidato.fecha || '').slice(0, 10);
+  const montoCand  = Math.abs(Number(candidato.monto) || 0);
+  const monedaCand = (candidato.moneda || 'PEN').toUpperCase().replace('S/.', 'PEN').replace('S/', 'PEN');
+  const descCand   = (candidato.descripcion || '').trim().toLowerCase();
+
+  let mejorPosible = null;
+
+  for (const ex of (existentes || [])) {
+    const clave6Ex = _dupUltimos6(ex.nro_operacion_bancaria) || _dupUltimos6(ex.nro_operacion_alt);
+    const fechaEx  = (ex.fecha_deposito || '').slice(0, 10);
+    const montoEx  = Math.abs(Number(ex.monto) || 0);
+    const monedaEx = (ex.moneda || 'PEN').toUpperCase().replace('S/.', 'PEN').replace('S/', 'PEN');
+    const descEx   = (ex.descripcion || '').trim().toLowerCase();
+
+    const montoOk  = Math.abs(montoCand - montoEx) < 0.01;
+    const monedaOk = monedaCand === monedaEx;
+    const fechaOk  = fechaCand === fechaEx;
+    const descOk   = !!descCand && descCand === descEx;
+
+    if (clave6Cand && clave6Ex && clave6Cand === clave6Ex) {
+      if (montoOk && monedaOk && fechaOk && descOk) {
+        return { estado: 'ya_existe', match: ex, razon: 'Mismo N° de operación (últimos 6 dígitos) + fecha + monto + descripción' };
+      }
+      // El N° de operación coincide pero algo más no cuadra — no se descarta
+      // sola, pero tampoco se da por buena automáticamente: a revisar.
+      mejorPosible = { estado: 'posible', match: ex, razon: 'N° de operación coincide, pero fecha/monto/descripción no calzan del todo' };
+      continue;
+    }
+
+    // Sin N° de operación confiable en alguno de los dos lados (ej. "00000000"
+    // de ITF/comisiones): mismo criterio que ya usa el sistema para esos casos.
+    if (montoOk && monedaOk && descOk) {
+      if (conceptosRecurrentes?.has(descCand) && fechaOk) {
+        return { estado: 'ya_existe', match: ex, razon: 'Concepto recurrente (catálogo) + misma fecha' };
+      }
+      if (fechaOk) {
+        return { estado: 'ya_existe', match: ex, razon: 'Monto + descripción + fecha exactos' };
+      }
+      if (!mejorPosible) mejorPosible = { estado: 'posible', match: ex, razon: 'Monto y descripción coinciden, pero la fecha no' };
+    }
+  }
+
+  return mejorPosible || { estado: 'nuevo', match: null, razon: '' };
+}
+
+// Clasifica un lote completo de filas leídas de un Excel (MBD o EECC) contra
+// lo ya existente en tesoreria_mbd para la empresa activa. Trae "existentes"
+// una sola vez (±2 meses alrededor de las fechas del lote, no toda la
+// historia) para no sobrecargar la consulta en empresas con mucho volumen.
+async function _dupClasificarLoteMovimientos(filas) {
+  const conceptosRecurrentes = await _dupCargarConceptosRecurrentes();
+
+  const fechas = filas.map(f => f.fecha).filter(Boolean).sort();
+  let desde = fechas[0], hasta = fechas[fechas.length - 1];
+  if (desde) { const d = new Date(desde + 'T00:00:00'); d.setMonth(d.getMonth() - 2); desde = d.toISOString().slice(0,10); }
+  if (hasta) { const d = new Date(hasta + 'T00:00:00'); d.setMonth(d.getMonth() + 2); hasta = d.toISOString().slice(0,10); }
+
+  let q = _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empresa_activa.id);
+  if (desde) q = q.gte('fecha_deposito', desde);
+  if (hasta) q = q.lte('fecha_deposito', hasta);
+  const { data: existentes } = await q;
+
+  // Los "ya_existe"/"posible" detectados DENTRO del propio lote (dos filas del
+  // mismo Excel que resultan ser el mismo movimiento) también cuentan como
+  // "existentes" para las filas siguientes, para no crear dos nuevos iguales.
+  const acumulados = [...(existentes || [])];
+  const resultados = filas.map(fila => {
+    const r = _dupClasificarMovimiento(fila, acumulados, conceptosRecurrentes);
+    if (r.estado === 'nuevo') acumulados.push({ ...fila, fecha_deposito: fila.fecha, nro_operacion_bancaria: fila.numero_operacion });
+    return { fila, ...r };
+  });
+  return resultados;
+}
+
+// ── Modal de revisión para los casos "posible" (dudosos) ──────────
+// Recibe la lista de resultados con estado==='posible'. Devuelve una
+// Promise que resuelve a un array del mismo largo con 'nuevo' o
+// 'existente' según lo que decida la persona, o null si cancela todo
+// (en cuyo caso ninguna fila dudosa se importa, por seguridad).
+function _dupRevisarPosibles(posibles) {
+  return new Promise(resolve => {
+    const mc = document.getElementById('modal-container');
+    if (!mc) { resolve(posibles.map(() => 'existente')); return; }
+
+    mc.innerHTML = `
+      <div class="modal-overlay" style="display:flex">
+        <div class="modal" style="max-width:720px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+          <div class="modal-header">
+            <h3>⚠️ ${posibles.length} movimiento(s) necesitan revisión</h3>
+          </div>
+          <div class="modal-body" style="flex:1;overflow-y:auto">
+            <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
+              No se pudo determinar con seguridad si estos ya existen o son nuevos. Revisa cada uno y decide — por defecto queda marcado como "Ya existe" (más seguro, no se importa).
+            </p>
+            ${posibles.map((p, i) => `
+              <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+                <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:8px">${escapar(p.razon)}</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
+                  <div>
+                    <div style="font-weight:700;margin-bottom:2px">Archivo que estás importando</div>
+                    <div>${escapar(p.fila.fecha||'')} · ${formatearMoneda(p.fila.monto)} · ${escapar(p.fila.descripcion||'')}</div>
+                    <div style="color:var(--color-texto-suave)">Op. ${escapar(p.fila.numero_operacion||'—')}</div>
+                  </div>
+                  <div>
+                    <div style="font-weight:700;margin-bottom:2px">Ya existente en NEXUM</div>
+                    <div>${escapar((p.match.fecha_deposito||'').slice(0,10))} · ${formatearMoneda(p.match.monto)} · ${escapar(p.match.descripcion||'')}</div>
+                    <div style="color:var(--color-texto-suave)">Op. ${escapar(p.match.nro_operacion_bancaria||p.match.nro_operacion_alt||'—')}</div>
+                  </div>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
+                  <input type="radio" name="dup-rev-${i}" value="existente" checked> Ya existe — no importar
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+                  <input type="radio" name="dup-rev-${i}" value="nuevo"> Es un movimiento nuevo — importar
+                </label>
+              </div>`).join('')}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secundario" id="dup-rev-cancelar">Cancelar importación</button>
+            <button class="btn btn-primario" id="dup-rev-confirmar">Confirmar y continuar</button>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById('dup-rev-cancelar').onclick = () => { mc.innerHTML = ''; resolve(null); };
+    document.getElementById('dup-rev-confirmar').onclick = () => {
+      const decisiones = posibles.map((_, i) => document.querySelector(`input[name="dup-rev-${i}"]:checked`)?.value || 'existente');
+      mc.innerHTML = '';
+      resolve(decisiones);
+    };
+  });
+}

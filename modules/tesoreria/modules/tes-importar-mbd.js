@@ -937,6 +937,53 @@ function procesarImportMBD(input) {
       const cabeceras = (rows[0] || []).map(h => (h || '').toString().toLowerCase());
       const formatoNuevo = cabeceras.some(h => h.includes('medio'));
 
+      // Detectar el Excel SIMPLE que se descarga directo del banco (Fecha,
+      // Descripcion, Moneda, Monto, Numero de Operacion) — el mismo que
+      // reconoce "Importar EECC". Si es este formato, se rellenan solo los
+      // campos básicos y los de negocio (Proveedor/Proyecto/Concepto...)
+      // quedan vacíos para completarlos después en "📊 Movimientos".
+      const esFormatoSimple = cabeceras.some(h => h.includes('monto')) &&
+        cabeceras.some(h => h.includes('descripcion')) &&
+        cabeceras.some(h => h.includes('operacion')) &&
+        !cabeceras.some(h => h.includes('proveedor') || h.includes('proyecto') || h.includes('concepto'));
+
+      if (esFormatoSimple) {
+        const idx = campo => cabeceras.findIndex(h => h.includes(campo));
+        const iFecha = idx('fecha'), iDesc = idx('descripcion'), iMon = idx('moneda'),
+              iMonto = idx('monto'), iOp = idx('operacion');
+
+        _mbdDatosPreview = rows.slice(inicio)
+          .filter(r => r && r.some(c => c !== null && c !== undefined && c !== ''))
+          .map((r, i) => {
+            const fecha = toDate(r[iFecha]);
+            const monto = toNum(r[iMonto]);
+            const ok    = !!fecha && monto !== null;
+            const nroOpRaw = r[iOp];
+            const nroOp = (nroOpRaw !== null && nroOpRaw !== undefined && nroOpRaw !== '')
+              ? String(typeof nroOpRaw === 'number' ? Math.round(nroOpRaw) : nroOpRaw).padStart(8, '0')
+              : null;
+            return {
+              _fila: i + inicio + 1, _ok: ok, _error: !fecha ? 'Sin fecha válida' : monto === null ? 'Sin monto válido' : null,
+              empresa_id: empresa_activa.id,
+              nro_operacion_bancaria: nroOp,
+              fecha_deposito: fecha,
+              descripcion: toStr(r[iDesc]),
+              moneda: toStr(r[iMon]) || 'S/',
+              monto,
+              proveedor_empresa_personal: null, ruc_dni: null, cotizacion: null, oc: null,
+              proyecto: null, concepto: null, empresa: null,
+              entrega_doc: 'PENDIENTE', nro_factura_doc: null, tipo_doc: null, autorizacion: null,
+              observaciones: null, detalles_compra_servicio: null, observaciones_2: null,
+              origen_importacion: 'MBD',
+            };
+          });
+
+        const validosSimple = _mbdDatosPreview.filter(r => r._ok).length;
+        mostrarToast(`Formato de banco detectado (${validosSimple} fila(s) válidas). Los campos de Proveedor/Proyecto/Concepto quedarán vacíos para completarlos en Movimientos.`, 'info');
+        _mbdMostrarPreview();
+        return;
+      }
+
       const toDate = v => {
         if (v === null || v === undefined || v === '') return null;
         if (typeof v === 'number') {
@@ -1009,55 +1056,11 @@ function procesarImportMBD(input) {
             observaciones,
             detalles_compra_servicio:   detalles,
             observaciones_2:            obs2,
+            origen_importacion:         'MBD',
           };
         });
 
-      const validos = _mbdDatosPreview.filter(r => r._ok).length;
-      const errores = _mbdDatosPreview.length - validos;
-
-      // Mostrar vista previa — buscar los elementos del DOM
-      const prevWrap = document.getElementById('mbd-preview-wrap');
-      const prevCnt  = document.getElementById('mbd-prev-count');
-      const prevRes  = document.getElementById('mbd-prev-resumen');
-      const prevBody = document.getElementById('mbd-prev-tbody');
-
-      if (!prevWrap || !prevBody) {
-        // Fallback: si no hay panel de preview visible, confirmar directo si hay válidos
-        if (!validos) { mostrarToast('No hay filas con fecha y monto válidos.', 'atencion'); return; }
-        mostrarToast(`📋 ${validos} filas listas. Haz clic en "Confirmar e importar".`, 'exito');
-        return;
-      }
-
-      if (prevCnt) prevCnt.textContent = _mbdDatosPreview.length;
-      if (prevRes) prevRes.textContent = `✅ ${validos} válidos   ⚠️ ${errores} con error (se omitirán)`;
-
-      prevBody.innerHTML = _mbdDatosPreview.slice(0, 25).map(r => `
-        <tr ${!r._ok ? 'style="background:rgba(197,48,48,.05)"' : ''}>
-          <td style="font-size:11px;color:var(--color-texto-suave)">${r._fila}</td>
-          <td style="white-space:nowrap">${r.fecha_deposito || `<span style="color:#C53030">${r._error}</span>`}</td>
-          <td style="text-align:right;font-weight:600">${r.monto !== null ? formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN') : '<span style="color:#C53030">—</span>'}</td>
-          <td>${escapar(r.moneda || 'S/')}</td>
-          <td style="font-size:12px">${escapar((r.proveedor_empresa_personal || '—').slice(0, 25))}</td>
-          <td style="font-size:12px">${escapar(r.concepto || '—')}</td>
-          <td style="font-size:12px">${escapar(r.tipo_doc || '—')}</td>
-          <td style="font-size:12px">${escapar(r.entrega_doc || '—')}</td>
-          <td>${r._ok
-            ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">✓ OK</span>'
-            : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px">${escapar(r._error || 'Error')}</span>`
-          }</td>
-        </tr>`).join('');
-
-      if (_mbdDatosPreview.length > 25) {
-        prevBody.innerHTML += `<tr><td colspan="9" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_mbdDatosPreview.length - 25} filas más</td></tr>`;
-      }
-
-      if (!validos) {
-        mostrarToast('No se encontraron filas con fecha y monto válidos. Revisa el formato.', 'atencion');
-        return;
-      }
-
-      prevWrap.style.display = 'block';
-      prevWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      _mbdMostrarPreview();
 
     } catch (err) {
       console.error('Error procesarImportMBD:', err);
@@ -1065,6 +1068,54 @@ function procesarImportMBD(input) {
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ── Vista previa compartida por ambos formatos (simple de banco y rico 20 columnas) ──
+function _mbdMostrarPreview() {
+  const validos = _mbdDatosPreview.filter(r => r._ok).length;
+  const errores = _mbdDatosPreview.length - validos;
+
+  const prevWrap = document.getElementById('mbd-preview-wrap');
+  const prevCnt  = document.getElementById('mbd-prev-count');
+  const prevRes  = document.getElementById('mbd-prev-resumen');
+  const prevBody = document.getElementById('mbd-prev-tbody');
+
+  if (!prevWrap || !prevBody) {
+    if (!validos) { mostrarToast('No hay filas con fecha y monto válidos.', 'atencion'); return; }
+    mostrarToast(`📋 ${validos} filas listas. Haz clic en "Confirmar e importar".`, 'exito');
+    return;
+  }
+
+  if (prevCnt) prevCnt.textContent = _mbdDatosPreview.length;
+  if (prevRes) prevRes.textContent = `✅ ${validos} válidos   ⚠️ ${errores} con error (se omitirán)`;
+
+  prevBody.innerHTML = _mbdDatosPreview.slice(0, 25).map(r => `
+    <tr ${!r._ok ? 'style="background:rgba(197,48,48,.05)"' : ''}>
+      <td style="font-size:11px;color:var(--color-texto-suave)">${r._fila}</td>
+      <td style="white-space:nowrap">${r.fecha_deposito || `<span style="color:#C53030">${r._error}</span>`}</td>
+      <td style="text-align:right;font-weight:600">${r.monto !== null ? formatearMoneda(r.monto, r.moneda==='USD'?'USD':'PEN') : '<span style="color:#C53030">—</span>'}</td>
+      <td>${escapar(r.moneda || 'S/')}</td>
+      <td style="font-size:12px">${escapar((r.proveedor_empresa_personal || '—').slice(0, 25))}</td>
+      <td style="font-size:12px">${escapar(r.concepto || '—')}</td>
+      <td style="font-size:12px">${escapar(r.tipo_doc || '—')}</td>
+      <td style="font-size:12px">${escapar(r.entrega_doc || '—')}</td>
+      <td>${r._ok
+        ? '<span style="font-size:10px;background:#2F855A;color:#fff;padding:2px 6px;border-radius:8px">✓ OK</span>'
+        : `<span style="font-size:10px;background:#C53030;color:#fff;padding:2px 6px;border-radius:8px">${escapar(r._error || 'Error')}</span>`
+      }</td>
+    </tr>`).join('');
+
+  if (_mbdDatosPreview.length > 25) {
+    prevBody.innerHTML += `<tr><td colspan="9" style="text-align:center;color:var(--color-texto-suave);padding:8px;font-size:12px">… y ${_mbdDatosPreview.length - 25} filas más</td></tr>`;
+  }
+
+  if (!validos) {
+    mostrarToast('No se encontraron filas con fecha y monto válidos. Revisa el formato.', 'atencion');
+    return;
+  }
+
+  prevWrap.style.display = 'block';
+  prevWrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function cancelarPreviewMBD() {
@@ -1077,61 +1128,63 @@ async function confirmarImportMBD() {
   const validos = _mbdDatosPreview.filter(r => r._ok);
   if (!validos.length) { mostrarToast('No hay registros válidos para importar.', 'atencion'); return; }
 
-  // Alerta de duplicados (3.1) — mismo monto + misma descripción, tanto contra
-  // lo ya existente en BD como entre filas del propio archivo que se va a importar.
-  if (typeof _dupMismoMovimiento === 'function') {
-    const [{ data: existentes }, conceptosRecurrentes] = await Promise.all([
-      _supabase.from('tesoreria_mbd').select('monto,descripcion,nro_operacion_bancaria,nro_factura_doc,fecha_deposito,entrega_doc').eq('empresa_id', empresa_activa.id),
-      _dupCargarConceptosRecurrentes(),
-    ]);
-    let posiblesDup = 0;
-    const vistosEnLote = [];
-    for (const fila of validos) {
-      const chocaConExistente = (existentes || []).some(e => _dupMismoMovimiento(e, fila, conceptosRecurrentes));
-      const chocaConLote = vistosEnLote.some(v => _dupMismoMovimiento(v, fila, conceptosRecurrentes));
-      if (chocaConExistente || chocaConLote) posiblesDup++;
-      vistosEnLote.push(fila);
-    }
-    if (posiblesDup > 0) {
-      const ok = await confirmar(
-        `⚠️ ${posiblesDup} de ${validos.length} movimiento(s) de este archivo parecen estar duplicados (mismo monto y descripción, y mismo comprobante vinculado o misma fecha si es un cargo recurrente, que uno ya existente o repetido dentro del mismo archivo).\n\n¿Está segura de importar todo de todas formas?`,
-        { btnOk: 'Sí, importar de todas formas', btnColor: '#C53030' }
-      );
-      if (!ok) return;
-    }
+  const btn = document.getElementById('btn-confirmar-mbd');
+  if (btn) { btn.disabled = true; btn.textContent = 'Analizando…'; }
+
+  // Motor de coincidencia MBD ↔ EECC (últimos 6 dígitos del N° de operación
+  // + fecha + monto + moneda + descripción) — ver js/duplicados.js.
+  const candidatos = validos.map(r => ({
+    fecha: r.fecha_deposito, descripcion: r.descripcion, moneda: r.moneda,
+    monto: r.monto, numero_operacion: r.nro_operacion_bancaria, _orig: r,
+  }));
+  const clasificados = await _dupClasificarLoteMovimientos(candidatos);
+
+  const nuevos     = clasificados.filter(c => c.estado === 'nuevo');
+  const yaExisten  = clasificados.filter(c => c.estado === 'ya_existe');
+  const posibles   = clasificados.filter(c => c.estado === 'posible');
+
+  let decisiones = [];
+  if (posibles.length) {
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar e importar'; }
+    decisiones = await _dupRevisarPosibles(posibles.map(p => ({ fila: p.fila, match: p.match, razon: p.razon })));
+    if (decisiones === null) { mostrarToast('Importación cancelada.', 'atencion'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
   }
 
-  const btn = document.getElementById('btn-confirmar-mbd');
-  if (btn) { btn.disabled = true; btn.textContent = 'Importando…'; }
+  const paraInsertar = [...nuevos.map(n => n.fila._orig)];
+  posibles.forEach((p, i) => { if (decisiones[i] === 'nuevo') paraInsertar.push(p.fila._orig); });
 
-  // Eliminar campos internos (_fila, _ok, _error) — el objeto solo tiene columnas válidas de DB
-  const registros = validos.map(({ _fila, _ok, _error, ...r }) => r);
+  const paraActualizar = [...yaExisten];
+  posibles.forEach((p, i) => { if (decisiones[i] === 'existente') paraActualizar.push(p); });
 
   const CHUNK = 50;
   let ok = 0, errCount = 0, primerError = null;
-
-  for (let i = 0; i < registros.length; i += CHUNK) {
-    const lote = registros.slice(i, i + CHUNK);
+  for (let i = 0; i < paraInsertar.length; i += CHUNK) {
+    const lote = paraInsertar.slice(i, i + CHUNK).map(({ _fila, _ok, _error, ...r }) => r);
     const { error } = await _supabase.from('tesoreria_mbd').insert(lote);
-    if (error) {
-      errCount += lote.length;
-      if (!primerError) primerError = error.message;
-      console.error('Error importando MBD lote', i, error);
-    } else {
-      ok += lote.length;
+    if (error) { errCount += lote.length; if (!primerError) primerError = error.message; console.error('Error importando MBD lote', i, error); }
+    else ok += lote.length;
+  }
+
+  // Los que ya existían: guardar el N° de operación de esta fuente como "alt"
+  // si el registro existente todavía no tenía uno (para no perder ninguno de
+  // los dos números originales).
+  let actualizados = 0;
+  for (const item of paraActualizar) {
+    if (!item.match.nro_operacion_alt && item.fila.numero_operacion && item.fila.numero_operacion !== item.match.nro_operacion_bancaria) {
+      const { error } = await _supabase.from('tesoreria_mbd').update({ nro_operacion_alt: item.fila.numero_operacion }).eq('id', item.match.id);
+      if (!error) actualizados++;
     }
   }
 
   if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar e importar'; }
   cancelarPreviewMBD();
 
-  if (ok > 0 && errCount === 0) {
-    mostrarToast(`✓ ${ok} movimiento(s) importado(s) correctamente.`, 'exito');
-  } else if (ok > 0) {
-    mostrarToast(`Importado parcial: ${ok} OK, ${errCount} errores. Error: ${primerError}`, 'atencion');
-  } else {
-    mostrarToast(`Error al importar: ${primerError || 'Error desconocido'}`, 'error');
-  }
+  const partes = [];
+  if (ok) partes.push(`${ok} nuevo(s) importado(s)`);
+  if (paraActualizar.length) partes.push(`${paraActualizar.length} ya existían (omitidos)`);
+  if (errCount) partes.push(`${errCount} error(es)`);
+  mostrarToast(partes.length ? partes.join(' · ') : 'Nada nuevo para importar.', errCount ? 'atencion' : 'exito');
   cargarMBD();
 }
 
