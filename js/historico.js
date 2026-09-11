@@ -8,8 +8,10 @@
    tiene sentido mantener tres exportadores que hacen básicamente
    lo mismo — este es el único, y siempre trae TODO (MBD, EECC,
    Contabilidad, Tributaria, RH recibidos/emitidos, Planilla,
-   Movilidad, Asientos, conciliaciones, notas/alertas) con hoja
-   METADATOS para poder restaurarlo más adelante.
+   Movilidad, Asientos, conciliaciones, notas/alertas, y los
+   catálogos vigentes de Proyectos/Conceptos/Clientes-Proveedores/
+   Autorizaciones/Medios de Pago/Trabajadores) con hoja METADATOS
+   para poder restaurarlo más adelante.
 
    Los estados de Compras/Ventas/RH (APLICADO/PARCIAL/PENDIENTE/
    OBSERVADO/POSIBLE) se calculan con las MISMAS funciones que usan
@@ -334,6 +336,66 @@ const _HIST_CABS = {
   NOTAS_Y_ALERTAS: CAB_NOTAS_ALERTAS,
 };
 
+// ── Catálogos (módulo Catálogos): no son datos de un período — son la
+//    configuración vigente de la empresa (proyectos, conceptos, clientes/
+//    proveedores, autorizaciones, medios de pago, trabajadores). El Word
+//    los pide explícitamente ("proyectos; conceptos; ... cualquier otro
+//    dato necesario para conservar el trabajo realizado"), así que se
+//    incluyen como snapshot completo — se traen UNA sola vez por
+//    generación (no por período) y no se limpian nunca desde Reportes. ──
+const CAB_PROYECTOS = ['Nombre','Cliente','Descripción','Activo','Fecha Creación'];
+const CAB_CONCEPTOS = ['Nombre','Tipo','Activo','Fecha Creación'];
+const CAB_CLIENTES  = ['Nombre','RUC/DNI','Tipo','Dirección','Teléfono','Email','Activo','Fecha Creación'];
+const CAB_AUTORIZACIONES = ['Nombre','Cargo','Activo','Fecha Creación'];
+const CAB_MEDIOS_PAGO = ['Nombre','Banco','N° Cuenta','CCI','Tipo','Moneda','Activo','Fecha Creación'];
+const CAB_TRABAJADORES = ['DNI','Nombre','Apellido Paterno','Apellido Materno','Cargo','Área','Fecha Ingreso',
+  'Sueldo Base','Tipo Contrato','Banco','N° Cuenta','CCI','AFP/ONP','CUSPP','Activo'];
+const CAB_CONCEPTOS_RECURRENTES = ['Nombre','Activo','Fecha Creación'];
+
+async function _histCatalogos(empresaId) {
+  const [resProy, resConc, resCli, resAut, resMp, resTrab, resConcRec] = await Promise.all([
+    _supabase.from('proyectos').select('*, empresas_clientes(nombre)').eq('empresa_operadora_id', empresaId).order('nombre'),
+    _supabase.from('conceptos').select('*').eq('empresa_operadora_id', empresaId).order('nombre'),
+    _supabase.from('empresas_clientes').select('*').eq('empresa_operadora_id', empresaId).order('nombre'),
+    _supabase.from('autorizaciones').select('*').eq('empresa_operadora_id', empresaId).order('nombre'),
+    _supabase.from('medios_pago').select('*').eq('empresa_operadora_id', empresaId).order('nombre'),
+    _supabase.from('trabajadores').select('*').eq('empresa_operadora_id', empresaId).order('apellido_paterno'),
+    _supabase.from('conceptos_recurrentes_bancarios').select('*').eq('empresa_operadora_id', empresaId).order('nombre'),
+  ]);
+  return {
+    conteos: {
+      proyectos: (resProy.data||[]).length, conceptos: (resConc.data||[]).length,
+      empresas_clientes: (resCli.data||[]).length, autorizaciones: (resAut.data||[]).length,
+      medios_pago: (resMp.data||[]).length, trabajadores: (resTrab.data||[]).length,
+      conceptos_recurrentes_bancarios: (resConcRec.data||[]).length,
+    },
+    hojas: [
+      { nombre: 'PROYECTOS', datos: [CAB_PROYECTOS, ...(resProy.data||[]).map(p => [
+        p.nombre, p.empresas_clientes?.nombre||'', p.descripcion||'', p.activo?'Sí':'No', p.fecha_creacion,
+      ])], esAOA: true },
+      { nombre: 'CONCEPTOS', datos: [CAB_CONCEPTOS, ...(resConc.data||[]).map(c => [
+        c.nombre, c.tipo||'', c.activo?'Sí':'No', c.fecha_creacion,
+      ])], esAOA: true },
+      { nombre: 'CLIENTES_PROVEEDORES', datos: [CAB_CLIENTES, ...(resCli.data||[]).map(c => [
+        c.nombre, c.ruc_dni||'', c.tipo||'', c.direccion||'', c.telefono||'', c.email||'', c.activo?'Sí':'No', c.fecha_creacion,
+      ])], esAOA: true },
+      { nombre: 'AUTORIZACIONES', datos: [CAB_AUTORIZACIONES, ...(resAut.data||[]).map(a => [
+        a.nombre, a.cargo||'', a.activo?'Sí':'No', a.fecha_creacion,
+      ])], esAOA: true },
+      { nombre: 'MEDIOS_PAGO', datos: [CAB_MEDIOS_PAGO, ...(resMp.data||[]).map(m => [
+        m.nombre, m.banco_codigo||'', m.numero_cuenta||'', m.cci||'', m.tipo||'', m.moneda||'', m.activo?'Sí':'No', m.fecha_creacion,
+      ])], esAOA: true },
+      { nombre: 'TRABAJADORES', datos: [CAB_TRABAJADORES, ...(resTrab.data||[]).map(t => [
+        t.dni, t.nombre, t.apellido_paterno||'', t.apellido_materno||'', t.cargo||'', t.area||'', t.fecha_ingreso||'',
+        t.sueldo_base||0, t.tipo_contrato||'', t.banco_codigo||'', t.numero_cuenta||'', t.cci||'', t.afp||'', t.cuspp||'', t.activo?'Sí':'No',
+      ])], esAOA: true },
+      { nombre: 'CONCEPTOS_RECURRENTES_BCO', datos: [CAB_CONCEPTOS_RECURRENTES, ...(resConcRec.data||[]).map(c => [
+        c.nombre, c.activo?'Sí':'No', c.fecha_creacion,
+      ])], esAOA: true },
+    ],
+  };
+}
+
 async function generarHistorico(empresaId, desde, hasta, empNombre) {
   if (!empresaId || !desde || !hasta) { mostrarToast('Selecciona empresa y período (desde/hasta)', 'atencion'); return; }
   const periodos = _histListaPeriodos(desde, hasta);
@@ -342,6 +404,7 @@ async function generarHistorico(empresaId, desde, hasta, empNombre) {
 
   const resultados = [];
   for (const p of periodos) resultados.push(await _histDatosPeriodo(empresaId, p));
+  const catalogos = await _histCatalogos(empresaId);
 
   const sheetKeys = Object.keys(_HIST_CABS);
   const conteosTotal = {};
@@ -349,7 +412,9 @@ async function generarHistorico(empresaId, desde, hasta, empNombre) {
     const filas = resultados.flatMap(r => r.filas[key] || []);
     return { nombre: key, datos: [_HIST_CABS[key], ...filas], esAOA: true };
   });
+  hojas.push(...catalogos.hojas);
   resultados.forEach(r => Object.entries(r.conteos).forEach(([t,n]) => { conteosTotal[t] = (conteosTotal[t]||0) + n; }));
+  Object.entries(catalogos.conteos).forEach(([t,n]) => { conteosTotal[t] = n; });
   const totalRegistros = Object.values(conteosTotal).reduce((s,n)=>s+n, 0);
 
   if (totalRegistros === 0) {
