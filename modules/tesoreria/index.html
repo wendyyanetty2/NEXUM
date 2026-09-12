@@ -42,7 +42,6 @@
         <button class="tab-btn"        id="tab-movimientos"   onclick="activarTab('movimientos')">📊 Movimientos</button>
         <button class="tab-btn"        id="tab-importar"      onclick="activarTab('importar')">⬆️ Importar EECC</button>
         <button class="tab-btn"        id="tab-mbd"           onclick="activarTab('mbd')">📥 Importar MBD</button>
-        <button class="tab-btn"        id="tab-sunat"         onclick="activarTab('sunat')">📑 Importar SUNAT</button>
       </div>
 
       <div id="contenido-tab">
@@ -70,7 +69,6 @@
 <script src="../../modules/tesoreria/modules/tes-movimientos.js?v=8&t=20260909b"></script>
 <script src="../../modules/tesoreria/modules/tes-importar.js?v=4&t=20260911"></script>
 <script src="../../modules/tesoreria/modules/tes-importar-mbd.js?v=10&t=20260911"></script>
-<script src="../../modules/tesoreria/modules/tes-importar-sunat.js?v=3&t=20260909b"></script>
 
 <script>
 // fix-tes-cuentas-v1: eliminarCuenta con manejo de FK y opciones para el usuario
@@ -282,7 +280,6 @@ function activarTab(tab) {
     movimientos:  () => renderTabMovimientos(area),
     importar:     () => renderTabImportar(area),
     mbd:          () => renderTabImportarMBD(area),
-    sunat:        () => renderTabImportarSunat(area),
   };
   if (mapa[tab]) mapa[tab]();
 }
