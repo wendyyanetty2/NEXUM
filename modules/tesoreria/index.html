@@ -41,7 +41,6 @@
         <button class="tab-btn activo" id="tab-cuentas"       onclick="activarTab('cuentas')">🏦 Cuentas bancarias</button>
         <button class="tab-btn"        id="tab-movimientos"   onclick="activarTab('movimientos')">📊 Movimientos</button>
         <button class="tab-btn"        id="tab-importar"      onclick="activarTab('importar')">⬆️ Importar EECC</button>
-        <button class="tab-btn"        id="tab-mbd"           onclick="activarTab('mbd')">📥 Importar MBD</button>
       </div>
 
       <div id="contenido-tab">
@@ -279,7 +278,6 @@ function activarTab(tab) {
     cuentas:      () => renderTabCuentas(area),
     movimientos:  () => renderTabMovimientos(area),
     importar:     () => renderTabImportar(area),
-    mbd:          () => renderTabImportarMBD(area),
   };
   if (mapa[tab]) mapa[tab]();
 }
