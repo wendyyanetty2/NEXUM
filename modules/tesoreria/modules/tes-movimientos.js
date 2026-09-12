@@ -929,17 +929,18 @@ function _qkPeriodos(periodo) {
 async function _qkEjecutar(periodo) {
   const [y,m] = periodo.split('-');
   const inicio = `${y}-${m}-01`, fin = new Date(+y,+m,0).toISOString().slice(0,10), pDoc = _qkPeriodos(periodo);
+  const pDocCompacto = pDoc.map(p => p.replace('-', ''));
   const [rMov,rComp,rVent,rRh] = await Promise.all([
     _supabase.from('tesoreria_mbd').select('*').eq('empresa_id',empresa_activa.id).eq('entrega_doc','PENDIENTE').is('nro_factura_doc',null).is('tipo_doc',null).gte('fecha_deposito',inicio).lte('fecha_deposito',fin),
-    _supabase.from('registro_compras').select('*').eq('empresa_operadora_id',empresa_activa.id).in('periodo',pDoc),
-    _supabase.from('registro_ventas').select('*').eq('empresa_operadora_id',empresa_activa.id).in('periodo',pDoc),
+    _supabase.from('contabilidad_compras').select('*').eq('empresa_id',empresa_activa.id).in('periodo',pDocCompacto),
+    _supabase.from('contabilidad_ventas').select('*').eq('empresa_id',empresa_activa.id).in('periodo',pDocCompacto),
     _supabase.from('rh_registros').select('*,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id',empresa_activa.id).in('periodo',pDoc),
   ]);
   // CORRECCIÓN 10: excluir movimientos ya conciliados en sesiones anteriores
   const movs = (rMov.data||[]).filter(m => m.estado_conciliacion !== 'conciliado');
   const docs = [
-    ...(rComp.data||[]).map(d=>({...d,_tipo:'COMPRA',_ndoc:[d.serie,d.numero].filter(Boolean).join('-')||'—',_proveedor:d.nombre_proveedor||'',_ruc:d.ruc_proveedor||'',importe:d.monto_total||0})),
-    ...(rVent.data||[]).map(d=>({...d,_tipo:'VENTA', _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||'—',_proveedor:d.nombre_cliente||'',  _ruc:d.ruc_cliente||'',  importe:d.monto_total||0})),
+    ...(rComp.data||[]).map(d=>({...d,_tipo:'COMPRA',_ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'—',_proveedor:d.proveedor||'',_ruc:d.nro_doc_identidad||'',importe:d.total_cp||0})),
+    ...(rVent.data||[]).map(d=>({...d,_tipo:'VENTA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'—',_proveedor:d.cliente||'',  _ruc:d.nro_doc_identidad||'',  importe:d.total_cp||0})),
     ...(rRh.data  ||[]).map(d=>({...d,_tipo:'RH',    _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||'—',_proveedor:d.prestadores_servicios?.nombre||d.nombre||'',_ruc:d.prestadores_servicios?.dni||d.ruc||'',importe:d.monto_neto||d.monto||0})),
   ];
   const exactos=[],posibles=[],sinMatch=[];
@@ -1111,10 +1112,10 @@ async function _mbdCargarCatalogos() {
       .not('proveedor_empresa_personal', 'is', null)
       .order('fecha_deposito', { ascending: false })
       .limit(5000),
-    _supabase.from('registro_compras').select('nombre_proveedor,ruc_proveedor')
-      .eq('empresa_operadora_id', eid).not('nombre_proveedor', 'is', null).limit(5000),
-    _supabase.from('registro_ventas').select('nombre_cliente,ruc_cliente')
-      .eq('empresa_operadora_id', eid).not('nombre_cliente', 'is', null).limit(5000),
+    _supabase.from('contabilidad_compras').select('proveedor,nro_doc_identidad')
+      .eq('empresa_id', eid).not('proveedor', 'is', null).limit(5000),
+    _supabase.from('contabilidad_ventas').select('cliente,nro_doc_identidad')
+      .eq('empresa_id', eid).not('cliente', 'is', null).limit(5000),
     _supabase.from('rh_registros').select('prestadores_servicios(nombre,dni)')
       .eq('empresa_operadora_id', eid).limit(5000),
   ]);
@@ -1138,8 +1139,8 @@ async function _mbdCargarCatalogos() {
   // Compras, Ventas y RH (en ese orden de prioridad para el RUC/DNI mostrado)
   const candidatosProv = [
     ...(rmov.data  || []).map(r => ({ nombre: r.proveedor_empresa_personal, doc: r.ruc_dni })),
-    ...(rComp.data || []).map(r => ({ nombre: r.nombre_proveedor,           doc: r.ruc_proveedor })),
-    ...(rVent.data || []).map(r => ({ nombre: r.nombre_cliente,             doc: r.ruc_cliente })),
+    ...(rComp.data || []).map(r => ({ nombre: r.proveedor,                  doc: r.nro_doc_identidad })),
+    ...(rVent.data || []).map(r => ({ nombre: r.cliente,                   doc: r.nro_doc_identidad })),
     ...(rRh.data   || []).map(r => ({ nombre: r.prestadores_servicios?.nombre, doc: r.prestadores_servicios?.dni })),
   ];
   const seenProv = new Set();

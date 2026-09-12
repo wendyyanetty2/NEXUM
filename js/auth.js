@@ -102,9 +102,6 @@ const NEXUM_PERMISOS_MODULOS = {
   catalogos:          { nombre: 'Catálogos',          icono: '🗂️' },
   tesoreria:          { nombre: 'Tesorería',          icono: '🏦' },
   conciliacion:       { nombre: 'Conciliación',       icono: '🔗' },
-  planilla:           { nombre: 'Planilla',           icono: '👥' },
-  'planilla-movilidad': { nombre: 'Planilla Movilidad', icono: '🚗' },
-  tributaria:         { nombre: 'Tributaria',         icono: '📋' },
   reportes:           { nombre: 'Reportes',           icono: '📊' },
   contabilidad:       { nombre: 'Contabilidad',       icono: '📒' },
 };

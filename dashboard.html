@@ -11,7 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/utils.js?v=2&t=20260910a"></script>
-  <script src="js/auth.js"></script>
+  <script src="js/auth.js?v=2&t=20260912"></script>
   <script src="js/tema.js"></script>
   <script src="js/notas.js?v=2&t=20260506"></script>
   <script src="js/alertas.js"></script>
@@ -59,14 +59,6 @@
 
       <a class="nav-item" id="nav-tesoreria" onclick="navegarA('tesoreria')">
         <span class="icono">🏦</span> Tesorería
-      </a>
-
-      <a class="nav-item" id="nav-planilla" onclick="navegarA('planilla')">
-        <span class="icono">👥</span> Planilla
-      </a>
-
-      <a class="nav-item" id="nav-tributaria" onclick="navegarA('tributaria')">
-        <span class="icono">📋</span> Tributaria
       </a>
 
       <a class="nav-item" id="nav-reportes" onclick="navegarA('reportes')">
@@ -211,8 +203,6 @@ function navegarA(modulo) {
     admin:        'Administración',
     catalogos:    'Catálogos',
     tesoreria:    'Tesorería',
-    planilla:     'Planilla',
-    tributaria:   'Tributaria',
     reportes:     'Reportes',
     contabilidad: 'Contabilidad',
     conciliacion: 'Conciliación',
@@ -230,8 +220,6 @@ function navegarA(modulo) {
     admin:        '/modules/admin/index.html',
     catalogos:    '/modules/catalogos/index.html',
     tesoreria:    '/modules/tesoreria/index.html',
-    planilla:     '/modules/planilla/index.html',
-    tributaria:   '/modules/tributaria/index.html',
     reportes:     '/modules/reportes/index.html',
     contabilidad: '/modules/contabilidad/index.html',
     conciliacion: '/modules/conciliacion/index.html',
@@ -340,8 +328,6 @@ function renderDashboard(area) {
             ['🏦','Tesorería','tesoreria'],
             ['🔗','Conciliación','conciliacion'],
             ['📊','Reportes','reportes'],
-            ['👥','Planilla','planilla'],
-            ['📋','Tributaria','tributaria'],
             ['⚙️','Administración','admin'],
           ].map(([ico,nom,id])=>`
             <div onclick="navegarA('${id}')" style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--color-borde);border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--color-hover)'" onmouseout="this.style.background=''">
@@ -528,8 +514,6 @@ function renderEnConstruccion(area, nombre) {
   const entregas = {
     'Contabilidad': '1C',
     'Tesorería':    '1B',
-    'Planilla':     '1C',
-    'Tributaria':   '1D',
     'Reportes':     '1E'
   };
   area.innerHTML = `

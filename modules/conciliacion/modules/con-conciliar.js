@@ -256,6 +256,7 @@ async function _ejecutarConciliacion(periodo) {
 
   // Ventana siempre activa: 3 meses antes + 6 meses después (9 meses total)
   const periodosDoc = _conPeriodosAdyacentes(periodo);
+  const periodosDocCompacto = periodosDoc.map(p => p.replace('-', ''));
 
   const [resMbd, resCompras, resVentas, resRh] = await Promise.all([
     _supabase
@@ -269,16 +270,16 @@ async function _ejecutarConciliacion(periodo) {
       .lte('fecha_deposito', fin),
 
     _supabase
-      .from('registro_compras')
+      .from('contabilidad_compras')
       .select('*')
-      .eq('empresa_operadora_id', empresa_activa.id)
-      .in('periodo', periodosDoc),
+      .eq('empresa_id', empresa_activa.id)
+      .in('periodo', periodosDocCompacto),
 
     _supabase
-      .from('registro_ventas')
+      .from('contabilidad_ventas')
       .select('*')
-      .eq('empresa_operadora_id', empresa_activa.id)
-      .in('periodo', periodosDoc),
+      .eq('empresa_id', empresa_activa.id)
+      .in('periodo', periodosDocCompacto),
 
     _supabase
       .from('rh_registros')
@@ -293,21 +294,21 @@ async function _ejecutarConciliacion(periodo) {
   const compras = (resCompras.data || []).map(d => ({
     ...d,
     _tipo:    'COMPRA',
-    _ndoc:    [d.serie, d.numero].filter(Boolean).join('-') || d.id?.slice(0,8) || '—',
-    _proveedor: d.nombre_proveedor || '',
-    _ruc:     d.ruc_proveedor || '',
-    _total:   Math.abs(parseFloat(d.total || d.importe_total || 0)),
-    _fecha:   d.fecha_emision || d.fecha || null,
+    _ndoc:    [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8) || '—',
+    _proveedor: d.proveedor || '',
+    _ruc:     d.nro_doc_identidad || '',
+    _total:   Math.abs(parseFloat(d.total_cp || 0)),
+    _fecha:   d.fecha_emision || null,
   }));
 
   const ventas = (resVentas.data || []).map(d => ({
     ...d,
     _tipo:    'VENTA',
-    _ndoc:    [d.serie, d.numero].filter(Boolean).join('-') || d.id?.slice(0,8) || '—',
-    _proveedor: d.nombre_cliente || d.razon_social || '',
-    _ruc:     d.ruc_cliente || d.ruc || '',
-    _total:   Math.abs(parseFloat(d.total || d.importe_total || 0)),
-    _fecha:   d.fecha_emision || d.fecha || null,
+    _ndoc:    [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8) || '—',
+    _proveedor: d.cliente || '',
+    _ruc:     d.nro_doc_identidad || '',
+    _total:   Math.abs(parseFloat(d.total_cp || 0)),
+    _fecha:   d.fecha_emision || null,
   }));
 
   const rhRegs = (resRh.data || []).map(d => ({
@@ -1501,7 +1502,6 @@ async function _abrirPanelManual(movId, monto, fecha, nroOp) {
         <option value="COMPRA">🛒 Compras</option>
         <option value="VENTA">📄 Ventas</option>
         <option value="RH">🧾 RH Honorarios</option>
-        <option value="PM">🚗 Planilla Movilidad</option>
       </select>
       <input type="text" id="pm-q-num" placeholder="N° comprobante / planilla…"
         style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
@@ -1524,36 +1524,32 @@ async function _panelBuscar(movId) {
 
   const periodo = _con_periodo_actual;
   const periodosVentana = periodo ? _conPeriodosAdyacentes(periodo) : [];
+  const periodosVentanaCompacto = periodosVentana.map(p => p.replace('-', ''));
   const empId = empresa_activa.id;
 
   // ── Cargar fuentes según tipo seleccionado ──────────────────────
   const promesas = [];
   if (!qTipo || qTipo === 'COMPRA')
-    promesas.push(_supabase.from('registro_compras').select('id,serie,numero,nombre_proveedor,ruc_proveedor,total,fecha_emision').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
+    promesas.push(_supabase.from('contabilidad_compras').select('id,serie_cdp,nro_cp_inicial,proveedor,nro_doc_identidad,total_cp,fecha_emision').eq('empresa_id', empId).in('periodo', periodosVentanaCompacto));
   else promesas.push(Promise.resolve({ data: [] }));
 
   if (!qTipo || qTipo === 'VENTA')
-    promesas.push(_supabase.from('registro_ventas').select('id,serie,numero,nombre_cliente,razon_social,ruc_cliente,total,fecha_emision').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
+    promesas.push(_supabase.from('contabilidad_ventas').select('id,serie_cdp,nro_cp_inicial,cliente,nro_doc_identidad,total_cp,fecha_emision').eq('empresa_id', empId).in('periodo', periodosVentanaCompacto));
   else promesas.push(Promise.resolve({ data: [] }));
 
   if (!qTipo || qTipo === 'RH')
     promesas.push(_supabase.from('rh_registros').select('id,numero_rh,monto_neto,fecha_emision,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
   else promesas.push(Promise.resolve({ data: [] }));
 
-  if (!qTipo || qTipo === 'PM')
-    promesas.push(_supabase.from('planillas_movilidad').select('id,numero_planilla,trabajador_nombre,trabajador_dni,total_gastos,mes,fecha_emision,estado').eq('empresa_operadora_id', empId).in('mes', periodosVentana));
-  else promesas.push(Promise.resolve({ data: [] }));
+  const [resC, resV, resR] = await Promise.all(promesas);
 
-  const [resC, resV, resR, resPM] = await Promise.all(promesas);
-
-  const tipoBg   = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210', PM:'#553C9A' };
-  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾', PM:'🚗' };
+  const tipoBg   = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210' };
+  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾' };
 
   const todos = [
-    ...(resC.data||[]).map(d => ({ _tipo:'COMPRA', _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_proveedor||'', _ruc: d.ruc_proveedor||'', _total: d.total||0, id: d.id })),
-    ...(resV.data||[]).map(d => ({ _tipo:'VENTA',  _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.nombre_cliente||d.razon_social||'', _ruc: d.ruc_cliente||'', _total: d.total||0, id: d.id })),
+    ...(resC.data||[]).map(d => ({ _tipo:'COMPRA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.proveedor||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
+    ...(resV.data||[]).map(d => ({ _tipo:'VENTA',  _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.cliente||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
     ...(resR.data||[]).map(d => ({ _tipo:'RH',     _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, id: d.id })),
-    ...(resPM.data||[]).map(d => ({ _tipo:'PM',   _ndoc: d.numero_planilla||d.id?.slice(0,8), _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, id: d.id, _estado: d.estado })),
   ].filter(d => {
     const ndocL = (d._ndoc||'').toLowerCase();
     const provL = [(d._prov||''),(d._ruc||'')].join(' ').toLowerCase();

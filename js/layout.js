@@ -8,9 +8,6 @@ const NEXUM_MODULOS = [
   { id: 'catalogos',          icono: '🗂️', nombre: 'Catálogos',          href: '/modules/catalogos/index.html' },
   { id: 'tesoreria',          icono: '🏦', nombre: 'Tesorería',          href: '/modules/tesoreria/index.html' },
   { id: 'conciliacion',       icono: '🔗', nombre: 'Conciliación',       href: '/modules/conciliacion/index.html' },
-  { id: 'planilla',           icono: '👥', nombre: 'Planilla',           href: '/modules/planilla/index.html' },
-  { id: 'planilla-movilidad', icono: '🚗', nombre: 'Planilla Movilidad', href: '/modules/planilla-movilidad/index.html' },
-  { id: 'tributaria',         icono: '📋', nombre: 'Tributaria',         href: '/modules/tributaria/index.html' },
   { id: 'reportes',           icono: '📊', nombre: 'Reportes',           href: '/modules/reportes/index.html' },
   { id: 'contabilidad',       icono: '📒', nombre: 'Contabilidad',       href: '/modules/contabilidad/index.html' },
 ];

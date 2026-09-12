@@ -75,7 +75,6 @@ async function _bmBuscarDoc(movBancoId, nroOp, monto, fecha, tablaBanco = 'tesor
           <option value="COMPRA">Compras</option>
           <option value="VENTA">Ventas</option>
           <option value="RH">RH Honorarios</option>
-          <option value="PM">Planilla Movilidad</option>
         </select>
       </div>
       <div>
@@ -151,29 +150,29 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
   const empId = empresa_activa.id;
   const todos = [];
 
-  // ── Compras ──────────────────────────────────────────────────
+  // ── Compras (Contabilidad — es el único registro de compras que se usa) ──
   if (!tipo || tipo === 'COMPRA') {
-    let q = _supabase.from('registro_compras').select('id,serie,numero,nombre_proveedor,ruc_proveedor,total,fecha_emision,periodo')
-      .eq('empresa_operadora_id', empId);
+    let q = _supabase.from('contabilidad_compras').select('id,serie_cdp,nro_cp_inicial,proveedor,nro_doc_identidad,total_cp,fecha_emision,periodo')
+      .eq('empresa_id', empId);
     if (desde) q = q.gte('fecha_emision', desde);
     if (hasta) q = q.lte('fecha_emision', hasta);
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
-      const ndoc = [d.serie, d.numero].filter(Boolean).join('-') || d.id?.slice(0,8);
-      todos.push({ _tipo:'COMPRA', _ndoc: ndoc, _prov: d.nombre_proveedor||'', _ruc: d.ruc_proveedor||'', _total: d.total||0, _fecha: d.fecha_emision, id: d.id });
+      const ndoc = [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8);
+      todos.push({ _tipo:'COMPRA', _ndoc: ndoc, _prov: d.proveedor||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, _fecha: d.fecha_emision, id: d.id });
     });
   }
 
-  // ── Ventas ───────────────────────────────────────────────────
+  // ── Ventas (Contabilidad) ──────────────────────────────────────
   if (!tipo || tipo === 'VENTA') {
-    let q = _supabase.from('registro_ventas').select('id,serie,numero,nombre_cliente,razon_social,ruc_cliente,total,fecha_emision,periodo')
-      .eq('empresa_operadora_id', empId);
+    let q = _supabase.from('contabilidad_ventas').select('id,serie_cdp,nro_cp_inicial,cliente,nro_doc_identidad,total_cp,fecha_emision,periodo')
+      .eq('empresa_id', empId);
     if (desde) q = q.gte('fecha_emision', desde);
     if (hasta) q = q.lte('fecha_emision', hasta);
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
-      const ndoc = [d.serie, d.numero].filter(Boolean).join('-') || d.id?.slice(0,8);
-      todos.push({ _tipo:'VENTA', _ndoc: ndoc, _prov: d.nombre_cliente||d.razon_social||'', _ruc: d.ruc_cliente||'', _total: d.total||0, _fecha: d.fecha_emision, id: d.id });
+      const ndoc = [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8);
+      todos.push({ _tipo:'VENTA', _ndoc: ndoc, _prov: d.cliente||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, _fecha: d.fecha_emision, id: d.id });
     });
   }
 
@@ -186,18 +185,6 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
       todos.push({ _tipo:'RH', _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, _fecha: d.fecha_emision, id: d.id });
-    });
-  }
-
-  // ── Planillas de Movilidad ────────────────────────────────────
-  if (!tipo || tipo === 'PM') {
-    let q = _supabase.from('planillas_movilidad').select('id,numero_planilla,trabajador_nombre,trabajador_dni,total_gastos,fecha_emision,mes,estado')
-      .eq('empresa_operadora_id', empId);
-    if (desde) q = q.gte('fecha_emision', desde);
-    if (hasta) q = q.lte('fecha_emision', hasta);
-    const { data } = await q.limit(50);
-    (data || []).forEach(d => {
-      todos.push({ _tipo:'PM', _ndoc: d.numero_planilla||d.id?.slice(0,8), _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, _fecha: d.fecha_emision, id: d.id, _estado: d.estado });
     });
   }
 
@@ -214,8 +201,8 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     return;
   }
 
-  const tipoBg = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210', PM:'#553C9A' };
-  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾', PM:'🚗' };
+  const tipoBg = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210' };
+  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾' };
 
   resEl.innerHTML = `
     <div style="margin-bottom:8px;font-size:11px;color:var(--color-texto-suave)">${filtrados.length} resultado(s)</div>
