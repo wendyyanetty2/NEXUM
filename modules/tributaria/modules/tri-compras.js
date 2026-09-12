@@ -490,8 +490,17 @@ async function eliminarCompra(id) {
   await cargarCompras();
 }
 
-function exportarComprasExcel() {
+async function exportarComprasExcel() {
   if (!compras_filtrada.length) { mostrarToast('No hay datos para exportar', 'atencion'); return; }
+
+  // Igual que renderTablaCompras: qué comprobantes tienen movimiento bancario aplicado
+  const numsTri = compras_filtrada.map(c => [c.serie, c.numero].filter(Boolean).join('-')).filter(Boolean);
+  const { data: mbdTri } = numsTri.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numsTri)
+    : { data: [] };
+  const aplicadosTriC = new Set((mbdTri || []).map(r => r.nro_factura_doc));
+
   const rows = compras_filtrada.map(c => ({
     Periodo:         c.periodo,
     'F. Emisión':    c.fecha_emision,
@@ -509,6 +518,8 @@ function exportarComprasExcel() {
     'Monto Detracción': c.monto_detraccion || 0,
     'Deducible Renta': c.deducible_renta ? 'Sí' : 'No',
     Estado:          c.estado,
+    'Estado Bancario': aplicadosTriC.has([c.serie, c.numero].filter(Boolean).join('-')) ? 'APLICADO' : 'PENDIENTE',
+    Observaciones:   c.observaciones || '',
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();

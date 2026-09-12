@@ -678,8 +678,24 @@ async function eliminarUsuario(id, nombre) {
   await cargarUsuarios();
 }
 
-function exportarUsuariosExcel() {
+async function exportarUsuariosExcel() {
   if (!usuarios_lista.length) { mostrarToast('No hay datos para exportar', 'atencion'); return; }
+
+  // Igual que _cargarEmpresasCeldas: empresas/rol asignados por usuario
+  const idsNoAdmin = usuarios_lista.filter(u => !u.es_super_admin).map(u => u.id);
+  const { data: asigs } = idsNoAdmin.length
+    ? await _supabase.from('usuarios_empresas')
+        .select('usuario_id, rol, empresas_operadoras(nombre_corto, nombre)')
+        .in('usuario_id', idsNoAdmin).eq('activo', true)
+    : { data: [] };
+  const empresasPorUsuario = new Map();
+  (asigs || []).forEach(a => {
+    const nombre = a.empresas_operadoras?.nombre_corto || a.empresas_operadoras?.nombre || '?';
+    const txt = a.rol ? `${nombre} (${a.rol})` : nombre;
+    if (!empresasPorUsuario.has(a.usuario_id)) empresasPorUsuario.set(a.usuario_id, []);
+    empresasPorUsuario.get(a.usuario_id).push(txt);
+  });
+
   const datos = usuarios_lista.map(u => ({
     'Nombre':      u.nombre,
     'Email':       u.email,
@@ -688,6 +704,7 @@ function exportarUsuariosExcel() {
     'Área':        u.area || '',
     'Cargo':       u.cargo || '',
     'Super Admin': u.es_super_admin ? 'Sí' : 'No',
+    'Empresas Asignadas': u.es_super_admin ? 'TODAS (Super Admin)' : (empresasPorUsuario.get(u.id) || []).join(', '),
     'Estado':      u.activo ? 'Activo' : 'Inactivo',
     'Creación':    formatearFecha(u.fecha_creacion)
   }));

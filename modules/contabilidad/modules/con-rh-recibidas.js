@@ -194,6 +194,29 @@ async function _estadoCalculado(rh) {
   return { estado: 'PENDIENTE', color: '#C53030', etiqueta: '🔴 PENDIENTE', links: [] };
 }
 
+// ── Detalle legible del vínculo bancario de un RH, a partir del resultado
+//    de _estadoCalculado() — usado por la exportación para no reimplementar
+//    la búsqueda de vínculos por separado (ver nota en memoria del proyecto
+//    sobre no duplicar la lógica de matching de RH). ─────────────────────
+function _rhrDetalleVinculo(info) {
+  if (!info?.links?.length) return { nOperacion: '', fechaMov: '', montoVinculado: 0, nivelConfianza: '' };
+  if (info.esMBD) {
+    return {
+      nOperacion: info.links.map(l => l.nro_operacion_bancaria).filter(Boolean).join(', '),
+      fechaMov: info.links.map(l => l.fecha_deposito).filter(Boolean).join(', '),
+      montoVinculado: info.links.reduce((s, l) => s + Math.abs(Number(l.monto || 0)), 0),
+      nivelConfianza: '',
+    };
+  }
+  const confirmados = info.confirmados || info.links;
+  return {
+    nOperacion: confirmados.map(l => l.movimientos?.numero_operacion).filter(Boolean).join(', '),
+    fechaMov: confirmados.map(l => l.movimientos?.fecha).filter(Boolean).join(', '),
+    montoVinculado: confirmados.reduce((s, l) => s + parseFloat(l.monto_parcial ?? l.movimientos?.importe ?? 0), 0),
+    nivelConfianza: [...new Set(confirmados.map(l => l.nivel_confianza).filter(Boolean))].join(', '),
+  };
+}
+
 async function cargarRHRecibidas() {
   const mes    = document.getElementById('rhr-mes')?.value;
   const anio   = document.getElementById('rhr-anio')?.value;
@@ -1233,18 +1256,24 @@ async function exportarExcelRHRecibidas() {
   // Calcular estados
   const estadosMap = {};
   await Promise.all(data.map(async r => {
-    estadosMap[r.id] = r.estado === 'ANULADO' ? { estado: 'CANCELADO' } : await _estadoCalculado(r);
+    estadosMap[r.id] = r.estado === 'ANULADO' ? { estado: 'CANCELADO', links: [] } : await _estadoCalculado(r);
   }));
 
-  const cab = ['Fecha Emisión','N° RH','N° Doc Emisor','Nombre Emisor','Concepto','Moneda','Renta Bruta','Retención','Renta Neta','Estado','Observaciones'];
-  const filas = data.map(r => [
-    r.fecha_emision, r.numero_rh,
-    r.prestadores_servicios?.dni || r.nro_doc_emisor,
-    r.prestadores_servicios?.nombre || r.nombre_emisor,
-    r.concepto, r.moneda, r.monto_bruto, r.monto_retencion, r.monto_neto,
-    estadosMap[r.id]?.estado || 'PENDIENTE',
-    r.observaciones
-  ]);
+  const cab = ['Fecha Emisión','N° RH','N° Doc Emisor','Nombre Emisor','Concepto','Moneda','Renta Bruta','Retención','Renta Neta',
+    'Estado','N° Operación Vinculado(s)','Fecha Movimiento','Monto Vinculado','Nivel Confianza','Observaciones'];
+  const filas = data.map(r => {
+    const info = estadosMap[r.id] || {};
+    const vinc = _rhrDetalleVinculo(info);
+    return [
+      r.fecha_emision, r.numero_rh,
+      r.prestadores_servicios?.dni || r.nro_doc_emisor,
+      r.prestadores_servicios?.nombre || r.nombre_emisor,
+      r.concepto, r.moneda, r.monto_bruto, r.monto_retencion, r.monto_neto,
+      info.estado || 'PENDIENTE',
+      vinc.nOperacion, vinc.fechaMov, vinc.montoVinculado || '', vinc.nivelConfianza,
+      r.observaciones
+    ];
+  });
 
   const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
   const wb = XLSX.utils.book_new();

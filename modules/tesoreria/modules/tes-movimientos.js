@@ -438,7 +438,7 @@ async function exportarMovimientosExcel() {
     'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
     'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
     'Tipo de DOC','Autorización','Observaciones','Detalles Compra / Servicio',
-    'Observaciones 2',
+    'Observaciones 2','Estado Conciliación EECC','Tipo Comprobante','Última Actualización',
   ];
 
   const _fmtF = iso => {
@@ -467,6 +467,9 @@ async function exportarMovimientosExcel() {
     r.observaciones || null,
     r.detalles_compra_servicio || null,
     r.observaciones_2 || null,
+    r.estado_conciliacion === 'conciliado' ? 'CONCILIADO' : 'PENDIENTE',
+    r.tipo_comprobante || null,
+    _fmtF(r.fecha_actualizacion) || null,
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet([cabecera, ...filas]);

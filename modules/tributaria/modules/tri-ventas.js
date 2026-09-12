@@ -448,8 +448,17 @@ async function eliminarVenta(id) {
   await cargarVentas();
 }
 
-function exportarVentasExcel() {
+async function exportarVentasExcel() {
   if (!ventas_filtrada.length) { mostrarToast('No hay datos para exportar', 'atencion'); return; }
+
+  // Igual que renderTablaVentas: qué comprobantes tienen movimiento bancario aplicado
+  const numsTriV = ventas_filtrada.map(v => [v.serie, v.numero].filter(Boolean).join('-')).filter(Boolean);
+  const { data: mbdTriV } = numsTriV.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numsTriV)
+    : { data: [] };
+  const aplicadosTriV = new Set((mbdTriV || []).map(r => r.nro_factura_doc));
+
   const rows = ventas_filtrada.map(v => ({
     Periodo:        v.periodo,
     'F. Emisión':   v.fecha_emision,
@@ -464,6 +473,8 @@ function exportarVentasExcel() {
     Moneda:         v.moneda,
     'Tipo Cambio':  v.tipo_cambio || 1,
     Estado:         v.estado,
+    'Estado Bancario': aplicadosTriV.has([v.serie, v.numero].filter(Boolean).join('-')) ? 'APLICADO' : 'PENDIENTE',
+    Observaciones:  v.observaciones || '',
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();

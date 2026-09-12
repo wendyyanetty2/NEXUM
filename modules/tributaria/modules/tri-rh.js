@@ -423,8 +423,17 @@ async function eliminarRH(id) {
   await cargarRH();
 }
 
-function exportarRHExcel() {
+async function exportarRHExcel() {
   if (!rh_filtrada.length) { mostrarToast('No hay datos para exportar', 'atencion'); return; }
+
+  // Igual que renderTablaRH: qué RH tienen movimiento bancario aplicado
+  const numsRH = rh_filtrada.map(r => r.numero_rh).filter(Boolean);
+  const { data: mbdRH } = numsRH.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numsRH)
+    : { data: [] };
+  const aplicadosRH = new Set((mbdRH || []).map(r => r.nro_factura_doc));
+
   const rows = rh_filtrada.map(r => ({
     Fecha:       r.fecha_emision,
     Periodo:     r.periodo,
@@ -437,6 +446,7 @@ function exportarRHExcel() {
     'M. Neto':   r.monto_neto,
     '% Reten.':  r.porcentaje_retencion,
     Estado:      r.estado,
+    'Estado Bancario': aplicadosRH.has(r.numero_rh) ? 'APLICADO' : 'PENDIENTE',
     Observaciones: r.observaciones || '',
   }));
   const ws = XLSX.utils.json_to_sheet(rows);

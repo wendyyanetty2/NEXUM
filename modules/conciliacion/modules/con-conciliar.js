@@ -1645,20 +1645,33 @@ async function _conExportarAprobados() {
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   if (!data?.length) { mostrarToast('Sin registros aprobados para exportar', 'atencion'); return; }
 
+  // Traer score/tipo_match de la conciliación que aprobó cada movimiento
+  // (aquí conciliaciones.movimiento_id apunta al id de tesoreria_mbd, no al de movimientos)
+  const { data: concils } = await _supabase.from('conciliaciones')
+    .select('movimiento_id,score,tipo_match,estado')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .in('movimiento_id', data.map(m => m.id));
+  const concilMap = new Map((concils || []).map(c => [c.movimiento_id, c]));
+
   const cab = ['N° Operación','Fecha Depósito','Descripción','Moneda','Monto',
     'Proveedor/Empresa/Personal','RUC/DNI','Cotización','OC','Proyecto','Concepto',
     'Empresa','Estado Doc','Nº Factura/DOC','Tipo DOC','Autorización',
-    'Observaciones','Detalles Compra/Servicio','Observaciones 2'];
+    'Observaciones','Detalles Compra/Servicio','Observaciones 2',
+    'Tipo Match','Score Conciliación','Estado Conciliación'];
 
-  const filas = data.map(m => [
-    m.nro_operacion_bancaria||'', m.fecha_deposito||'', m.descripcion||'',
-    m.moneda||'S/', m.monto,
-    m.proveedor_empresa_personal||'', m.ruc_dni||'', m.cotizacion||'',
-    m.oc||'', m.proyecto||'', m.concepto||'', m.empresa||'',
-    m.entrega_doc||'', m.nro_factura_doc||'', m.tipo_doc||'',
-    m.autorizacion||'', m.observaciones||'',
-    m.detalles_compra_servicio||'', m.observaciones_2||'',
-  ]);
+  const filas = data.map(m => {
+    const c = concilMap.get(m.id);
+    return [
+      m.nro_operacion_bancaria||'', m.fecha_deposito||'', m.descripcion||'',
+      m.moneda||'S/', m.monto,
+      m.proveedor_empresa_personal||'', m.ruc_dni||'', m.cotizacion||'',
+      m.oc||'', m.proyecto||'', m.concepto||'', m.empresa||'',
+      m.entrega_doc||'', m.nro_factura_doc||'', m.tipo_doc||'',
+      m.autorizacion||'', m.observaciones||'',
+      m.detalles_compra_servicio||'', m.observaciones_2||'',
+      c?.tipo_match||'', c?.score ?? '', c?.estado||'',
+    ];
+  });
 
   const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
   const wb = XLSX.utils.book_new();
@@ -1821,22 +1834,34 @@ async function _conExportarAvance() {
   if (error) { mostrarToast('Error al exportar: ' + error.message, 'error'); return; }
   if (!data?.length) { mostrarToast('Sin datos para este periodo', 'atencion'); return; }
 
+  // Traer score/tipo_match de la conciliación de cada movimiento (si ya fue conciliado)
+  const { data: concils } = await _supabase.from('conciliaciones')
+    .select('movimiento_id,score,tipo_match')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .in('movimiento_id', data.map(m => m.id));
+  const concilMap = new Map((concils || []).map(c => [c.movimiento_id, c]));
+
   const cab = [
     'N° Operación','Fecha Depósito','Descripción','Moneda','Monto',
     'Proveedor / Empresa / Personal','RUC/DNI','Estado','N° Comprobante','Tipo DOC',
+    'Tipo Match','Score Conciliación',
   ];
-  const filas = data.map(m => [
-    m.nro_operacion_bancaria || '',
-    m.fecha_deposito         || '',
-    m.descripcion            || '',
-    m.moneda                 || 'PEN',
-    m.monto,
-    m.proveedor_empresa_personal || '',
-    m.ruc_dni                || '',
-    m.entrega_doc            || '',
-    m.nro_factura_doc        || '',
-    m.tipo_doc               || '',
-  ]);
+  const filas = data.map(m => {
+    const c = concilMap.get(m.id);
+    return [
+      m.nro_operacion_bancaria || '',
+      m.fecha_deposito         || '',
+      m.descripcion            || '',
+      m.moneda                 || 'PEN',
+      m.monto,
+      m.proveedor_empresa_personal || '',
+      m.ruc_dni                || '',
+      m.entrega_doc            || '',
+      m.nro_factura_doc        || '',
+      m.tipo_doc               || '',
+      c?.tipo_match||'', c?.score ?? '',
+    ];
+  });
 
   // Resumen al final
   const grupos = {};
@@ -1846,7 +1871,7 @@ async function _conExportarAvance() {
   filas.push(['TOTAL', data.length]);
 
   const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
-  ws['!cols'] = [14,14,30,8,14,30,14,12,16,12].map(w => ({ wch: w }));
+  ws['!cols'] = [14,14,30,8,14,30,14,12,16,12,12,10].map(w => ({ wch: w }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'AVANCE');
   XLSX.writeFile(wb, `Avance_Conciliacion_${_con_periodo_actual}_${empresa_activa.ruc || ''}.xlsx`);

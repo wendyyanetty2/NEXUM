@@ -42,6 +42,7 @@ function renderTabVentas(area) {
           <button id="btn-consolidar-estados" onclick="consolidarEstadosRetroactivo()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔧 Reparar estados</button>
           <button onclick="_dupReporteHistorico('contabilidad_ventas','cliente','Ventas','abrirModalVenta')" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Buscar duplicados</button>
           <button onclick="exportarExcelVentas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📥 Exportar PLE</button>
+          <button onclick="exportarInfoTrabajadaVentas()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📤 Exportar</button>
           <button onclick="document.getElementById('v-sunat-file').click()" style="padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px">📊 Importar SUNAT</button>
           <input type="file" id="v-sunat-file" accept=".xlsx,.xls" style="display:none" onchange="_vSunatHandleFile(this)">
           <button onclick="abrirModalVenta()" style="padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500">+ Nueva venta</button>
@@ -573,6 +574,54 @@ async function exportarExcelVentas() {
   XLSX.utils.book_append_sheet(wb, ws, 'Hoja1');
   XLSX.writeFile(wb, `RV_${empresa_activa.nombre_corto}_${periodo||'todos'}.xlsx`);
   mostrarToast('Exportado en formato PLE.', 'exito');
+}
+
+// ── Exportar con toda la información trabajada (no la plantilla PLE):
+//    incluye el estado de conciliación bancaria calculado igual que en
+//    pantalla (misma lógica _conFiltrarPorEmisor/_conCobertura) ─────────
+async function exportarInfoTrabajadaVentas() {
+  const periodo = _vPeriodoActual();
+  let q = _supabase.from('contabilidad_ventas').select('*')
+    .eq('empresa_id', empresa_activa.id).order('fecha_emision');
+  if (periodo) q = q.eq('periodo', periodo);
+  const { data } = await q;
+  if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
+
+  const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
+  const { data: mbd } = numeros.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
+        .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
+    : { data: [] };
+  const mapa = new Map();
+  (mbd || []).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
+  const etiquetaCob = cov => {
+    if (cov.estado === 'PENDIENTE') return 'PENDIENTE';
+    if (cov.estado === 'PARCIAL')   return cov.excede ? `EXCEDE (+${cov.excede})` : `PARCIAL (${cov.suma}/${cov.total})`;
+    if (cov.estado === 'COMPLETO_EMITIDO')   return 'APLICADO';
+    if (cov.estado === 'COMPLETO_OBSERVADO') return 'OBSERVADO';
+    return cov.estado || '';
+  };
+
+  const cab = ['RUC','Cliente','Periodo','Fecha de emisión','Tipo CP/Doc.','Serie del CDP',
+    'N° Inicial','N° Final','Tipo Doc Identidad','Nro Doc Identidad','BI Gravada','IGV / IPM','Total CP',
+    'Moneda','Tipo de Nota','Estado Conciliación Bancaria','Monto Vinculado','N° Operación / Movs. Vinculados'];
+  const filas = data.map(r => {
+    const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+    const movs = _conFiltrarPorEmisor(mapa.get(nDoc), r.nro_doc_identidad, r.cliente);
+    const cov  = _conCobertura(movs, r.total_cp);
+    return [
+      r.ruc, r.cliente||r.razon_social, r.periodo, r.fecha_emision, r.tipo_cp_doc, r.serie_cdp,
+      r.nro_cp_inicial, r.nro_cp_final, r.tipo_doc_identidad, r.nro_doc_identidad,
+      r.bi_gravada, r.igv_ipm, r.total_cp, r.moneda, r.tipo_nota||'',
+      etiquetaCob(cov), cov.suma||0, movs.map(m=>m.nro_operacion_bancaria).filter(Boolean).join(', '),
+    ];
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Ventas');
+  XLSX.writeFile(wb, `Ventas_${empresa_activa.nombre_corto}_${periodo||'todos'}.xlsx`);
+  mostrarToast('Excel exportado con la información trabajada.', 'exito');
 }
 
 // ── Importar SUNAT Excel con deduplicación ────────────────────────
