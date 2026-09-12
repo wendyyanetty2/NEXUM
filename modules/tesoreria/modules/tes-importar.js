@@ -244,9 +244,15 @@ async function confirmarImportacion() {
   // operación + fecha + monto + moneda + descripción. Así, aunque la banca
   // repita movimientos de días anteriores en la descarga de hoy, NEXUM no
   // los vuelve a crear. Ver js/duplicados.js — _dupClasificarLoteMovimientos.
+  // tesoreria_mbd.monto lleva el SIGNO real (negativo = CARGO/salida,
+  // positivo = ABONO/entrada) — r.importe ya viene como valor absoluto
+  // (separado de r.naturaleza), así que hay que volver a aplicar el signo
+  // aquí antes de guardar. Wendy lo detectó (2026-09-12): los cargos del
+  // Excel (montos negativos) se estaban guardando como positivos.
   const candidatos = validos.map(r => ({
     fecha: r.fecha, descripcion: r.descripcion, moneda: r.moneda,
-    monto: r.importe, numero_operacion: r.numero_operacion, _orig: r,
+    monto: r.naturaleza === 'CARGO' ? -Math.abs(r.importe) : Math.abs(r.importe),
+    numero_operacion: r.numero_operacion, _orig: r,
   }));
   const clasificados = await _dupClasificarLoteMovimientos(candidatos);
 
