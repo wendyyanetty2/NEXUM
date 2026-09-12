@@ -93,14 +93,27 @@ function _filasEECC(data, periodo) {
   ]);
 }
 
+// ── Detalle legible de los movimientos bancarios vinculados a un
+//    comprobante (N° operación + fecha + descripción, no solo el número) —
+//    Wendy lo pide explícitamente en el histórico: debe verse igual que al
+//    hacer clic en el ícono de vínculo dentro del módulo. ──────────────────
+function _histDetalleMovs(movs) {
+  if (!movs?.length) return { nOperacion: '', fechaMov: '', descripcionMov: '' };
+  return {
+    nOperacion: movs.map(m => m.nro_operacion_bancaria).filter(Boolean).join(', '),
+    fechaMov: movs.map(m => _histFmtFecha(m.fecha_deposito)).filter(Boolean).join(', '),
+    descripcionMov: movs.map(m => m.descripcion).filter(Boolean).join(' | '),
+  };
+}
+
 const CAB_CONTAB_COMPRAS = ['RUC','Proveedor','Periodo','Fecha de emisión','Tipo CP/Doc.','Serie del CDP',
   'N° Inicial','N° Final','Tipo Doc Identidad','Nro Doc Identidad','BI Gravado DG','IGV / IPM DG','Total CP',
-  'Moneda','Estado Conciliación Bancaria','Monto Vinculado','N° Operación / Movs. Vinculados'];
+  'Moneda','Estado Conciliación Bancaria','Monto Vinculado','N° Operación Vinculado(s)','Fecha Movimiento','Descripción Movimiento'];
 async function _filasContabComprasConEstado(data, empresaId) {
   if (!data.length) return [];
   const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbd } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,monto,id,entrega_doc,ruc_dni,proveedor_empresa_personal')
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,fecha_deposito,descripcion,monto,id,entrega_doc,ruc_dni,proveedor_empresa_personal')
         .eq('empresa_id', empresaId).in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const mapa = new Map();
@@ -109,23 +122,24 @@ async function _filasContabComprasConEstado(data, empresaId) {
     const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
     const movs = _conFiltrarPorEmisor(mapa.get(nDoc), r.nro_doc_identidad, r.proveedor);
     const cov  = _conCobertura(movs, r.total_cp);
+    const vinc = _histDetalleMovs(movs);
     return [
       r.ruc, r.proveedor||r.razon_social, r.periodo, r.fecha_emision, r.tipo_cp_doc, r.serie_cdp,
       r.nro_cp_inicial, r.nro_cp_final, r.tipo_doc_identidad, r.nro_doc_identidad,
       r.bi_gravado_dg, r.igv_ipm_dg, r.total_cp, r.moneda,
-      _histEtiquetaCobertura(cov), cov.suma||0, movs.map(m=>m.nro_operacion_bancaria).filter(Boolean).join(', '),
+      _histEtiquetaCobertura(cov), cov.suma||0, vinc.nOperacion, vinc.fechaMov, vinc.descripcionMov,
     ];
   });
 }
 
 const CAB_CONTAB_VENTAS = ['RUC','Cliente','Periodo','Fecha de emisión','Tipo CP/Doc.','Serie del CDP',
   'N° Inicial','N° Final','Tipo Doc Identidad','Nro Doc Identidad','BI Gravada','IGV / IPM','Total CP',
-  'Moneda','Estado Conciliación Bancaria','Monto Vinculado','N° Operación / Movs. Vinculados'];
+  'Moneda','Estado Conciliación Bancaria','Monto Vinculado','N° Operación Vinculado(s)','Fecha Movimiento','Descripción Movimiento'];
 async function _filasContabVentasConEstado(data, empresaId) {
   if (!data.length) return [];
   const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbd } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,monto,id,entrega_doc,ruc_dni,proveedor_empresa_personal')
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,fecha_deposito,descripcion,monto,id,entrega_doc,ruc_dni,proveedor_empresa_personal')
         .eq('empresa_id', empresaId).in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const mapa = new Map();
@@ -134,11 +148,12 @@ async function _filasContabVentasConEstado(data, empresaId) {
     const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
     const movs = _conFiltrarPorEmisor(mapa.get(nDoc), r.nro_doc_identidad, r.cliente);
     const cov  = _conCobertura(movs, r.total_cp);
+    const vinc = _histDetalleMovs(movs);
     return [
       r.ruc, r.cliente||r.razon_social, r.periodo, r.fecha_emision, r.tipo_cp_doc, r.serie_cdp,
       r.nro_cp_inicial, r.nro_cp_final, r.tipo_doc_identidad, r.nro_doc_identidad,
       r.bi_gravada, r.igv_ipm, r.total_cp, r.moneda,
-      _histEtiquetaCobertura(cov), cov.suma||0, movs.map(m=>m.nro_operacion_bancaria).filter(Boolean).join(', '),
+      _histEtiquetaCobertura(cov), cov.suma||0, vinc.nOperacion, vinc.fechaMov, vinc.descripcionMov,
     ];
   });
 }
@@ -161,16 +176,21 @@ function _filasTribVentas(data) {
   ]);
 }
 
-const CAB_RH_RECIBIDOS = ['Fecha','N° RH','DNI','Emisor','Concepto','Moneda','Renta Bruta','Retención','Renta Neta','Estado','Monto Pagado','Observaciones'];
+const CAB_RH_RECIBIDOS = ['Fecha','N° RH','DNI','Emisor','Concepto','Moneda','Renta Bruta','Retención','Renta Neta',
+  'Estado','N° Operación Vinculado(s)','Fecha Movimiento','Monto Vinculado','Nivel Confianza','Observaciones'];
 async function _filasRHRecibidosConEstado(data) {
   const estados = await Promise.all(data.map(r => r.estado === 'ANULADO'
-    ? Promise.resolve({ estado: 'CANCELADO', montoPagado: '' })
+    ? Promise.resolve({ estado: 'CANCELADO', links: [] })
     : _estadoCalculado(r)));
-  return data.map((r, i) => [
-    r.fecha_emision, r.numero_rh||'', r.prestadores_servicios?.dni||r.nro_doc_emisor||'',
-    r.prestadores_servicios?.nombre||r.nombre_emisor||'', r.concepto||'', r.moneda||'PEN',
-    r.monto_bruto, r.monto_retencion, r.monto_neto, estados[i].estado, estados[i].montoPagado||'', r.observaciones||'',
-  ]);
+  return data.map((r, i) => {
+    const vinc = _rhrDetalleVinculo(estados[i]);
+    return [
+      r.fecha_emision, r.numero_rh||'', r.prestadores_servicios?.dni||r.nro_doc_emisor||'',
+      r.prestadores_servicios?.nombre||r.nombre_emisor||'', r.concepto||'', r.moneda||'PEN',
+      r.monto_bruto, r.monto_retencion, r.monto_neto, estados[i].estado,
+      vinc.nOperacion, vinc.fechaMov, vinc.montoVinculado||'', vinc.nivelConfianza, r.observaciones||'',
+    ];
+  });
 }
 
 const CAB_RH_EMITIDOS = ['Fecha de Emisión','Tipo Doc. Emitido','Nro. Doc. Emitido','Estado Doc. Emitido',
@@ -666,13 +686,11 @@ const _HIST_ETIQUETAS_LIMPIEZA = {
   alertas_sistema:      'Alertas del sistema',
 };
 
-// Marcadas por defecto = mismo criterio del documento (Contabilidad,
-// Tesorería, Conciliación, Tributaria); el resto ("Otros") queda
-// desmarcado para que la limpieza más amplia sea una decisión explícita.
-const _HIST_LIMPIEZA_DEFAULT_ON = new Set([
-  'tesoreria_mbd', 'movimientos', 'contabilidad_compras', 'contabilidad_ventas',
-  'registro_compras', 'registro_ventas', 'rh_registros', 'conciliaciones', 'asientos',
-]);
+// Wendy confirmó (2026-09-11) que su flujo real es: respaldar TODO el
+// período con "Generar histórico" y luego limpiar TODO ese mismo período
+// de una vez (para liberar espacio) — por eso todas vienen marcadas por
+// defecto. Sigue pudiendo desmarcar alguna si quiere una limpieza parcial.
+const _HIST_LIMPIEZA_DEFAULT_ON = new Set(Object.keys(_HIST_ETIQUETAS_LIMPIEZA));
 
 // rh_movimiento_links queda fuera a propósito: es la tabla legacy de
 // vinculación RH↔banco y no tiene una columna de período propia — limpiarla
@@ -740,7 +758,13 @@ function _histAbrirModalLimpieza(empId, empNom, periodo, conteos, pc) {
             Empresa: <strong>${escapar(empNom)}</strong> · Histórico verificado: generado el
             ${escapar(_histFmtFecha(pc.historico_generado_en?.slice(0,10)))} (${pc.historico_conteo_registros ? Object.values(pc.historico_conteo_registros).reduce((s,n)=>s+n,0) : '—'} registros respaldados).
           </p>
-          <p style="font-size:13px;margin-bottom:8px">Selecciona qué información operativa de este período deseas limpiar:</p>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <p style="font-size:13px;margin:0">Selecciona qué información operativa de este período deseas limpiar:</p>
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap">
+              <input type="checkbox" id="hist-limp-todo" checked onchange="document.querySelectorAll('.hist-limp-chk').forEach(c=>c.checked=this.checked)">
+              Todo
+            </label>
+          </div>
           <div>${filas}</div>
         </div>
         <div class="modal-footer">
