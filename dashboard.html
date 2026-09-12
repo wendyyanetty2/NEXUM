@@ -357,8 +357,19 @@ async function cargarDashboard() {
     .lte('fecha_deposito', hasta);
 
   const todas    = filas || [];
-  const soles    = todas.filter(r => r.moneda !== 'USD').reduce((s,r) => s + Number(r.monto), 0);
-  const dolares  = todas.filter(r => r.moneda === 'USD').reduce((s,r) => s + Number(r.monto), 0);
+  // Ingresos (abonos, monto positivo) y Salidas (cargos: inversiones, gastos
+  // fijos, préstamos que salen, etc. — monto negativo) se muestran SEPARADOS,
+  // no solo un neto — un préstamo que sale de JVÑ y vuelve a entrar el mismo
+  // mes u otro mes posterior debe verse como dos movimientos distintos, no
+  // disolverse en un solo número (pedido por Wendy, 2026-09-12).
+  const enSoles  = todas.filter(r => r.moneda !== 'USD');
+  const enDolares = todas.filter(r => r.moneda === 'USD');
+  const ingresosSol = enSoles.filter(r => Number(r.monto) > 0).reduce((s,r) => s + Number(r.monto), 0);
+  const salidasSol  = enSoles.filter(r => Number(r.monto) < 0).reduce((s,r) => s + Math.abs(Number(r.monto)), 0);
+  const soles       = ingresosSol - salidasSol;
+  const ingresosUsd = enDolares.filter(r => Number(r.monto) > 0).reduce((s,r) => s + Number(r.monto), 0);
+  const salidasUsd  = enDolares.filter(r => Number(r.monto) < 0).reduce((s,r) => s + Math.abs(Number(r.monto)), 0);
+  const dolares     = ingresosUsd - salidasUsd;
   const pendientes = todas.filter(r => r.entrega_doc === 'PENDIENTE');
   const observados = todas.filter(r => r.entrega_doc === 'OBSERVADO');
   const emitidos   = todas.filter(r => r.entrega_doc === 'EMITIDO');
@@ -369,8 +380,14 @@ async function cargarDashboard() {
     const _card = (icono, cls, num, lbl) =>
       `<div class="stat-card"><div class="stat-icono ${cls}">${icono}</div><div class="stat-info"><div class="numero">${num}</div><div class="etiqueta">${lbl}</div></div></div>`;
     kpisEl.innerHTML =
-      _card('💰', soles < 0 ? 'rojo' : 'verde', `S/ ${_fmt(soles)}`, 'Saldo neto mes (S/)') +
-      (dolares ? _card('💵', dolares < 0 ? 'rojo' : 'azul', `$ ${_fmt(dolares)}`, 'Saldo neto mes (USD)') : '') +
+      _card('📈','verde', `S/ ${_fmt(ingresosSol)}`, 'Ingresos del mes (S/)') +
+      _card('📉','rojo',  `S/ ${_fmt(salidasSol)}`,  'Salidas del mes (S/)') +
+      _card('💰', soles < 0 ? 'rojo' : 'azul', `S/ ${_fmt(soles)}`, 'Saldo neto mes (S/)') +
+      (enDolares.length ? (
+        _card('📈','verde', `$ ${_fmt(ingresosUsd)}`, 'Ingresos del mes (USD)') +
+        _card('📉','rojo',  `$ ${_fmt(salidasUsd)}`,  'Salidas del mes (USD)') +
+        _card('💵', dolares < 0 ? 'rojo' : 'azul', `$ ${_fmt(dolares)}`, 'Saldo neto mes (USD)')
+      ) : '') +
       _card('📄','azul', todas.length, 'Movimientos totales') +
       _card('✅','verde', emitidos.length, 'Con comprobante') +
       _card('🔴','rojo', pendientes.length, 'Pendientes doc.') +
