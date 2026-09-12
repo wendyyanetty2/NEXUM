@@ -18,7 +18,7 @@
   <script src="../../js/layout.js"></script>
   <script src="../../js/consolidacion-estados.js"></script>
   <script src="/modules/contabilidad/modules/con-rh-recibidas.js"></script>
-  <script src="../../js/historico.js?v=2"></script>
+  <script src="../../js/historico.js?v=3&t=20260911"></script>
 </head>
 <body>
 <div class="nexum-layout">
@@ -111,8 +111,17 @@
               Genera un Excel integral y restaurable de TODO lo trabajado en el período seleccionado arriba (uno o varios meses): MBD, EECC, Contabilidad, Tributaria, RH recibidos/emitidos, Planilla, Movilidad, Asientos, conciliaciones y notas/alertas — con los mismos estados que ves en cada módulo. Descárgalo y guárdalo donde decidas — NEXUM no conserva una copia.
             </p>
           </div>
-          <button class="btn btn-primario btn-sm" onclick="_histGenerarClick()">📦 Generar histórico</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primario btn-sm" onclick="_histGenerarClick()">📦 Generar histórico</button>
+            <button class="btn btn-secundario btn-sm" onclick="importarHistoricoClick()">📥 Importar histórico</button>
+            <input type="file" id="hist-import-file" accept=".xlsx,.xls" style="display:none" onchange="_histImportarArchivo(this)">
+            <button class="btn btn-secundario btn-sm" style="border-color:#C53030;color:#C53030" onclick="limpiarInformacionClick()">🧹 Limpiar información</button>
+          </div>
         </div>
+        <p class="text-muted text-sm" style="margin-top:10px">
+          <strong>Importar histórico</strong> restaura un respaldo generado por NEXUM — solo agrega lo que falte, nunca duplica ni sobrescribe.
+          <strong>Limpiar información</strong> borra los datos operativos del período indicado arriba en "Periodo desde" (requiere que ya exista un histórico generado para ese período).
+        </p>
       </div>
 
       <!-- Sección de resúmenes visuales -->

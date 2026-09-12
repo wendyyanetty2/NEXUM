@@ -28,7 +28,7 @@
    período.
    ============================================================ */
 
-const NEXUM_HIST_VERSION = 'NEXUM-HIST-1.0';
+const NEXUM_HIST_VERSION = 'NEXUM-HIST-1.1';
 
 function _histRangoMes(periodo) {
   const [y, m] = periodo.split('-').map(Number);
@@ -250,6 +250,17 @@ function _filasPMovDetalle(data) {
   return filas;
 }
 
+// ── Copia filas quitando las claves de relaciones embebidas (joins) que
+//    Supabase agrega al `select('*, tabla(...)')` — no son columnas reales
+//    y un insert/upsert directo contra la tabla fallaría con ellas. ──────
+function _histCrudo(rows, quitarClaves) {
+  return (rows || []).map(r => {
+    const c = { ...r };
+    (quitarClaves || []).forEach(k => delete c[k]);
+    return c;
+  });
+}
+
 // ── Trae y arma todas las filas de UN período. No genera el archivo —
 //    solo devuelve los datos, para poder acumular varios períodos. ────
 async function _histDatosPeriodo(empresaId, periodo) {
@@ -304,8 +315,32 @@ async function _histDatosPeriodo(empresaId, periodo) {
     notas_operativas: (resNotas.data||[]).length, alertas_sistema: (resAlertas.data||[]).length,
   };
 
+  // ── Filas CRUDAS (columnas reales de cada tabla, sin joins) para poder
+  //    RESTAURAR con fidelidad — las hojas "filas" de abajo son para leer,
+  //    esta es para importar de vuelta. Se quitan las claves de relaciones
+  //    embebidas (join) porque no son columnas reales de la tabla. ────────
+  const crudo = {
+    tesoreria_mbd: resMbd.data || [],
+    movimientos: _histCrudo(movData, ['cuentas_bancarias']),
+    contabilidad_compras: resContCompras.data || [],
+    contabilidad_ventas: resContVentas.data || [],
+    registro_compras: resRegCompras.data || [],
+    registro_ventas: resRegVentas.data || [],
+    rh_registros: _histCrudo(rhData, ['prestadores_servicios']),
+    planilla_rh: resRHEmitido.data || [],
+    rh_movimiento_links: _histCrudo(linksPeriodo, ['rh_registros', 'movimientos']),
+    conciliaciones: _histCrudo(resConcil.data, ['movimientos']),
+    planilla_periodos: resPlaPeriodos.data || [],
+    planilla_detalle: _histCrudo(resPlaDetalle.data, ['planilla_periodos', 'trabajadores']),
+    planillas_movilidad: _histCrudo(resPM.data, ['planilla_movilidad_detalles']),
+    planilla_movilidad_detalles: (resPM.data || []).flatMap(p => p.planilla_movilidad_detalles || []),
+    asientos: resAsientos.data || [],
+    notas_operativas: resNotas.data || [],
+    alertas_sistema: resAlertas.data || [],
+  };
+
   return {
-    periodo, conteos,
+    periodo, conteos, crudo,
     filas: {
       MBD: _filasMBD(resMbd.data||[]),
       EECC_MOVIMIENTOS: _filasEECC(movData, periodo),
@@ -413,6 +448,23 @@ async function generarHistorico(empresaId, desde, hasta, empNombre) {
     return { nombre: key, datos: [_HIST_CABS[key], ...filas], esAOA: true };
   });
   hojas.push(...catalogos.hojas);
+
+  // ── Hoja RAW_DATA: filas crudas (columnas reales, sin formatear) de cada
+  //    tabla operativa — es lo que usa "Importar histórico" para restaurar
+  //    con fidelidad. Las hojas de arriba son para leer, esta es para volver
+  //    a cargar. No se genera para catálogos (Limpiar información nunca los
+  //    borra, así que no hace falta poder restaurarlos). ───────────────────
+  const crudoTotal = {};
+  resultados.forEach(r => Object.entries(r.crudo).forEach(([tabla, filasT]) => {
+    if (!crudoTotal[tabla]) crudoTotal[tabla] = [];
+    crudoTotal[tabla].push(...filasT);
+  }));
+  const filasRaw = [];
+  Object.entries(crudoTotal).forEach(([tabla, filasT]) => {
+    filasT.forEach(r => filasRaw.push([tabla, r.id || '', JSON.stringify(r)]));
+  });
+  hojas.push({ nombre: 'RAW_DATA', datos: [['Tabla', 'ID', 'JSON'], ...filasRaw], esAOA: true });
+
   resultados.forEach(r => Object.entries(r.conteos).forEach(([t,n]) => { conteosTotal[t] = (conteosTotal[t]||0) + n; }));
   Object.entries(catalogos.conteos).forEach(([t,n]) => { conteosTotal[t] = n; });
   const totalRegistros = Object.values(conteosTotal).reduce((s,n)=>s+n, 0);
@@ -477,4 +529,323 @@ async function generarHistorico(empresaId, desde, hasta, empNombre) {
   await _supabase.from('periodos_contables').upsert(writes, { onConflict: 'empresa_id,periodo' });
 
   mostrarToast(`Histórico generado: ${totalRegistros} registros de ${periodos.length} período(s) en ${hojas.length} hojas`, 'exito');
+}
+
+/* ============================================================
+   IMPORTAR HISTÓRICO (RESTAURAR)
+
+   Solo AGREGA registros que no existen (por id). Nunca sobrescribe
+   ni borra nada — si un registro del archivo ya existe en NEXUM con
+   otros valores, se reporta como diferencia para que Wendy decida,
+   pero no se toca (ver regla de no modificar datos existentes sin
+   aprobación explícita). Requiere la hoja RAW_DATA (histórico
+   generado con NEXUM-HIST-1.1 o superior).
+   ============================================================ */
+
+async function importarHistoricoClick() {
+  document.getElementById('hist-import-file')?.click();
+}
+
+async function _histImportarArchivo(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  let wb;
+  try {
+    wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  } catch (e) {
+    mostrarToast('No se pudo leer el archivo. ¿Es un Excel válido?', 'error');
+    return;
+  }
+
+  const wsMeta = wb.Sheets['METADATOS'];
+  const wsRaw  = wb.Sheets['RAW_DATA'];
+  if (!wsMeta || !wsRaw) {
+    mostrarToast('Este archivo no tiene el formato de histórico de NEXUM (faltan hojas METADATOS/RAW_DATA). Los históricos generados antes de esta actualización no se pueden restaurar automáticamente — solo sirven como respaldo de lectura.', 'atencion');
+    return;
+  }
+
+  const meta = {};
+  XLSX.utils.sheet_to_json(wsMeta, { header: 1 }).forEach(r => { if (r[0]) meta[r[0]] = r[1]; });
+
+  if (String(meta['Empresa ID'] || '') !== empresa_activa.id) {
+    mostrarToast('Este histórico pertenece a otra empresa. Cambia a la empresa correcta (menú superior) antes de importar.', 'atencion');
+    return;
+  }
+
+  const version = meta['Versión'] || '';
+  if (version !== NEXUM_HIST_VERSION) {
+    const continuar = await confirmar(
+      `Este archivo fue generado con la versión ${escapar(version || 'desconocida')} y NEXUM espera ${NEXUM_HIST_VERSION}. Puede faltar información para restaurar correctamente.\n¿Continuar de todas formas?`,
+      { btnOk: 'Continuar', btnColor: '#D69E2E' }
+    );
+    if (!continuar) return;
+  }
+
+  const porTabla = new Map();
+  XLSX.utils.sheet_to_json(wsRaw, { header: 1 }).slice(1).forEach(row => {
+    const [tabla, , json] = row;
+    if (!tabla || !json) return;
+    if (!porTabla.has(tabla)) porTabla.set(tabla, []);
+    try { porTabla.get(tabla).push(JSON.parse(json)); } catch (e) { /* fila corrupta, se ignora */ }
+  });
+
+  if (!porTabla.size) { mostrarToast('El archivo no contiene registros para restaurar.', 'atencion'); return; }
+
+  const resumenTablas = [...porTabla.entries()].map(([t, filas]) => `${escapar(t)}: ${filas.length} fila(s)`).join('\n');
+  const ok = await confirmar(
+    `ARCHIVO HISTÓRICO DETECTADO\n\n` +
+    `Empresa: ${escapar(meta['Empresa'] || '')}\n` +
+    `Período(s): ${escapar(meta['Período(s)'] || '')}\n` +
+    `Versión: ${escapar(version)}\n\n` +
+    `Registros en el archivo:\n${resumenTablas}\n\n` +
+    `Los registros que ya existan en NEXUM NO se duplican ni se sobrescriben — solo se agregan los que falten. ¿Deseas importar este histórico?`,
+    { btnOk: 'Importar histórico', btnColor: '#2C5282' }
+  );
+  if (!ok) return;
+
+  mostrarToast('Restaurando información…', 'info');
+  let totalNuevos = 0, totalExistentes = 0, conflictos = [];
+
+  for (const [tabla, filas] of porTabla.entries()) {
+    const ids = filas.map(r => r.id).filter(Boolean);
+    if (!ids.length) continue;
+    const { data: existentes, error: errSel } = await _supabase.from(tabla).select('*').in('id', ids);
+    if (errSel) { mostrarToast(`No se pudo verificar ${tabla}: ${errSel.message}`, 'error'); continue; }
+    const mapaExistentes = new Map((existentes || []).map(r => [r.id, r]));
+
+    const nuevos = filas.filter(r => !mapaExistentes.has(r.id));
+    filas.forEach(r => {
+      if (!mapaExistentes.has(r.id)) return;
+      const actual = mapaExistentes.get(r.id);
+      const distinto = Object.keys(r).some(k => JSON.stringify(actual[k] ?? null) !== JSON.stringify(r[k] ?? null));
+      if (distinto) conflictos.push({ tabla, id: r.id });
+      else totalExistentes++;
+    });
+
+    if (nuevos.length) {
+      const { error: errIns } = await _supabase.from(tabla).insert(nuevos);
+      if (errIns) { mostrarToast(`Error restaurando ${tabla}: ${errIns.message}`, 'error'); continue; }
+      totalNuevos += nuevos.length;
+    }
+  }
+
+  mostrarToast(
+    `Histórico restaurado: ${totalNuevos} registro(s) nuevo(s) agregado(s), ${totalExistentes} ya existían sin cambios${conflictos.length ? `, ${conflictos.length} con diferencias (no se modificaron, revisar manualmente)` : ''}.`,
+    conflictos.length ? 'atencion' : 'exito'
+  );
+}
+
+/* ============================================================
+   LIMPIAR INFORMACIÓN
+
+   Borra datos OPERATIVOS de un período+empresa, nunca configuración
+   (catálogos, usuarios, plan de cuentas). Exige que exista un
+   histórico generado para ese período antes de permitirlo, y pide
+   selección de qué tablas limpiar + doble confirmación. Reutiliza
+   _histDatosPeriodo (el mismo motor del histórico) para calcular los
+   conteos, así el número que Wendy ve ANTES de limpiar es exactamente
+   el mismo que ya quedó respaldado en el Excel.
+   ============================================================ */
+
+const _HIST_ETIQUETAS_LIMPIEZA = {
+  tesoreria_mbd:        'Tesorería — Pagos (MBD)',
+  movimientos:          'Tesorería — Extracto bancario (EECC)',
+  contabilidad_compras: 'Contabilidad — Compras',
+  contabilidad_ventas:  'Contabilidad — Ventas',
+  registro_compras:     'Tributaria — Registro de Compras',
+  registro_ventas:      'Tributaria — Registro de Ventas',
+  rh_registros:         'RH Recibidos',
+  planilla_rh:          'Planilla — RH Emitidos',
+  conciliaciones:       'Conciliación',
+  planilla_periodos:    'Planilla — Remuneraciones',
+  planillas_movilidad:  'Planilla — Movilidad',
+  asientos:             'Contabilidad — Asientos',
+  notas_operativas:     'Notas operativas',
+  alertas_sistema:      'Alertas del sistema',
+};
+
+// Marcadas por defecto = mismo criterio del documento (Contabilidad,
+// Tesorería, Conciliación, Tributaria); el resto ("Otros") queda
+// desmarcado para que la limpieza más amplia sea una decisión explícita.
+const _HIST_LIMPIEZA_DEFAULT_ON = new Set([
+  'tesoreria_mbd', 'movimientos', 'contabilidad_compras', 'contabilidad_ventas',
+  'registro_compras', 'registro_ventas', 'rh_registros', 'conciliaciones', 'asientos',
+]);
+
+// rh_movimiento_links queda fuera a propósito: es la tabla legacy de
+// vinculación RH↔banco y no tiene una columna de período propia — limpiarla
+// por período requeriría inferir pertenencia desde rh_registros/movimientos
+// ya borrados, con riesgo de dejar vínculos huérfanos. Se deja para una
+// fase futura si hace falta.
+
+async function limpiarInformacionClick() {
+  const { empId, desde, empNom } = _getParams();
+  if (!empId || !desde) { mostrarToast('Selecciona empresa y "Periodo desde" (un solo mes)', 'atencion'); return; }
+  const periodo = desde;
+
+  mostrarToast('Verificando información del período…', 'info');
+  const datosPeriodo = await _histDatosPeriodo(empId, periodo);
+  const conteos = datosPeriodo.conteos;
+  const totalOperativo = Object.entries(conteos)
+    .filter(([t]) => _HIST_ETIQUETAS_LIMPIEZA[t])
+    .reduce((s, [, n]) => s + n, 0);
+
+  if (totalOperativo === 0) {
+    mostrarToast('No hay información operativa en ese período para limpiar.', 'atencion');
+    return;
+  }
+
+  const { data: pc } = await _supabase.from('periodos_contables').select('*')
+    .eq('empresa_id', empId).eq('periodo', periodo).maybeSingle();
+
+  if (!pc || !pc.historico_generado_en) {
+    mostrarToast('No existe un histórico generado para este período. Genera uno primero con "📦 Generar histórico" antes de limpiar.', 'atencion');
+    return;
+  }
+
+  _histAbrirModalLimpieza(empId, empNom, periodo, conteos, pc);
+}
+
+function _histAbrirModalLimpieza(empId, empNom, periodo, conteos, pc) {
+  const mc = document.getElementById('modal-container');
+  // "Planilla — Remuneraciones" combina periodos + su detalle (el número
+  // de trabajadores/registros es lo que realmente representa el impacto).
+  const detallePlanilla = conteos.planilla_periodos > 0
+    ? `${conteos.planilla_periodos} período(s), ${conteos.planilla_detalle || 0} registro(s)` : '';
+
+  const filas = Object.entries(_HIST_ETIQUETAS_LIMPIEZA)
+    .filter(([tabla]) => conteos[tabla] > 0)
+    .map(([tabla, etiqueta]) => {
+      const esPlanilla = tabla === 'planilla_periodos';
+      const dataConteo = esPlanilla ? (conteos.planilla_periodos + (conteos.planilla_detalle || 0)) : conteos[tabla];
+      return `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--color-borde)">
+        <input type="checkbox" class="hist-limp-chk" value="${tabla}" ${_HIST_LIMPIEZA_DEFAULT_ON.has(tabla) ? 'checked' : ''}>
+        <span style="flex:1">${escapar(etiqueta)}</span>
+        <strong data-conteo="${dataConteo}">${esPlanilla ? detallePlanilla : conteos[tabla]}</strong>
+      </label>`;
+    }).join('');
+
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:480px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>🧹 Limpiar información — ${escapar(periodo)}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:13px;color:var(--color-texto-suave);margin-bottom:10px">
+            Empresa: <strong>${escapar(empNom)}</strong> · Histórico verificado: generado el
+            ${escapar(_histFmtFecha(pc.historico_generado_en?.slice(0,10)))} (${pc.historico_conteo_registros ? Object.values(pc.historico_conteo_registros).reduce((s,n)=>s+n,0) : '—'} registros respaldados).
+          </p>
+          <p style="font-size:13px;margin-bottom:8px">Selecciona qué información operativa de este período deseas limpiar:</p>
+          <div>${filas}</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+          <button class="btn btn-primario" style="background:#C53030" onclick="_histConfirmarLimpieza('${empId}','${escapar(empNom)}','${periodo}')">Continuar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function _histConfirmarLimpieza(empId, empNom, periodo) {
+  const seleccion = [...document.querySelectorAll('.hist-limp-chk:checked')].map(c => c.value);
+  if (!seleccion.length) { mostrarToast('Selecciona al menos una tabla', 'atencion'); return; }
+
+  const conteos = {};
+  document.querySelectorAll('.hist-limp-chk').forEach(c => {
+    if (seleccion.includes(c.value)) conteos[c.value] = Number(c.closest('label').querySelector('strong').dataset.conteo);
+  });
+  const total = Object.values(conteos).reduce((s, n) => s + n, 0);
+  const detalle = seleccion.map(t => `• ${_HIST_ETIQUETAS_LIMPIEZA[t]}: ${conteos[t]}`).join('\n');
+
+  document.querySelector('.modal-overlay')?.remove();
+
+  const ok1 = await confirmar(
+    `⚠️ Estás a punto de limpiar información operativa de NEXUM.\n\n` +
+    `Empresa: ${empNom}\nPeríodo: ${periodo}\n\n${detalle}\n\nTotal: ${total} registro(s)\n\n` +
+    `Esta acción afectará los registros seleccionados del período indicado. Ya se verificó que existe un histórico respaldado.\n¿Deseas continuar?`,
+    { btnOk: 'Continuar', btnColor: '#DD6B20' }
+  );
+  if (!ok1) return;
+
+  const ok2 = await confirmar(
+    `🚨 CONFIRMACIÓN FINAL\n\n¿Estás completamente segura de limpiar la información seleccionada?\n\n` +
+    `Empresa: ${empNom}\nPeríodo: ${periodo}\nRegistros afectados: ${total}\n\nEsta acción modificará los datos operativos actuales.`,
+    { btnOk: 'Sí, limpiar información', btnColor: '#C53030' }
+  );
+  if (!ok2) return;
+
+  mostrarToast('Limpiando información…', 'info');
+  const resultado = {};
+  for (const tabla of seleccion) {
+    try {
+      if (tabla === 'planilla_periodos') await _histBorrarPlanilla(empId, periodo);
+      else if (tabla === 'planillas_movilidad') await _histBorrarPlanillaMovilidad(empId, periodo);
+      else await _histBorrarTablaSimple(tabla, empId, periodo);
+      resultado[tabla] = 'ok';
+    } catch (e) {
+      resultado[tabla] = 'error: ' + e.message;
+    }
+  }
+
+  const errores = Object.entries(resultado).filter(([, v]) => v !== 'ok');
+  if (errores.length) {
+    mostrarToast(`Limpieza completada con errores en: ${errores.map(([t]) => _HIST_ETIQUETAS_LIMPIEZA[t]).join(', ')}. Revisa esas tablas manualmente.`, 'error');
+  } else {
+    mostrarToast(`✓ Limpieza completada — ${total} registro(s) de ${periodo} eliminados. NEXUM está listo para trabajar el siguiente período.`, 'exito');
+  }
+}
+
+// ── Filtros IDÉNTICOS a los usados por _histDatosPeriodo para traer/contar
+//    estas mismas filas — así lo que se cuenta es exactamente lo que se borra.
+async function _histBorrarTablaSimple(tabla, empresaId, periodo) {
+  const { desde, hasta } = _histRangoMes(periodo);
+  const periodoCompacto = periodo.replace('-', '');
+  const cfg = {
+    tesoreria_mbd:        { campo: 'empresa_id', col: 'fecha_deposito', tipo: 'rango' },
+    movimientos:          { campo: 'empresa_operadora_id', col: 'periodo', tipo: 'eq', valor: periodo },
+    contabilidad_compras: { campo: 'empresa_id', col: 'periodo', tipo: 'eq', valor: periodoCompacto },
+    contabilidad_ventas:  { campo: 'empresa_id', col: 'periodo', tipo: 'eq', valor: periodoCompacto },
+    registro_compras:     { campo: 'empresa_operadora_id', col: 'periodo', tipo: 'eq', valor: periodo },
+    registro_ventas:      { campo: 'empresa_operadora_id', col: 'periodo', tipo: 'eq', valor: periodo },
+    rh_registros:         { campo: 'empresa_operadora_id', col: 'fecha_emision', tipo: 'rango' },
+    planilla_rh:          { campo: 'empresa_id', col: 'fecha_emision', tipo: 'rango' },
+    conciliaciones:       { campo: 'empresa_operadora_id', col: 'fecha_conciliacion', tipo: 'rangoHora' },
+    asientos:             { campo: 'empresa_operadora_id', col: 'periodo', tipo: 'eq', valor: periodo },
+    notas_operativas:     { campo: 'empresa_id', col: 'created_at', tipo: 'rangoHora' },
+    alertas_sistema:      { campo: 'empresa_id', col: 'created_at', tipo: 'rangoHora' },
+  }[tabla];
+  if (!cfg) throw new Error('Tabla sin configuración de limpieza: ' + tabla);
+
+  let q = _supabase.from(tabla).delete().eq(cfg.campo, empresaId);
+  if (cfg.tipo === 'eq') q = q.eq(cfg.col, cfg.valor);
+  else if (cfg.tipo === 'rango') q = q.gte(cfg.col, desde).lte(cfg.col, hasta);
+  else if (cfg.tipo === 'rangoHora') q = q.gte(cfg.col, desde).lte(cfg.col, hasta + 'T23:59:59');
+  const { error } = await q;
+  if (error) throw error;
+}
+
+async function _histBorrarPlanilla(empresaId, periodo) {
+  const anio = Number(periodo.slice(0, 4)), mes = Number(periodo.slice(5, 7));
+  const { data: periodos } = await _supabase.from('planilla_periodos').select('id')
+    .eq('empresa_operadora_id', empresaId).eq('anio', anio).eq('mes', mes);
+  const ids = (periodos || []).map(p => p.id);
+  if (!ids.length) return;
+  await _supabase.from('planilla_detalle').delete().in('periodo_id', ids);
+  const { error } = await _supabase.from('planilla_periodos').delete().in('id', ids);
+  if (error) throw error;
+}
+
+async function _histBorrarPlanillaMovilidad(empresaId, periodo) {
+  const { data: pms } = await _supabase.from('planillas_movilidad').select('id')
+    .eq('empresa_operadora_id', empresaId).eq('mes', periodo);
+  const ids = (pms || []).map(p => p.id);
+  if (!ids.length) return;
+  await _supabase.from('planilla_movilidad_detalles').delete().in('planilla_id', ids);
+  const { error } = await _supabase.from('planillas_movilidad').delete().in('id', ids);
+  if (error) throw error;
 }
