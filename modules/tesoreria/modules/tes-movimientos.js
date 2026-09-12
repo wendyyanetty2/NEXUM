@@ -1069,3 +1069,672 @@ async function _movConciliarMes() {
   const res=await _qkEjecutar(periodo);
   _qkRender(res,nombreMes);
 }
+
+/* ============================================================
+   Migrado desde tes-importar-mbd.js (2026-09-11): modal de editar
+   un movimiento y modal de dividir un cargo entre varios
+   comprobantes. Antes vivian en el archivo de la pestana "Importar
+   MBD" (ya eliminada); se quedan aqui porque Movimientos los usa
+   directamente (boton editar y boton dividir de cada fila).
+   ============================================================ */
+const TIPOS_DOC_MBD = [
+  {val:'FA',lab:'FA — Factura'},{val:'BO',lab:'BO — Boletas'},
+  {val:'BP',lab:'BP — Boletas de Pago'},{val:'RH',lab:'RH — Recibo por honorarios'},
+  {val:'TK',lab:'TK — Ticket'},{val:'PM',lab:'PM — Planilla de Movilidad'},
+  {val:'AT',lab:'AT — App de taxi'},{val:'DL',lab:'DL — Delivery'},
+  {val:'PJ',lab:'PJ — Ticket de peaje'},{val:'SB',lab:'SB — Recibo de luz/agua/gas'},
+  {val:'VB',lab:'VB — Voucher de banco'},{val:'OT',lab:'OT — Comprobante sin serie legible'}
+];
+
+let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [], proveedores: [], proyectos: [] };
+
+async function _mbdCargarCatalogos() {
+  // Catálogo propio de la empresa activa (igual que el módulo Catálogos).
+  const eid = empresa_activa.id;
+  const [rc, re, ra, rm, rproy, rmov, rComp, rVent, rRh] = await Promise.all([
+    _supabase.from('conceptos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('autorizaciones').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('medios_pago').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    _supabase.from('proyectos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
+    // Proveedor / Empresa / Personal: SOLO nombres que ya existen en registros reales
+    // de esta empresa (movimientos bancarios, compras, ventas y RH) — no el catálogo
+    // de Clientes/Proveedores. Así el autocompletado nunca "memoriza" un nombre nuevo
+    // o mal escrito hasta que haya quedado guardado de verdad en uno de esos módulos.
+    // Solo lectura: no toca ni depende de la lógica de vinculación/migración con
+    // Tesorería (_qkEjecutar y afines), que sigue igual.
+    _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni')
+      .eq('empresa_id', eid)
+      .not('proveedor_empresa_personal', 'is', null)
+      .order('fecha_deposito', { ascending: false })
+      .limit(5000),
+    _supabase.from('registro_compras').select('nombre_proveedor,ruc_proveedor')
+      .eq('empresa_operadora_id', eid).not('nombre_proveedor', 'is', null).limit(5000),
+    _supabase.from('registro_ventas').select('nombre_cliente,ruc_cliente')
+      .eq('empresa_operadora_id', eid).not('nombre_cliente', 'is', null).limit(5000),
+    _supabase.from('rh_registros').select('prestadores_servicios(nombre,dni)')
+      .eq('empresa_operadora_id', eid).limit(5000),
+  ]);
+
+  // De-duplicar por nombre (por si hubiera ítems repetidos con distinta tilde/espacios
+  // dentro de la misma empresa)
+  const _normNombre = (s) => (s || '').toString().trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+  const _uniq = (arr) => {
+    const seen = new Set();
+    return arr.filter(v => { const k = _normNombre(v); if (!k || seen.has(k)) return false; seen.add(k); return true; });
+  };
+
+  _mbdCatalogos.conceptos      = _uniq((rc.data || []).map(r => r.nombre));
+  _mbdCatalogos.empresas       = _uniq((re.data || []).map(r => r.nombre));
+  _mbdCatalogos.autorizaciones = _uniq((ra.data || []).map(r => r.nombre));
+  _mbdCatalogos.mediosPago     = _uniq((rm.data || []).map(r => r.nombre));
+  _mbdCatalogos.proyectos      = _uniq((rproy.data || []).map(r => r.nombre));
+
+  // Nombres distintos ya usados en registros reales de Movimientos Bancarios,
+  // Compras, Ventas y RH (en ese orden de prioridad para el RUC/DNI mostrado)
+  const candidatosProv = [
+    ...(rmov.data  || []).map(r => ({ nombre: r.proveedor_empresa_personal, doc: r.ruc_dni })),
+    ...(rComp.data || []).map(r => ({ nombre: r.nombre_proveedor,           doc: r.ruc_proveedor })),
+    ...(rVent.data || []).map(r => ({ nombre: r.nombre_cliente,             doc: r.ruc_cliente })),
+    ...(rRh.data   || []).map(r => ({ nombre: r.prestadores_servicios?.nombre, doc: r.prestadores_servicios?.dni })),
+  ];
+  const seenProv = new Set();
+  _mbdCatalogos.proveedores = candidatosProv
+    .filter(r => (r.nombre || '').trim())
+    .filter(r => {
+      const k = _normNombre(r.nombre);
+      if (seenProv.has(k)) return false;
+      seenProv.add(k);
+      return true;
+    })
+    .map(r => ({ nombre: r.nombre.trim(), doc: r.doc || '' }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+// Auto-completar RUC/DNI al seleccionar un proveedor ya registrado en Movimientos
+// Bancarios, Compras, Ventas o RH
+function _mbdFillRucFromProveedor(val) {
+  const rucEl = document.getElementById('mbd-ruc-dni');
+  if (!val || !rucEl || rucEl.value) return;
+  const found = (_mbdCatalogos.proveedores || []).find(p => p.nombre.toLowerCase() === val.toLowerCase());
+  if (found?.doc) rucEl.value = found.doc;
+}
+
+async function abrirModalMBD(id = null) {
+  let item = null;
+  await _mbdCargarCatalogos();
+  if (id) {
+    const { data } = await _supabase.from('tesoreria_mbd').select('*').eq('id', id).single();
+    item = data;
+  }
+
+  // Resolver UUID → número legible para tipo RH
+  let _nroFacturaDisplay = item?.nro_factura_doc || '';
+  let _nroFacturaIsRhUuid = false;
+  if (item?.tipo_doc === 'RH' && item?.nro_factura_doc && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(item.nro_factura_doc)) {
+    const { data: rhReg } = await _supabase.from('rh_registros').select('numero_rh').eq('id', item.nro_factura_doc).single();
+    if (rhReg?.numero_rh) { _nroFacturaDisplay = rhReg.numero_rh; _nroFacturaIsRhUuid = true; }
+  }
+
+  const nroOps = (item?.nro_operacion_bancaria || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!nroOps.length) nroOps.push('');
+
+  const mc = document.getElementById('modal-container');
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)cerrarModalMBD()">
+      <div class="modal" style="max-width:780px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>📊 ${id ? 'Editar' : 'Nuevo'} Movimiento Bancario</h3>
+          <button class="modal-cerrar" onclick="cerrarModalMBD()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="mbd-alerta" class="alerta-error"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+            <div class="campo">
+              <label>Fecha <span class="req">*</span></label>
+              <input type="date" id="mbd-fecha" value="${item?.fecha_deposito||new Date().toISOString().slice(0,10)}">
+            </div>
+            <div class="campo">
+              <label>Monto <span class="req">*</span></label>
+              <input type="number" id="mbd-monto" step="0.01" placeholder="0.00" value="${item?.monto||''}">
+            </div>
+            <div class="campo">
+              <label>Moneda</label>
+              <select id="mbd-moneda">
+                <option value="S/" ${item?.moneda==='S/'?'selected':''}>S/ — Soles</option>
+                <option value="USD" ${item?.moneda==='USD'?'selected':''}>USD — Dólares</option>
+              </select>
+            </div>
+            <div class="campo">
+              <label style="display:flex;align-items:center;justify-content:space-between">
+                N° Operación Bancaria
+                <button type="button" onclick="_mbdAgregarNroOp()" title="Agregar N° adicional"
+                  style="padding:1px 8px;font-size:11px;background:var(--color-secundario);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:var(--font)">+ Agregar</button>
+              </label>
+              <div id="mbd-nro-ops-container" style="display:flex;flex-direction:column;gap:4px">
+                ${nroOps.map((n, i) => i === 0
+                  ? `<input type="text" class="mbd-nro-op-input" value="${escapar(n)}" placeholder="Opcional" style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:13px;width:100%;box-sizing:border-box">`
+                  : `<div style="display:flex;gap:4px"><input type="text" class="mbd-nro-op-input" value="${escapar(n)}" placeholder="N° adicional" style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:13px"><button type="button" onclick="_mbdQuitarNroOp(this)" style="padding:4px 9px;background:rgba(197,48,48,.12);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px;flex-shrink:0">×</button></div>`
+                ).join('')}
+              </div>
+            </div>
+            <div class="campo" style="grid-column:span 2">
+              <label>Descripción</label>
+              <input type="text" id="mbd-descripcion" value="${escapar(item?.descripcion||'')}" placeholder="Descripción del movimiento">
+            </div>
+            <div class="campo" style="grid-column:span 2">
+              <label>Proveedor / Empresa / Personal</label>
+              <input type="text" id="mbd-proveedor"
+                value="${escapar(item?.proveedor_empresa_personal||'')}"
+                placeholder="Escribir o seleccionar de la lista"
+                list="mbd-prov-datalist"
+                oninput="_mbdFillRucFromProveedor(this.value)"
+                onchange="_mbdFillRucFromProveedor(this.value)">
+              <datalist id="mbd-prov-datalist">
+                ${_mbdCatalogos.proveedores.map(p=>`<option value="${escapar(p.nombre)}">${escapar(p.nombre)}${p.doc?' · '+p.doc:''}</option>`).join('')}
+              </datalist>
+            </div>
+            <div class="campo">
+              <label>RUC / DNI</label>
+              <input type="text" id="mbd-ruc-dni" value="${escapar(item?.ruc_dni||'')}" placeholder="Autocompletado al seleccionar">
+            </div>
+            <div class="campo">
+              <label>Concepto</label>
+              <select id="mbd-concepto">
+                <option value="">— Seleccionar —</option>
+                ${_mbdCatalogos.conceptos.map(c=>`<option value="${c}" ${item?.concepto===c?'selected':''}>${c}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Empresa / Proveedor</label>
+              <select id="mbd-empresa">
+                <option value="">— Seleccionar —</option>
+                ${_mbdCatalogos.empresas.map(e=>`<option value="${e}" ${item?.empresa===e?'selected':''}>${e}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Tipo DOC</label>
+              <select id="mbd-tipo-doc">
+                <option value="">— Seleccionar —</option>
+                ${TIPOS_DOC_MBD.map(t=>`<option value="${t.val}" ${item?.tipo_doc===t.val?'selected':''}>${t.lab}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Estado Entrega DOC</label>
+              <select id="mbd-entrega-doc">
+                ${['PENDIENTE','OBSERVADO','EMITIDO','CANCELADO'].map(e=>`<option value="${e}" ${(item?.entrega_doc||'PENDIENTE')===e?'selected':''}>${e}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>N° Factura / DOC</label>
+              <input type="hidden" id="mbd-nro-factura" value="${escapar(item?.nro_factura_doc||'')}">
+              <input type="text" id="mbd-nro-factura-display" value="${escapar(_nroFacturaDisplay)}"
+                placeholder="Serie-Número"
+                ${_nroFacturaIsRhUuid ? 'readonly style="background:rgba(128,128,128,.08);cursor:default" title="Vinculado a RH — para cambiar usar función de vinculación"' : 'oninput="document.getElementById(\'mbd-nro-factura\').value=this.value"'}>
+            </div>
+            <div class="campo">
+              <label>Autorización</label>
+              <select id="mbd-autorizacion">
+                <option value="">— Seleccionar —</option>
+                ${_mbdCatalogos.autorizaciones.map(a=>`<option value="${a}" ${item?.autorizacion===a?'selected':''}>${a}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Medio de Pago</label>
+              <select id="mbd-medio-pago">
+                <option value="">— Seleccionar —</option>
+                ${_mbdCatalogos.mediosPago.map(m=>`<option value="${m}" ${item?.observaciones_3===m?'selected':''}>${m}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo">
+              <label>Cotización</label>
+              <input type="text" id="mbd-cotizacion" value="${escapar(item?.cotizacion||'')}">
+            </div>
+            <div class="campo">
+              <label>OC</label>
+              <input type="text" id="mbd-oc" value="${escapar(item?.oc||'')}">
+            </div>
+            <div class="campo">
+              <label>Proyecto</label>
+              <input type="text" id="mbd-proyecto"
+                value="${escapar(item?.proyecto||'')}"
+                placeholder="Escribir o seleccionar"
+                list="mbd-proy-datalist">
+              <datalist id="mbd-proy-datalist">
+                ${_mbdCatalogos.proyectos.map(p=>`<option value="${escapar(p)}">`).join('')}
+              </datalist>
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Detalles Compra / Servicio</label>
+              <input type="text" id="mbd-detalles" value="${escapar(item?.detalles_compra_servicio||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Observaciones</label>
+              <input type="text" id="mbd-obs" value="${escapar(item?.observaciones||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Obs. 2</label>
+              <input type="text" id="mbd-obs2" value="${escapar(item?.observaciones_2||'')}">
+            </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>Obs. 4</label>
+              <input type="text" id="mbd-obs4" value="${escapar(item?.observaciones_4||'')}">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="cerrarModalMBD()">Cancelar</button>
+          <button class="btn btn-primario" onclick="guardarMBD('${id||''}')">💾 Guardar</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Autocompletar RUC/DNI si el proveedor ya viene con nombre pero sin RUC/DNI
+  // (al editar, el campo se llena vía value="" y eso no dispara oninput/onchange)
+  _mbdFillRucFromProveedor(document.getElementById('mbd-proveedor')?.value || '');
+}
+
+function cerrarModalMBD() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function guardarMBD(id) {
+  const alerta = document.getElementById('mbd-alerta');
+  alerta.classList.remove('visible');
+
+  const fecha  = document.getElementById('mbd-fecha').value;
+  const monto  = parseFloat(document.getElementById('mbd-monto').value);
+
+  if (!fecha) { alerta.textContent = 'La fecha es requerida.'; alerta.classList.add('visible'); return; }
+  if (isNaN(monto)) { alerta.textContent = 'Ingrese un monto válido.'; alerta.classList.add('visible'); return; }
+
+  const payload = {
+    empresa_id:               empresa_activa.id,
+    fecha_deposito:           fecha,
+    monto,
+    moneda:                   document.getElementById('mbd-moneda').value,
+    nro_operacion_bancaria:   Array.from(document.querySelectorAll('#mbd-nro-ops-container .mbd-nro-op-input')).map(el=>el.value.trim()).filter(Boolean).join(', ')||null,
+    descripcion:              document.getElementById('mbd-descripcion').value.trim()||null,
+    proveedor_empresa_personal: document.getElementById('mbd-proveedor').value.trim()||null,
+    ruc_dni:                  document.getElementById('mbd-ruc-dni').value.trim()||null,
+    concepto:                 document.getElementById('mbd-concepto').value||null,
+    empresa:                  document.getElementById('mbd-empresa').value||null,
+    tipo_doc:                 document.getElementById('mbd-tipo-doc').value||null,
+    entrega_doc:              document.getElementById('mbd-entrega-doc').value,
+    nro_factura_doc:          document.getElementById('mbd-nro-factura').value.trim()||null,
+    autorizacion:             document.getElementById('mbd-autorizacion').value||null,
+    cotizacion:               document.getElementById('mbd-cotizacion').value.trim()||null,
+    oc:                       document.getElementById('mbd-oc').value.trim()||null,
+    proyecto:                 document.getElementById('mbd-proyecto').value.trim()||null,
+    detalles_compra_servicio: document.getElementById('mbd-detalles').value.trim()||null,
+    observaciones:            document.getElementById('mbd-obs').value.trim()||null,
+    observaciones_2:          document.getElementById('mbd-obs2').value.trim()||null,
+    observaciones_3:          document.getElementById('mbd-medio-pago').value||null,
+    observaciones_4:          document.getElementById('mbd-obs4').value.trim()||null,
+    creado_por:               perfil_usuario.id,
+    fecha_actualizacion:      new Date().toISOString(),
+  };
+
+  // Migración 2.4 — si el N° Factura/DOC coincide con un comprobante ya
+  // registrado en Contabilidad, autocompletar lo que falte y fusionar
+  // lo que ya esté escrito distinto (nunca sobrescribir en silencio).
+  if (payload.nro_factura_doc && payload.tipo_doc && typeof _migBuscarComprobante === 'function') {
+    const comprobante = await _migBuscarComprobante(payload.nro_factura_doc, payload.tipo_doc);
+    if (comprobante) {
+      const { autocompletar, conflictos } = _migCompararCampos(
+        { proveedor: payload.proveedor_empresa_personal, ruc: payload.ruc_dni, monto: payload.monto },
+        comprobante
+      );
+      if (autocompletar.proveedor) payload.proveedor_empresa_personal = autocompletar.proveedor;
+      if (autocompletar.ruc)       payload.ruc_dni = autocompletar.ruc;
+      if (autocompletar.monto != null) payload.monto = autocompletar.monto;
+
+      if (conflictos.length) {
+        const elegido = await _migModalFusion(conflictos, {
+          proveedor: payload.proveedor_empresa_personal, ruc: payload.ruc_dni, monto: payload.monto,
+        });
+        if (!elegido) return; // canceló — no se guarda nada
+        if (elegido.proveedor != null) payload.proveedor_empresa_personal = elegido.proveedor;
+        if (elegido.ruc != null)       payload.ruc_dni = elegido.ruc;
+        if (elegido.monto != null)     payload.monto = elegido.monto;
+      }
+    }
+  }
+
+  if (id) {
+    const ok = await confirmar('¿Está segura de guardar los cambios en este movimiento?', { btnOk: 'Guardar cambios', btnColor: '#2C5282' });
+    if (!ok) return;
+  } else if (typeof _dupBuscarMovimientoBancario === 'function') {
+    // Alerta de movimiento bancario duplicado (3.1) — mismo monto + misma descripción,
+    // solo al registrar movimientos NUEVOS (no aplica al Estado Parcial: varios
+    // movimientos distintos vinculados al mismo comprobante son normales).
+    const dups = await _dupBuscarMovimientoBancario({
+      monto: payload.monto, descripcion: payload.descripcion,
+      fecha_deposito: payload.fecha_deposito, nro_factura_doc: payload.nro_factura_doc,
+    });
+    if (dups.length) {
+      const ok = await confirmar(
+        `⚠️ Ya existe un movimiento bancario similar (mismo monto y descripción, y mismo comprobante o misma fecha si es un cargo recurrente):\n\n${_dupDetalleMovimientos(dups)}\n\n¿Está segura de registrarlo de todas formas?`,
+        { btnOk: 'Sí, registrar de todas formas', btnColor: '#C53030' }
+      );
+      if (!ok) return;
+    }
+  }
+
+  let error;
+  if (id) {
+    ({ error } = await _supabase.from('tesoreria_mbd').update(payload).eq('id', id));
+  } else {
+    ({ error } = await _supabase.from('tesoreria_mbd').insert(payload));
+  }
+
+  if (error) { alerta.textContent = 'Error al guardar: ' + error.message; alerta.classList.add('visible'); return; }
+  mostrarToast(id ? 'Movimiento actualizado.' : 'Movimiento registrado.', 'exito');
+  cerrarModalMBD();
+  // Refrescar Movimientos manteniendo página y posición de scroll (no
+  // reiniciar la vista al editar)
+  const _y = window.scrollY;
+  await cargarMovimientos(true);
+  requestAnimationFrame(() => window.scrollTo(0, _y));
+}
+
+function _mbdAgregarNroOp() {
+  const container = document.getElementById('mbd-nro-ops-container');
+  if (!container) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;gap:4px';
+  wrap.innerHTML = '<input type="text" class="mbd-nro-op-input" placeholder="N° adicional" style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-family:var(--font);font-size:13px"><button type="button" onclick="_mbdQuitarNroOp(this)" style="padding:4px 9px;background:rgba(197,48,48,.12);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:13px;flex-shrink:0">×</button>';
+  container.appendChild(wrap);
+  wrap.querySelector('input').focus();
+}
+
+function _mbdQuitarNroOp(btn) {
+  const wrap = btn.closest('div');
+  if (wrap && wrap.parentElement?.id === 'mbd-nro-ops-container') wrap.remove();
+}
+
+
+let _dividirOriginal = null;
+let _dividirFilas    = [];
+
+async function _abrirModalDividirMBD(id) {
+  const { data: r, error } = await _supabase.from('tesoreria_mbd').select('*').eq('id', id).single();
+  if (error || !r) { mostrarToast('No se pudo cargar el movimiento.', 'error'); return; }
+  _dividirOriginal = r;
+  _dividirFilas = [
+    { tipodoc: r.tipo_doc || '', nrodoc: r.nro_factura_doc || '', proveedor: r.proveedor_empresa_personal || '', ruc: r.ruc_dni || '', monto: '' },
+    { tipodoc: '', nrodoc: '', proveedor: '', ruc: '', monto: '' },
+  ];
+  _renderModalDividir();
+}
+
+function _guardarFilasDividir() {
+  _dividirFilas.forEach((f, i) => {
+    f.tipodoc   = document.getElementById(`div-tipo-${i}`)?.value   || '';
+    f.nrodoc    = (document.getElementById(`div-nro-${i}`)?.value   || '').trim();
+    f.proveedor = (document.getElementById(`div-prov-${i}`)?.value  || '').trim();
+    f.ruc       = (document.getElementById(`div-ruc-${i}`)?.value   || '').trim();
+    f.monto     = document.getElementById(`div-monto-${i}`)?.value  || '';
+  });
+}
+
+function _addFilaDividir() {
+  _guardarFilasDividir();
+  _dividirFilas.push({ tipodoc: '', nrodoc: '', proveedor: '', ruc: '', monto: '' });
+  _renderModalDividir();
+}
+
+function _removeFilaDividir(i) {
+  if (_dividirFilas.length <= 2) return;
+  _guardarFilasDividir();
+  _dividirFilas.splice(i, 1);
+  _renderModalDividir();
+}
+
+function _actualizarSumaDividir() {
+  if (!_dividirOriginal) return;
+  const montoOrig = Number(_dividirOriginal.monto);
+  const moneda    = _dividirOriginal.moneda === 'USD' ? 'USD' : 'PEN';
+  let suma = 0;
+  _dividirFilas.forEach((_, i) => { suma += parseFloat(document.getElementById(`div-monto-${i}`)?.value || 0); });
+  suma = Math.round(suma * 100) / 100;
+  const diff = Math.round((montoOrig - suma) * 100) / 100;
+  const ok   = Math.abs(diff) < 0.01;
+
+  const sumEl = document.getElementById('div-suma-info');
+  const btnEl = document.getElementById('btn-div-confirmar');
+  if (sumEl) {
+    if (ok) {
+      sumEl.innerHTML = `<span style="color:var(--color-exito);font-weight:700">✅ Suma: ${formatearMoneda(suma, moneda)} = transferencia original</span>`;
+    } else if (suma > montoOrig) {
+      sumEl.innerHTML = `<span style="color:var(--color-critico);font-weight:700">⚠️ Suma: ${formatearMoneda(suma, moneda)} — excede ${formatearMoneda(Math.abs(diff), moneda)} el total</span>`;
+    } else {
+      sumEl.innerHTML = `<span style="color:var(--color-atencion);font-weight:700">⏳ Suma: ${formatearMoneda(suma, moneda)} — faltan ${formatearMoneda(diff, moneda)}</span>`;
+    }
+  }
+  if (btnEl) {
+    btnEl.disabled = !ok;
+    btnEl.textContent = ok
+      ? `✂️ Confirmar división (${_dividirFilas.length} comprobantes)`
+      : `✂️ Confirmar división`;
+  }
+}
+
+function _renderModalDividir() {
+  const r        = _dividirOriginal;
+  const moneda  = r.moneda === 'USD' ? 'USD' : 'PEN';
+  const n        = _dividirFilas.length;
+
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)_cerrarModalDividir()">
+      <div class="modal" style="max-width:720px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-header">
+          <h3>✂️ Dividir transferencia en comprobantes</h3>
+          <button class="modal-cerrar" onclick="_cerrarModalDividir()">✕</button>
+        </div>
+        <div class="modal-body">
+
+          <!-- Banner transferencia original -->
+          <div style="margin-bottom:16px;padding:12px 16px;background:rgba(44,82,130,.08);border-radius:8px;border-left:4px solid var(--color-secundario);display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Transferencia original</div>
+              <span style="font-family:monospace;font-weight:700">${escapar(r.nro_operacion_bancaria || '—')}</span>
+              <span style="margin-left:8px;font-size:12px;color:var(--color-texto-suave)">${formatearFecha(r.fecha_deposito)}</span>
+              ${r.descripcion ? `<span style="margin-left:8px;font-size:12px">${escapar(r.descripcion)}</span>` : ''}
+            </div>
+            <strong style="font-size:20px;color:var(--color-exito)">${formatearMoneda(Number(r.monto), moneda)}</strong>
+          </div>
+
+          <div style="font-size:12px;color:var(--color-texto-suave);margin-bottom:12px;padding:8px 12px;background:rgba(214,158,46,.08);border-radius:6px;border-left:3px solid var(--color-atencion)">
+            💡 La suma de los montos debe ser exactamente igual al total de la transferencia. Se eliminará la fila original y se crearán las filas por comprobante.
+          </div>
+
+          <!-- Filas de comprobantes -->
+          ${_dividirFilas.map((f, i) => `
+            <div style="background:var(--color-bg);border:1px solid var(--color-borde);border-radius:8px;padding:14px;margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                <span style="font-size:12px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.5px">
+                  📄 Comprobante ${i + 1}
+                </span>
+                ${n > 2 ? `<button onclick="_removeFilaDividir(${i})" style="background:none;border:none;cursor:pointer;color:var(--color-critico);font-size:18px;line-height:1;padding:2px 4px" title="Quitar">✕</button>` : ''}
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+                <div class="campo" style="margin:0">
+                  <label>Tipo de DOC</label>
+                  <select id="div-tipo-${i}" onchange="_actualizarSumaDividir()">
+                    <option value="">— Seleccionar —</option>
+                    ${TIPOS_DOC_MBD.map(t => `<option value="${t.val}" ${f.tipodoc === t.val ? 'selected' : ''}>${t.lab}</option>`).join('')}
+                  </select>
+                </div>
+                <div class="campo" style="margin:0">
+                  <label>N° Comprobante</label>
+                  <input type="text" id="div-nro-${i}" value="${escapar(f.nrodoc)}" placeholder="Ej: E001-17, 001-10-25 (opcional, puede completarse después)">
+                </div>
+                <div class="campo" style="margin:0">
+                  <label>Monto (${moneda}) <span style="color:var(--color-critico)">*</span></label>
+                  <input type="number" id="div-monto-${i}" value="${escapar(String(f.monto))}" placeholder="0.00" step="0.01" oninput="_actualizarSumaDividir()" style="text-align:right">
+                </div>
+                <div class="campo" style="margin:0;grid-column:span 2">
+                  <label>Proveedor / Trabajador / Personal</label>
+                  <input type="text" id="div-prov-${i}" value="${escapar(f.proveedor)}" placeholder="Nombre completo">
+                </div>
+                <div class="campo" style="margin:0">
+                  <label>DNI / RUC</label>
+                  <input type="text" id="div-ruc-${i}" value="${escapar(f.ruc)}" placeholder="Documento de identidad">
+                </div>
+              </div>
+            </div>`).join('')}
+
+          <button onclick="_addFilaDividir()" style="${estiloBtnSecundario()};width:100%;margin-bottom:14px;font-size:13px">
+            + Agregar comprobante
+          </button>
+
+          <!-- Indicador de suma -->
+          <div id="div-suma-info" style="text-align:center;padding:10px 14px;border-radius:6px;background:var(--color-bg);font-size:13px;margin-bottom:4px">
+            <span style="color:var(--color-texto-suave)">Ingresa los montos para verificar la suma</span>
+          </div>
+
+          <div id="div-alerta" class="alerta-error"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="_cerrarModalDividir()">Cancelar</button>
+          <button class="btn btn-primario" id="btn-div-confirmar" disabled onclick="_confirmarDividirMBD()">
+            ✂️ Confirmar división
+          </button>
+        </div>
+      </div>
+    </div>`;
+
+  _actualizarSumaDividir();
+}
+
+function _cerrarModalDividir() {
+  const mc = document.getElementById('modal-container');
+  if (mc) mc.innerHTML = '';
+  _dividirOriginal = null;
+  _dividirFilas    = [];
+}
+
+async function _confirmarDividirMBD() {
+  _guardarFilasDividir();
+  const r      = _dividirOriginal;
+  const alerta = document.getElementById('div-alerta');
+  const btn    = document.getElementById('btn-div-confirmar');
+  const moneda = r.moneda === 'USD' ? 'USD' : 'PEN';
+  const n      = _dividirFilas.length;
+
+  // Validar cada fila — solo el monto es obligatorio (la suma debe cuadrar con el total original).
+  // Tipo de DOC, N° Comprobante y Proveedor pueden completarse después.
+  for (let i = 0; i < n; i++) {
+    const f = _dividirFilas[i];
+    if (!parseFloat(f.monto)) {
+      if (alerta) { alerta.textContent = `Comprobante ${i+1}: ingresa un monto válido distinto de cero.`; alerta.classList.add('visible'); }
+      return;
+    }
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
+
+  // Construir las N filas hijas
+  const nuevasFilas = _dividirFilas.map((f, i) => {
+    const proveedor = f.proveedor || r.proveedor_empresa_personal || null;
+    const cotizacion = r.cotizacion;
+    const oc = r.oc;
+    const proyecto = r.proyecto;
+    const concepto = r.concepto;
+    const empresa = r.empresa;
+    const descripcion = (r.descripcion || '') + (n > 1 ? ` (${i+1}/${n})` : '');
+    // Estado según completitud real de los 14 campos (PENDIENTE/OBSERVADO/EMITIDO) — punto 2.5
+    const estadoDoc = typeof _conEvalCompletitud14 === 'function'
+      ? _conEvalCompletitud14({
+          nro_operacion_bancaria: r.nro_operacion_bancaria, fecha_deposito: r.fecha_deposito,
+          descripcion, moneda: r.moneda, monto: f.monto,
+          proveedor_empresa_personal: proveedor, ruc_dni: f.ruc,
+          cotizacion, oc, proyecto, concepto, empresa,
+          nro_factura_doc: f.nrodoc, tipo_doc: f.tipodoc, autorizacion: r.autorizacion,
+        })
+      : 'PENDIENTE';
+    return {
+      empresa_id:                 r.empresa_id,
+      nro_operacion_bancaria:     r.nro_operacion_bancaria,
+      fecha_deposito:             r.fecha_deposito,
+      moneda:                     r.moneda,
+      monto:                      parseFloat(f.monto),
+      descripcion,
+      proveedor_empresa_personal: proveedor,
+      ruc_dni:                    f.ruc || null,
+      tipo_doc:                   f.tipodoc,
+      nro_factura_doc:            f.nrodoc,
+      entrega_doc:                estadoDoc,
+      concepto,
+      empresa,
+      proyecto,
+      autorizacion:               r.autorizacion,
+      cotizacion,
+      oc,
+      observaciones:              r.observaciones,
+      detalles_compra_servicio:   r.detalles_compra_servicio,
+      observaciones_2:            r.observaciones_2,
+      fecha_actualizacion:        new Date().toISOString(),
+    };
+  });
+
+  // 1. Insertar las filas nuevas
+  const { error: errIns } = await _supabase.from('tesoreria_mbd').insert(nuevasFilas);
+  if (errIns) {
+    if (alerta) { alerta.textContent = 'Error al crear los comprobantes: ' + errIns.message; alerta.classList.add('visible'); }
+    if (btn) { btn.disabled = false; btn.textContent = `✂️ Confirmar división (${n} comprobantes)`; }
+    return;
+  }
+
+  // 2. Eliminar la fila original
+  const { error: errDel } = await _supabase.from('tesoreria_mbd').delete().eq('id', r.id);
+  if (errDel) {
+    mostrarToast('Comprobantes creados, pero hubo un error al eliminar la fila original. Revisa duplicados.', 'atencion');
+    _cerrarModalDividir();
+    cargarMovimientos(true);
+    return;
+  }
+
+  mostrarToast(`✅ Transferencia dividida en ${n} comprobantes. Estado asignado según completitud de campos.`, 'exito');
+  _cerrarModalDividir();
+  cargarMovimientos(true);
+}
+
+
+function estiloSelect() {
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+}
+function estiloInput() {
+  return 'padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)';
+}
+function estiloBtnPrimario() {
+  return 'padding:8px 16px;background:var(--color-secundario);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:500';
+}
+function estiloBtnSecundario() {
+  return 'padding:8px 14px;background:var(--color-bg-card);color:var(--color-texto);border:1px solid var(--color-borde);border-radius:6px;cursor:pointer;font-family:var(--font);font-size:13px';
+}
+function estiloBtnIcono(tipo) {
+  const bg = tipo === 'danger' ? 'rgba(197,48,48,.1)' : 'rgba(44,82,130,.1)';
+  const co = tipo === 'danger' ? '#C53030' : 'var(--color-secundario)';
+  return `padding:4px 8px;background:${bg};color:${co};border:none;border-radius:4px;cursor:pointer;font-size:13px`;
+}
+function estiloCard(color) {
+  return `background:${color};color:#fff;padding:12px 16px;border-radius:8px;min-width:140px`;
+}
+function estilosBadge() {
+  return `<style>
+    .badge-doc{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--color-secundario);color:#fff}
+    .badge-medio{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#553C9A;color:#fff}
+    .badge-estado-pendiente{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#C53030;color:#fff}
+    .badge-estado-observado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#D69E2E;color:#fff}
+    .badge-estado-emitido{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#2F855A;color:#fff}
+    .badge-estado-cancelado{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#718096;color:#fff}
+  </style>`;
+}
+
