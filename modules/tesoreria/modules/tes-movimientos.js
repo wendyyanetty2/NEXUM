@@ -263,12 +263,12 @@ function _renderResumenMov() {
   const totD   = filas.filter(r => r.moneda === 'USD').reduce((s,r)=>s+Number(r.monto),0);
   const pend   = filas.filter(r => r.entrega_doc === 'PENDIENTE').length;
   div.innerHTML = `
-    <div class="resumen-card" style="background:var(--color-exito)">
-      <div class="rc-label">Total soles</div>
+    <div class="resumen-card" style="background:${totS<0?'var(--color-critico)':'var(--color-exito)'}">
+      <div class="rc-label">Saldo neto (S/)</div>
       <div class="rc-valor">S/ ${_fmtMov(totS)}</div>
     </div>
-    ${totD ? `<div class="resumen-card" style="background:#2B6CB0">
-      <div class="rc-label">Total USD</div>
+    ${totD ? `<div class="resumen-card" style="background:${totD<0?'var(--color-critico)':'#2B6CB0'}">
+      <div class="rc-label">Saldo neto (USD)</div>
       <div class="rc-valor">$ ${_fmtMov(totD)}</div>
     </div>` : ''}
     <div class="resumen-card" style="background:${pend>0?'var(--color-atencion)':'#4A5568'}">

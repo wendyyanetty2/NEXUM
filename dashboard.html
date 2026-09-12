@@ -369,8 +369,8 @@ async function cargarDashboard() {
     const _card = (icono, cls, num, lbl) =>
       `<div class="stat-card"><div class="stat-icono ${cls}">${icono}</div><div class="stat-info"><div class="numero">${num}</div><div class="etiqueta">${lbl}</div></div></div>`;
     kpisEl.innerHTML =
-      _card('💰','verde', `S/ ${_fmt(soles)}`, 'Total mes (S/)') +
-      (dolares ? _card('💵','azul', `$ ${_fmt(dolares)}`, 'Total mes (USD)') : '') +
+      _card('💰', soles < 0 ? 'rojo' : 'verde', `S/ ${_fmt(soles)}`, 'Saldo neto mes (S/)') +
+      (dolares ? _card('💵', dolares < 0 ? 'rojo' : 'azul', `$ ${_fmt(dolares)}`, 'Saldo neto mes (USD)') : '') +
       _card('📄','azul', todas.length, 'Movimientos totales') +
       _card('✅','verde', emitidos.length, 'Con comprobante') +
       _card('🔴','rojo', pendientes.length, 'Pendientes doc.') +
@@ -383,7 +383,7 @@ async function cargarDashboard() {
     const mapProy = {};
     todas.forEach(r => {
       const k = (r.proyecto || 'Sin proyecto').trim();
-      mapProy[k] = (mapProy[k] || 0) + Number(r.monto);
+      mapProy[k] = (mapProy[k] || 0) + Math.abs(Number(r.monto));
     });
     const sortProy = Object.entries(mapProy).sort((a,b) => b[1]-a[1]);
     const totalProy = sortProy.reduce((s,[,v]) => s+v, 0);
@@ -412,7 +412,7 @@ async function cargarDashboard() {
     const mapConc = {};
     todas.forEach(r => {
       const k = (r.concepto || 'Sin concepto').trim();
-      mapConc[k] = (mapConc[k] || 0) + Number(r.monto);
+      mapConc[k] = (mapConc[k] || 0) + Math.abs(Number(r.monto));
     });
     const sortConc = Object.entries(mapConc).sort((a,b) => b[1]-a[1]);
     if (!sortConc.length) {
@@ -434,7 +434,7 @@ async function cargarDashboard() {
     if (!pendientes.length) {
       pendEl.innerHTML = '<p style="text-align:center;color:var(--color-exito);font-size:13px;padding:16px">✅ Sin pendientes</p>';
     } else {
-      const totalPend = pendientes.reduce((s,r)=>s+Number(r.monto),0);
+      const totalPend = pendientes.reduce((s,r)=>s+Math.abs(Number(r.monto)),0);
       pendEl.innerHTML = `<div style="padding:8px 0">
         <div style="font-size:22px;font-weight:700;color:#C53030;margin-bottom:4px">${pendientes.length} movimientos</div>
         <div style="font-size:13px;color:var(--color-texto-suave)">Suma pendiente: <strong>S/ ${_fmt(totalPend)}</strong></div>
@@ -449,7 +449,7 @@ async function cargarDashboard() {
     if (!observados.length) {
       obsEl.innerHTML = '<p style="text-align:center;color:var(--color-exito);font-size:13px;padding:16px">✅ Sin observados</p>';
     } else {
-      const totalObs = observados.reduce((s,r)=>s+Number(r.monto),0);
+      const totalObs = observados.reduce((s,r)=>s+Math.abs(Number(r.monto)),0);
       obsEl.innerHTML = `<div style="padding:8px 0">
         <div style="font-size:22px;font-weight:700;color:#D69E2E;margin-bottom:4px">${observados.length} movimientos</div>
         <div style="font-size:13px;color:var(--color-texto-suave)">Suma observada: <strong>S/ ${_fmt(totalObs)}</strong></div>
