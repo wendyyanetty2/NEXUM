@@ -43,3 +43,7 @@ Plantillas excel base/
 
 # Config local de Claude Code (no se comparte)
 .claude/settings.local.json
+
+# Herramientas de un solo uso con acciones destructivas (borrado masivo) —
+# se corren localmente y no se suben al repo público
+eliminar-tributaria-planilla.html
