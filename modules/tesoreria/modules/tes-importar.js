@@ -398,9 +398,13 @@ async function cargarHistorialImportaciones() {
               <button onclick="vincularCuentaLote('${l.id}')"
                 style="padding:3px 8px;background:rgba(44,82,130,.1);color:var(--color-secundario);border:none;border-radius:4px;cursor:pointer;font-size:12px"
                 title="Vincular esta importación a una cuenta bancaria">🔗 Vincular</button>` : ''}
-              <button onclick="eliminarLoteEECC('${l.id}', ${l.registros_ok || 0})"
+              <button onclick="quitarLoteDelHistorial('${l.id}')"
+                style="padding:3px 8px;background:rgba(113,71,224,.1);color:#7147e0;border:none;border-radius:4px;cursor:pointer;font-size:12px"
+                title="Quitar esta fila del historial — NO borra los movimientos ya importados, solo limpia el registro">🗒️ Quitar del historial</button>
+              ${l.registros_ok > 0 ? `
+              <button onclick="eliminarLoteYMovimientos('${l.id}', ${l.registros_ok || 0})"
                 style="padding:3px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:12px"
-                title="Eliminar esta importación y sus movimientos">🗑️</button>
+                title="Deshacer esta importación por completo: además del historial, borra sus ${l.registros_ok} movimiento(s) ya cargados">🗑️ Deshacer importación</button>` : ''}
             </td>
           </tr>`).join('')}
         </tbody>
@@ -408,29 +412,51 @@ async function cargarHistorialImportaciones() {
     </div>`;
 }
 
-async function eliminarLoteEECC(loteId, cantMovimientos) {
-  const msg = cantMovimientos > 0
-    ? `¿Eliminar esta importación y sus ${cantMovimientos} movimiento(s)? Podrás volver a subir el archivo.`
-    : '¿Eliminar esta importación del historial?';
-  if (!await confirmar(msg, { btnOk: 'Eliminar', btnColor: '#C53030' })) return;
+// ── Quitar SOLO la fila del historial (log de la importación) — nunca
+//    toca los movimientos ya cargados en Movimientos/tesoreria_mbd. Es la
+//    acción normal para mantener el historial limpio (Wendy, 2026-09-12:
+//    "que no perjudique todo lo que se armó ya"). ───────────────────────
+async function quitarLoteDelHistorial(loteId) {
+  if (!await confirmar('¿Quitar esta importación del historial? Los movimientos ya cargados NO se van a borrar.', { btnOk: 'Quitar del historial', btnColor: '#7147e0' })) return;
 
-  if (cantMovimientos > 0) {
-    const { error: errMov } = await _supabase
-      .from('movimientos').delete().eq('lote_importacion', loteId);
-    if (errMov) { mostrarToast('Error al eliminar movimientos: ' + errMov.message, 'error'); return; }
+  const { error } = await _supabase.from('lotes_importacion').delete().eq('id', loteId);
+  if (error) { mostrarToast('Error al quitar del historial: ' + error.message, 'error'); return; }
 
-    // También los que este mismo lote haya creado en tesoreria_mbd (el
-    // registro de negocio) — si no, quedarían huérfanos ahí.
-    const { error: errMbd } = await _supabase
-      .from('tesoreria_mbd').delete().eq('lote_importacion', loteId);
-    if (errMbd) { mostrarToast('Error al eliminar movimientos (MBD): ' + errMbd.message, 'error'); return; }
-  }
+  mostrarToast('Importación quitada del historial. Tus movimientos siguen intactos.', 'exito');
+  await cargarHistorialImportaciones();
+}
+
+// ── Deshacer la importación por completo: borra también los movimientos
+//    reales que trajo (Movimientos y tesoreria_mbd). Acción aparte y con
+//    doble confirmación porque SÍ afecta datos ya trabajados — usarla solo
+//    cuando de verdad hay que rehacer una importación mal hecha. ─────────
+async function eliminarLoteYMovimientos(loteId, cantMovimientos) {
+  const ok1 = await confirmar(
+    `⚠️ Esto va a borrar ${cantMovimientos} movimiento(s) que ya se importaron y podrían estar vinculados a comprobantes, conciliaciones u otros trabajos. Esta acción no se puede deshacer.\n¿Quieres continuar?`,
+    { btnOk: 'Continuar', btnColor: '#C53030' }
+  );
+  if (!ok1) return;
+  const ok2 = await confirmar(
+    `🚨 CONFIRMACIÓN FINAL: ¿Borrar definitivamente esta importación y sus ${cantMovimientos} movimiento(s)?`,
+    { btnOk: 'Sí, borrar todo', btnColor: '#C53030' }
+  );
+  if (!ok2) return;
+
+  const { error: errMov } = await _supabase
+    .from('movimientos').delete().eq('lote_importacion', loteId);
+  if (errMov) { mostrarToast('Error al eliminar movimientos: ' + errMov.message, 'error'); return; }
+
+  // También los que este mismo lote haya creado en tesoreria_mbd (el
+  // registro de negocio) — si no, quedarían huérfanos ahí.
+  const { error: errMbd } = await _supabase
+    .from('tesoreria_mbd').delete().eq('lote_importacion', loteId);
+  if (errMbd) { mostrarToast('Error al eliminar movimientos (MBD): ' + errMbd.message, 'error'); return; }
 
   const { error: errLote } = await _supabase
     .from('lotes_importacion').delete().eq('id', loteId);
   if (errLote) { mostrarToast('Error al eliminar registro: ' + errLote.message, 'error'); return; }
 
-  mostrarToast('Importación eliminada. Puedes volver a subir el archivo.', 'exito');
+  mostrarToast('Importación y sus movimientos eliminados. Puedes volver a subir el archivo.', 'exito');
   await cargarHistorialImportaciones();
 }
 
