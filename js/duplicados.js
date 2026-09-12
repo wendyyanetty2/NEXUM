@@ -297,6 +297,19 @@ function _dupUltimos6(numOp) {
   return s.slice(-6);
 }
 
+// Diferencia en días calendario entre dos fechas "YYYY-MM-DD" (Infinity si
+// falta alguna). MBD y EECC pueden registrar la misma operación con fechas
+// distintas (fecha de proceso del banco vs. fecha en que se cargó a mano) —
+// Wendy confirmó (2026-09-12) tolerar hasta 3 días sin que eso impida
+// reconocer que es la misma operación cuando el N° de operación sí coincide.
+function _dupDiasEntre(f1, f2) {
+  if (!f1 || !f2) return Infinity;
+  const d1 = new Date(f1 + 'T00:00:00'), d2 = new Date(f2 + 'T00:00:00');
+  if (isNaN(d1) || isNaN(d2)) return Infinity;
+  return Math.abs((d1 - d2) / 86400000);
+}
+const _DUP_TOLERANCIA_DIAS = 3;
+
 // Clasifica una fila candidata (de un Excel recién leído) contra los
 // movimientos ya existentes en tesoreria_mbd para esa empresa.
 // candidato: { fecha, descripcion, moneda, monto, numero_operacion }
@@ -318,18 +331,26 @@ function _dupClasificarMovimiento(candidato, existentes, conceptosRecurrentes) {
     const monedaEx = (ex.moneda || 'PEN').toUpperCase().replace('S/.', 'PEN').replace('S/', 'PEN');
     const descEx   = (ex.descripcion || '').trim().toLowerCase();
 
-    const montoOk  = Math.abs(montoCand - montoEx) < 0.01;
-    const monedaOk = monedaCand === monedaEx;
-    const fechaOk  = fechaCand === fechaEx;
-    const descOk   = !!descCand && descCand === descEx;
+    const montoOk    = Math.abs(montoCand - montoEx) < 0.01;
+    const monedaOk   = monedaCand === monedaEx;
+    const fechaOk    = fechaCand === fechaEx;
+    const diasFecha  = _dupDiasEntre(fechaCand, fechaEx);
+    const fechaCerca = diasFecha <= _DUP_TOLERANCIA_DIAS;
+    const descOk     = !!descCand && descCand === descEx;
 
     if (clave6Cand && clave6Ex && clave6Cand === clave6Ex) {
-      if (montoOk && monedaOk && fechaOk && descOk) {
-        return { estado: 'ya_existe', match: ex, razon: 'Mismo N° de operación (últimos 6 dígitos) + fecha + monto + descripción' };
+      // Núcleo de identificación: N° de operación (últimos 6) + descripción +
+      // moneda + monto. La fecha es un validador adicional, no bloqueante —
+      // MBD y EECC pueden registrar la misma operación con fechas distintas
+      // (±3 días tolerados) sin que eso impida reconocerla como la misma.
+      if (montoOk && monedaOk && descOk && fechaCerca) {
+        const fechaTxt = fechaOk ? 'fecha exacta' : `fecha a ${Math.round(diasFecha)} día(s), dentro de tolerancia`;
+        return { estado: 'ya_existe', match: ex, razon: `Mismo N° de operación (últimos 6 dígitos) + descripción + moneda + monto (${fechaTxt})` };
       }
-      // El N° de operación coincide pero algo más no cuadra — no se descarta
-      // sola, pero tampoco se da por buena automáticamente: a revisar.
-      mejorPosible = { estado: 'posible', match: ex, razon: 'N° de operación coincide, pero fecha/monto/descripción no calzan del todo' };
+      // El N° de operación coincide pero algo más no cuadra (o la fecha se
+      // aleja más de lo tolerado) — no se descarta sola, pero tampoco se da
+      // por buena automáticamente: a revisar.
+      mejorPosible = { estado: 'posible', match: ex, razon: 'N° de operación coincide, pero descripción/moneda/monto no calzan, o la fecha difiere demasiado' };
       continue;
     }
 
@@ -383,6 +404,120 @@ async function _dupClasificarLoteMovimientos(filas) {
     return { fila, ...r };
   });
   return resultados;
+}
+
+/* ============================================================
+   COMPARAR MBD ↔ EECC — detecta lo que falta de un lado o del otro
+   (pedido por Wendy, 2026-09-12): no solo evitar duplicar al importar,
+   sino poder revisar para un período si hay movimientos cargados a mano
+   en tesoreria_mbd (MBD) que el extracto bancario (tabla "movimientos",
+   cargado por Importar EECC) no muestra, o viceversa — usando el MISMO
+   criterio de identificación (N° operación últimos 6 + descripción +
+   moneda + monto, fecha como validador con tolerancia de
+   _DUP_TOLERANCIA_DIAS días, no bloqueante). Solo lectura. ────────────
+   ============================================================ */
+async function _dupCompararMbdEecc(desde, hasta) {
+  const conceptosRecurrentes = await _dupCargarConceptosRecurrentes();
+  const empId = empresa_activa.id;
+
+  // Margen de _DUP_TOLERANCIA_DIAS días a cada lado para no perder pares
+  // cuya fecha cae justo en el borde del rango pedido.
+  const desdeM = new Date(desde + 'T00:00:00'); desdeM.setDate(desdeM.getDate() - _DUP_TOLERANCIA_DIAS);
+  const hastaM = new Date(hasta + 'T00:00:00'); hastaM.setDate(hastaM.getDate() + _DUP_TOLERANCIA_DIAS);
+  const desdeQ = desdeM.toISOString().slice(0,10), hastaQ = hastaM.toISOString().slice(0,10);
+
+  const [{ data: mbd }, { data: eecc }] = await Promise.all([
+    _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empId)
+      .gte('fecha_deposito', desdeQ).lte('fecha_deposito', hastaQ),
+    _supabase.from('movimientos').select('*, cuentas_bancarias(nombre_alias)').eq('empresa_operadora_id', empId)
+      .gte('fecha', desdeQ).lte('fecha', hastaQ),
+  ]);
+
+  const mbdList  = mbd  || [];
+  const eeccList = eecc || [];
+
+  // EECC en el "formato existentes" que espera _dupClasificarMovimiento
+  const eeccComoExistentes = eeccList.map(m => ({
+    fecha_deposito: m.fecha, descripcion: m.descripcion, moneda: m.moneda,
+    monto: m.importe, nro_operacion_bancaria: m.numero_operacion, nro_operacion_alt: null,
+  }));
+  const mbdComoExistentes = mbdList.map(m => ({
+    fecha_deposito: m.fecha_deposito, descripcion: m.descripcion, moneda: m.moneda,
+    monto: m.monto, nro_operacion_bancaria: m.nro_operacion_bancaria, nro_operacion_alt: m.nro_operacion_alt,
+  }));
+
+  const enFecha = (f) => f >= desde && f <= hasta; // solo reportar "faltantes" del período pedido, aunque se haya buscado con margen
+
+  const faltanEnEecc = mbdList
+    .filter(m => enFecha((m.fecha_deposito||'').slice(0,10)))
+    .filter(m => {
+      const cand = { fecha: m.fecha_deposito, descripcion: m.descripcion, moneda: m.moneda, monto: m.monto, numero_operacion: m.nro_operacion_bancaria };
+      return _dupClasificarMovimiento(cand, eeccComoExistentes, conceptosRecurrentes).estado === 'nuevo';
+    });
+
+  const faltanEnMbd = eeccList
+    .filter(m => enFecha((m.fecha||'').slice(0,10)))
+    .filter(m => {
+      const cand = { fecha: m.fecha, descripcion: m.descripcion, moneda: m.moneda, monto: m.importe, numero_operacion: m.numero_operacion };
+      return _dupClasificarMovimiento(cand, mbdComoExistentes, conceptosRecurrentes).estado === 'nuevo';
+    });
+
+  return { faltanEnEecc, faltanEnMbd };
+}
+
+function _dupRenderComparacionMbdEecc(desde, hasta, faltanEnEecc, faltanEnMbd) {
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+
+  const filaMbd = (m) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--color-borde);font-size:12px">
+      <span>${formatearFecha(m.fecha_deposito)} · ${escapar((m.descripcion||'').slice(0,40))} · Op. ${escapar(m.nro_operacion_bancaria||'—')}</span>
+      <span style="display:flex;align-items:center;gap:10px">
+        <strong>${formatearMoneda(m.monto)}</strong>
+        <button onclick="document.querySelector('.modal-overlay').remove();abrirModalMovimiento('${m.id}')"
+          style="padding:3px 10px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">Ver</button>
+      </span>
+    </div>`;
+  const filaEecc = (m) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--color-borde);font-size:12px">
+      <span>${formatearFecha(m.fecha)} · ${escapar((m.descripcion||'').slice(0,40))} · Op. ${escapar(m.numero_operacion||'—')} · ${escapar(m.cuentas_bancarias?.nombre_alias||'—')}</span>
+      <strong>${formatearMoneda(m.importe)}</strong>
+    </div>`;
+
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:760px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+        <div class="modal-header">
+          <h3>🔍 Comparar MBD ↔ EECC — ${escapar(desde)} a ${escapar(hasta)}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
+            Compara por N° de operación (últimos 6 dígitos) + descripción + moneda + monto, con la fecha como validador
+            (tolerancia de ${_DUP_TOLERANCIA_DIAS} días, no bloqueante). Solo lectura — no modifica nada.
+          </p>
+          <h4 style="margin:0 0 8px">🔴 En MBD (Tesorería → Movimientos) pero SIN match en el extracto bancario — ${faltanEnEecc.length}</h4>
+          ${faltanEnEecc.length ? faltanEnEecc.map(filaMbd).join('') : '<p class="text-muted text-sm" style="padding:8px 0">Ninguno.</p>'}
+          <h4 style="margin:18px 0 8px">🔵 En el extracto bancario (EECC) pero SIN match en MBD — ${faltanEnMbd.length}</h4>
+          ${faltanEnMbd.length ? faltanEnMbd.map(filaEecc).join('') : '<p class="text-muted text-sm" style="padding:8px 0">Ninguno.</p>'}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function _dupCompararMbdEeccClick() {
+  const mes  = document.getElementById('mov-mes')?.value;
+  const anio = document.getElementById('mov-anio')?.value;
+  if (!mes || !anio) { mostrarToast('Selecciona mes y año primero', 'atencion'); return; }
+  const desde = `${anio}-${mes}-01`;
+  const hasta = new Date(Number(anio), Number(mes), 0).toISOString().slice(0,10);
+
+  mostrarToast('Comparando MBD contra el extracto bancario…', 'info');
+  const { faltanEnEecc, faltanEnMbd } = await _dupCompararMbdEecc(desde, hasta);
+  _dupRenderComparacionMbdEecc(desde, hasta, faltanEnEecc, faltanEnMbd);
 }
 
 // ── Modal de revisión para los casos "posible" (dudosos) ──────────
