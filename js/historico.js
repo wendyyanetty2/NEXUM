@@ -72,13 +72,18 @@ function _histEtiquetaCobertura(cov) {
 //    varios períodos en un mismo archivo sin repetir cabecera. ────────
 const CAB_MBD = ['N° de operación','Fecha de Deposito','Descripcion','Moneda','Monto',
   'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
-  'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.','Tipo de DOC','Autorización'];
+  'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.','Tipo de DOC','Autorización',
+  'Observaciones','Detalles Compra / Servicio','Observaciones 2',
+  'Estado Conciliación EECC','Tipo Comprobante','Última Actualización'];
 function _filasMBD(data) {
   return data.map(r => [
     r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : '',
     _histFmtFecha(r.fecha_deposito), r.descripcion||'', r.moneda||'S/', r.monto,
     r.proveedor_empresa_personal||'', r.ruc_dni||'', r.cotizacion||'', r.oc||'', r.proyecto||'',
     r.concepto||'', r.empresa||'', r.entrega_doc||'PENDIENTE', r.nro_factura_doc||'', r.tipo_doc||'', r.autorizacion||'',
+    r.observaciones||'', r.detalles_compra_servicio||'', r.observaciones_2||'',
+    r.estado_conciliacion === 'conciliado' ? 'CONCILIADO' : 'PENDIENTE',
+    r.tipo_comprobante||'', _histFmtFecha(r.fecha_actualizacion),
   ]);
 }
 
@@ -158,21 +163,40 @@ async function _filasContabVentasConEstado(data, empresaId) {
   });
 }
 
+// ── Estado bancario (aplicado/pendiente) igual que renderTablaCompras/Ventas
+//    de Tributaria (mismo criterio: nro_factura_doc = serie-numero, EMITIDO). ──
+async function _histAplicadosTributaria(data, empresaId) {
+  const nums = data.map(r => [r.serie, r.numero].filter(Boolean).join('-')).filter(Boolean);
+  const { data: mbd } = nums.length
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc')
+        .eq('empresa_id', empresaId).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', nums)
+    : { data: [] };
+  return new Set((mbd || []).map(r => r.nro_factura_doc));
+}
+
 const CAB_TRIB_COMPRAS = ['Periodo','F. Emisión','F. Vencimiento','Tipo Doc','Serie','Número','RUC Proveedor',
-  'Proveedor','Base Imponible','IGV','Total','Tiene Detracción','Monto Detracción','Deducible Renta','Estado'];
-function _filasTribCompras(data) {
+  'Proveedor','Base Imponible','IGV','Total','Tiene Detracción','Monto Detracción','Deducible Renta','Estado',
+  'Estado Bancario','Observaciones'];
+async function _filasTribCompras(data, empresaId) {
+  if (!data.length) return [];
+  const aplicados = await _histAplicadosTributaria(data, empresaId);
   return data.map(c => [
     c.periodo, c.fecha_emision, c.fecha_vencimiento||'', c.tipo_documento_codigo||'', c.serie||'', c.numero||'',
     c.ruc_proveedor||'', c.nombre_proveedor||'', c.base_imponible||0, c.igv||0, c.total||0,
     c.tiene_detraccion?'Sí':'No', c.monto_detraccion||0, c.deducible_renta?'Sí':'No', c.estado,
+    aplicados.has([c.serie, c.numero].filter(Boolean).join('-')) ? 'APLICADO' : 'PENDIENTE', c.observaciones||'',
   ]);
 }
 
-const CAB_TRIB_VENTAS = ['Periodo','F. Emisión','Tipo Doc','Serie','Número','RUC Cliente','Cliente','Base Imponible','IGV','Total','Moneda','Estado'];
-function _filasTribVentas(data) {
+const CAB_TRIB_VENTAS = ['Periodo','F. Emisión','Tipo Doc','Serie','Número','RUC Cliente','Cliente','Base Imponible',
+  'IGV','Total','Moneda','Estado','Estado Bancario','Observaciones'];
+async function _filasTribVentas(data, empresaId) {
+  if (!data.length) return [];
+  const aplicados = await _histAplicadosTributaria(data, empresaId);
   return data.map(v => [
     v.periodo, v.fecha_emision, v.tipo_documento_codigo||'', v.serie||'', v.numero||'',
     v.ruc_cliente||'', v.nombre_cliente||'', v.base_imponible||0, v.igv||0, v.total||0, v.moneda, v.estado,
+    aplicados.has([v.serie, v.numero].filter(Boolean).join('-')) ? 'APLICADO' : 'PENDIENTE', v.observaciones||'',
   ]);
 }
 
@@ -217,34 +241,65 @@ function _filasVinculos(links) {
   ]);
 }
 
-const CAB_CONCILIACIONES = ['Fecha Conciliación','Tipo Documento','Estado','Tipo Match','Fecha Mov.','Descripción Mov.','Importe Mov.','Moneda','Naturaleza','N° Operación'];
+const CAB_CONCILIACIONES = ['Fecha Conciliación','Tipo Documento','Estado','Tipo Match','Score','Clasificación Manual',
+  'Fecha Mov.','Descripción Mov.','Importe Mov.','Moneda','Naturaleza','N° Operación','N° Documento'];
 function _filasConciliaciones(data) {
-  return data.map(c => [
-    c.fecha_conciliacion?.slice(0,10)||'', c.doc_tipo||'', c.estado||'', c.tipo_match||'',
-    c.movimientos?.fecha||'', c.movimientos?.descripcion||'', c.movimientos?.importe||'',
-    c.movimientos?.moneda||'', c.movimientos?.naturaleza||'', c.movimientos?.numero_operacion||'',
+  return data.map(c => {
+    const mov = c.movimientos;
+    const importe = mov ? (mov.naturaleza === 'CARGO' ? -Math.abs(mov.importe) : Math.abs(mov.importe)) : '';
+    return [
+      c.fecha_conciliacion?.slice(0,10)||'', c.doc_tipo||'', c.estado||'', c.tipo_match||'',
+      c.score ?? '', c.clasificacion_manual||'',
+      mov?.fecha||'', mov?.descripcion||'', importe,
+      mov?.moneda||'', mov?.naturaleza||'', mov?.numero_operacion||'', mov?.numero_documento||'',
+    ];
+  });
+}
+
+const CAB_PLA_PERIODOS = ['Año','Mes','Tipo','Estado','Total Remuneraciones','Total Aportes','Total Descuentos','Total Neto','Fecha Pago'];
+function _filasPlaPeriodos(data) {
+  return data.map(p => [
+    p.anio, p.mes, p.tipo||'', p.estado||'',
+    p.total_remuneraciones||0, p.total_aportes||0, p.total_descuentos||0, p.total_neto||0, p.fecha_pago||'',
   ]);
 }
 
-const CAB_PLA_PERIODOS = ['Año','Mes','Tipo','Estado','Total Neto'];
-function _filasPlaPeriodos(data) { return data.map(p => [p.anio, p.mes, p.tipo||'', p.estado||'', p.total_neto||0]); }
-
-const CAB_PLA_DETALLE = ['Año','Mes','Tipo','DNI','Trabajador','Días Trabajados','Sueldo Base','Rem. Bruta',
-  'Desc. AFP','Desc. ONP','Desc. Renta 5ta','Otros Desc.','Rem. Neta','Aporte EsSalud','Pagado','Fecha Pago'];
+const CAB_PLA_DETALLE = ['Año','Mes','Tipo','DNI','Trabajador','Cargo','AFP/ONP','Días Trabajados','Sueldo Base','Rem. Bruta',
+  'Desc. AFP','Desc. ONP','Desc. Renta 5ta','Otros Desc.','Rem. Neta','Aporte EsSalud','Aporte SENATI','Pagado','Fecha Pago','N° Operación'];
 function _filasPlaDetalle(data) {
   return data.map(d => [
     d.planilla_periodos?.anio||'', d.planilla_periodos?.mes||'', d.planilla_periodos?.tipo||'',
     d.trabajadores?.dni||'', [d.trabajadores?.apellido_paterno,d.trabajadores?.apellido_materno,d.trabajadores?.nombre].filter(Boolean).join(' '),
+    d.trabajadores?.cargo||'', d.trabajadores?.afp||'ONP',
     d.dias_trabajados, d.sueldo_base, d.remuneracion_bruta, d.descuento_afp, d.descuento_onp,
-    d.descuento_renta5ta, d.otros_descuentos, d.remuneracion_neta, d.aporte_essalud,
-    d.pagado?'Sí':'No', d.fecha_pago||'',
+    d.descuento_renta5ta, d.otros_descuentos, d.remuneracion_neta, d.aporte_essalud, d.aporte_senati||0,
+    d.pagado?'Sí':'No', d.fecha_pago||'', d.numero_operacion||'',
   ]);
 }
 
-const CAB_ASIENTOS = ['Periodo','Fecha','N° Asiento','Tipo','Glosa','Total Debe','Total Haber','Diferencia','Estado'];
-function _filasAsientos(data) {
-  return data.map(a => [a.periodo, a.fecha, a.numero_asiento||'', a.tipo||'', a.glosa||'',
-    a.total_debe||0, a.total_haber||0, parseFloat(a.total_debe||0)-parseFloat(a.total_haber||0), a.estado]);
+// ── Asientos con el detalle de línea (cuenta/debe/haber) — igual que
+//    exportarAsientosExcel del propio módulo, que sí trae `asiento_detalle`
+//    aparte (no es un campo embebido en `asientos`). Una fila por línea,
+//    repitiendo los datos de cabecera para que cada fila sea autocontenida
+//    (más fácil de filtrar/ordenar en un histórico que junta varios meses). ──
+const CAB_ASIENTOS = ['Periodo','Fecha','N° Asiento','Tipo','Glosa','Total Debe','Total Haber','Diferencia','Estado',
+  'Cuenta','Nombre Cuenta','Descripción Línea','Debe','Haber'];
+async function _filasAsientos(data, empresaId) {
+  if (!data.length) return { filas: [], detalle: [] };
+  const ids = data.map(a => a.id);
+  const { data: lineas } = await _supabase.from('asiento_detalle').select('*').in('asiento_id', ids).order('asiento_id').order('orden');
+  const porAsiento = new Map();
+  (lineas||[]).forEach(l => { if (!porAsiento.has(l.asiento_id)) porAsiento.set(l.asiento_id, []); porAsiento.get(l.asiento_id).push(l); });
+
+  const filas = [];
+  data.forEach(a => {
+    const cab = [a.periodo, a.fecha, a.numero_asiento||'', a.tipo||'', a.glosa||'',
+      a.total_debe||0, a.total_haber||0, parseFloat(a.total_debe||0)-parseFloat(a.total_haber||0), a.estado];
+    const lns = porAsiento.get(a.id) || [];
+    if (!lns.length) { filas.push([...cab, '', '', '', '', '']); return; }
+    lns.forEach(l => filas.push([...cab, l.cuenta_codigo||'', l.cuenta_nombre||'', l.descripcion||'', l.debe||0, l.haber||0]));
+  });
+  return { filas, detalle: lineas || [] };
 }
 
 const CAB_NOTAS_ALERTAS = ['Tipo','Categoría','Prioridad','Título','Descripción','Monto','Fecha Vencimiento','Estado','Fecha Creación'];
@@ -301,9 +356,9 @@ async function _histDatosPeriodo(empresaId, periodo) {
     _supabase.from('rh_registros').select('*, prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empresaId).gte('fecha_emision', desde).lte('fecha_emision', hasta),
     _supabase.from('planilla_rh').select('*').eq('empresa_id', empresaId).gte('fecha_emision', desde).lte('fecha_emision', hasta),
     _supabase.from('rh_movimiento_links').select('*, rh_registros(numero_rh,nombre_emisor,monto_bruto), movimientos(fecha,importe,numero_operacion)').eq('empresa_id', empresaId),
-    _supabase.from('conciliaciones').select('*, movimientos(fecha,descripcion,importe,moneda,naturaleza,numero_operacion)').eq('empresa_operadora_id', empresaId).gte('fecha_conciliacion', desde).lte('fecha_conciliacion', hasta + 'T23:59:59'),
+    _supabase.from('conciliaciones').select('*, movimientos(fecha,descripcion,importe,moneda,naturaleza,numero_operacion,numero_documento)').eq('empresa_operadora_id', empresaId).gte('fecha_conciliacion', desde).lte('fecha_conciliacion', hasta + 'T23:59:59'),
     _supabase.from('planilla_periodos').select('*').eq('empresa_operadora_id', empresaId).eq('anio', Number(periodo.slice(0,4))).eq('mes', Number(periodo.slice(5,7))),
-    _supabase.from('planilla_detalle').select('*, planilla_periodos!inner(anio,mes,tipo), trabajadores(nombre,apellido_paterno,apellido_materno,dni)').eq('empresa_operadora_id', empresaId).eq('planilla_periodos.anio', Number(periodo.slice(0,4))).eq('planilla_periodos.mes', Number(periodo.slice(5,7))),
+    _supabase.from('planilla_detalle').select('*, planilla_periodos!inner(anio,mes,tipo), trabajadores(nombre,apellido_paterno,apellido_materno,dni,cargo,afp)').eq('empresa_operadora_id', empresaId).eq('planilla_periodos.anio', Number(periodo.slice(0,4))).eq('planilla_periodos.mes', Number(periodo.slice(5,7))),
     _supabase.from('planillas_movilidad').select('*, planilla_movilidad_detalles(*)').eq('empresa_operadora_id', empresaId).eq('mes', periodo),
     _supabase.from('asientos').select('*').eq('empresa_operadora_id', empresaId).eq('periodo', periodo),
     _supabase.from('notas_operativas').select('*').eq('empresa_id', empresaId).gte('created_at', desde).lte('created_at', hasta + 'T23:59:59'),
@@ -317,11 +372,14 @@ async function _histDatosPeriodo(empresaId, periodo) {
   const movIds    = new Set(movData.map(m => m.id));
   const linksPeriodo = linksData.filter(l => rhIds.has(l.rh_id) || movIds.has(l.movimiento_id));
 
-  // Estos 3 usan la MISMA lógica que Contabilidad → Compras/Ventas/RH en pantalla
-  const [filasContabCompras, filasContabVentas, filasRH] = await Promise.all([
+  // Estos usan la MISMA lógica que ve Wendy en pantalla en cada módulo
+  const [filasContabCompras, filasContabVentas, filasRH, filasTribCompras, filasTribVentas, resAsientosDet] = await Promise.all([
     _filasContabComprasConEstado(resContCompras.data||[], empresaId),
     _filasContabVentasConEstado(resContVentas.data||[], empresaId),
     _filasRHRecibidosConEstado(rhData),
+    _filasTribCompras(resRegCompras.data||[], empresaId),
+    _filasTribVentas(resRegVentas.data||[], empresaId),
+    _filasAsientos(resAsientos.data||[]),
   ]);
 
   const conteos = {
@@ -355,6 +413,7 @@ async function _histDatosPeriodo(empresaId, periodo) {
     planillas_movilidad: _histCrudo(resPM.data, ['planilla_movilidad_detalles']),
     planilla_movilidad_detalles: (resPM.data || []).flatMap(p => p.planilla_movilidad_detalles || []),
     asientos: resAsientos.data || [],
+    asiento_detalle: resAsientosDet.detalle,
     notas_operativas: resNotas.data || [],
     alertas_sistema: resAlertas.data || [],
   };
@@ -366,8 +425,8 @@ async function _histDatosPeriodo(empresaId, periodo) {
       EECC_MOVIMIENTOS: _filasEECC(movData, periodo),
       CONTABILIDAD_COMPRAS: filasContabCompras,
       CONTABILIDAD_VENTAS: filasContabVentas,
-      TRIBUTARIA_COMPRAS: _filasTribCompras(resRegCompras.data||[]),
-      TRIBUTARIA_VENTAS: _filasTribVentas(resRegVentas.data||[]),
+      TRIBUTARIA_COMPRAS: filasTribCompras,
+      TRIBUTARIA_VENTAS: filasTribVentas,
       RH_RECIBIDOS: filasRH,
       RH_EMITIDOS: _filasRHEmitidos(resRHEmitido.data||[]),
       VINCULOS_RH_BANCO: _filasVinculos(linksPeriodo),
@@ -376,7 +435,7 @@ async function _histDatosPeriodo(empresaId, periodo) {
       PLANILLA_DETALLE: _filasPlaDetalle(resPlaDetalle.data||[]),
       PLANILLA_MOVILIDAD: _filasPMovResumen(resPM.data||[]),
       PLANILLA_MOVILIDAD_DET: _filasPMovDetalle(resPM.data||[]),
-      ASIENTOS: _filasAsientos(resAsientos.data||[]),
+      ASIENTOS: resAsientosDet.filas,
       NOTAS_Y_ALERTAS: _filasNotasAlertas(resAlertas.data||[], resNotas.data||[]),
     },
   };
@@ -809,6 +868,7 @@ async function _histConfirmarLimpieza(empId, empNom, periodo) {
     try {
       if (tabla === 'planilla_periodos') await _histBorrarPlanilla(empId, periodo);
       else if (tabla === 'planillas_movilidad') await _histBorrarPlanillaMovilidad(empId, periodo);
+      else if (tabla === 'asientos') await _histBorrarAsientos(empId, periodo);
       else await _histBorrarTablaSimple(tabla, empId, periodo);
       resultado[tabla] = 'ok';
     } catch (e) {
@@ -839,7 +899,6 @@ async function _histBorrarTablaSimple(tabla, empresaId, periodo) {
     rh_registros:         { campo: 'empresa_operadora_id', col: 'fecha_emision', tipo: 'rango' },
     planilla_rh:          { campo: 'empresa_id', col: 'fecha_emision', tipo: 'rango' },
     conciliaciones:       { campo: 'empresa_operadora_id', col: 'fecha_conciliacion', tipo: 'rangoHora' },
-    asientos:             { campo: 'empresa_operadora_id', col: 'periodo', tipo: 'eq', valor: periodo },
     notas_operativas:     { campo: 'empresa_id', col: 'created_at', tipo: 'rangoHora' },
     alertas_sistema:      { campo: 'empresa_id', col: 'created_at', tipo: 'rangoHora' },
   }[tabla];
@@ -871,5 +930,15 @@ async function _histBorrarPlanillaMovilidad(empresaId, periodo) {
   if (!ids.length) return;
   await _supabase.from('planilla_movilidad_detalles').delete().in('planilla_id', ids);
   const { error } = await _supabase.from('planillas_movilidad').delete().in('id', ids);
+  if (error) throw error;
+}
+
+async function _histBorrarAsientos(empresaId, periodo) {
+  const { data: asientos } = await _supabase.from('asientos').select('id')
+    .eq('empresa_operadora_id', empresaId).eq('periodo', periodo);
+  const ids = (asientos || []).map(a => a.id);
+  if (!ids.length) return;
+  await _supabase.from('asiento_detalle').delete().in('asiento_id', ids);
+  const { error } = await _supabase.from('asientos').delete().in('id', ids);
   if (error) throw error;
 }
