@@ -336,12 +336,19 @@ function _dupClasificarMovimiento(candidato, existentes, conceptosRecurrentes) {
     // Sin N° de operación confiable en alguno de los dos lados (ej. "00000000"
     // de ITF/comisiones): mismo criterio que ya usa el sistema para esos casos.
     if (montoOk && monedaOk && descOk) {
-      if (conceptosRecurrentes?.has(descCand) && fechaOk) {
-        return { estado: 'ya_existe', match: ex, razon: 'Concepto recurrente (catálogo) + misma fecha' };
-      }
       if (fechaOk) {
+        if (conceptosRecurrentes?.has(descCand)) {
+          return { estado: 'ya_existe', match: ex, razon: 'Concepto recurrente (catálogo) + misma fecha' };
+        }
         return { estado: 'ya_existe', match: ex, razon: 'Monto + descripción + fecha exactos' };
       }
+      // Fecha distinta: si es un concepto recurrente conocido (ITF, comisiones,
+      // transferencias entre cuentas de terceros, etc.) NO se marca como dudoso
+      // — es normal que se repita mes a mes con el mismo monto y descripción,
+      // así que una fecha distinta significa que es el cargo de OTRO mes, no un
+      // duplicado. Wendy lo señaló (2026-09-12): el sistema comparaba filas de
+      // setiembre contra julio solo por coincidir monto+descripción genérica.
+      if (conceptosRecurrentes?.has(descCand)) continue;
       if (!mejorPosible) mejorPosible = { estado: 'posible', match: ex, razon: 'Monto y descripción coinciden, pero la fecha no' };
     }
   }
