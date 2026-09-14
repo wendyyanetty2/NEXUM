@@ -4,6 +4,13 @@
 
 const TIPOS_DOC_ID_V = {'1':'DNI','4':'Carnet Extranjería','6':'RUC','7':'Pasaporte','0':'Otros'};
 
+// ── Filtro por estado (clic en los badges APLICADO/PARCIAL/PENDIENTE) ──
+let _vFiltroEstado = null; // null | 'APLICADO' | 'PARCIAL' | 'PENDIENTE'
+function _vToggleFiltroEstado(estado) {
+  _vFiltroEstado = (_vFiltroEstado === estado) ? null : estado;
+  _renderVentasFiltradas();
+}
+
 // ── Período del filtro (mes+año seleccionados) en formato YYYYMM ───
 function _vPeriodoActual() {
   const mes  = document.getElementById('v-mes')?.value;
@@ -136,6 +143,7 @@ async function _renderVentasFiltradas() {
   const _movsDelEmisorV = r => _conFiltrarPorEmisor(aplicadosMapV.get(_nDocV(r)), r.nro_doc_identidad, r.cliente);
   const _covV  = r => _conCobertura(_movsDelEmisorV(r), r.total_cp);
   const covFilasV   = filas.map(r => ({ r, cov: _covV(r) }));
+  const _vEstadoSimple = e => e.startsWith('COMPLETO') ? 'APLICADO' : e;
   const countAplicV = covFilasV.filter(x => x.cov.estado.startsWith('COMPLETO')).length;
   const countParcV  = covFilasV.filter(x => x.cov.estado === 'PARCIAL').length;
   const countPendV  = covFilasV.filter(x => x.cov.estado === 'PENDIENTE').length;
@@ -143,16 +151,29 @@ async function _renderVentasFiltradas() {
   const montoPendV  = totalCP - montoAplicV;
   const pctAplicV   = filas.length > 0 ? Math.round(countAplicV / filas.length * 100) : 0;
 
+  // Filas visibles en la tabla: todas, o solo las del estado clicado en los badges
+  const filasVista = _vFiltroEstado
+    ? covFilasV.filter(x => _vEstadoSimple(x.cov.estado) === _vFiltroEstado).map(x => x.r)
+    : filas;
+
+  const _vBadge = (estado, color, texto, count) => {
+    const activo = _vFiltroEstado === estado;
+    return `<span class="badge-estado" onclick="_vToggleFiltroEstado('${estado}')"
+      title="Clic para ${activo ? 'quitar el' : 'filtrar por este'} estado"
+      style="background:${color};cursor:pointer;${activo ? `box-shadow:0 0 0 2px var(--color-bg-card),0 0 0 4px ${color};` : (_vFiltroEstado ? 'opacity:.5;' : '')}">${texto} ${count}</span>`;
+  };
+
   const resumen = document.getElementById('v-resumen');
   if (resumen) resumen.innerHTML = `
     <div class="resumen-cards">
     <div style="width:100%;flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
       padding:8px 12px;background:rgba(128,128,128,.05);border:1px solid var(--color-borde);
       border-radius:8px;font-size:11px;font-weight:600;box-sizing:border-box">
-      <span class="badge-estado" style="background:#2F855A">✅ APLICADO ${countAplicV}</span>
-      <span class="badge-estado" style="background:#D69E2E">🟡 PARCIAL ${countParcV}</span>
-      <span class="badge-estado" style="background:#C53030">🔴 PENDIENTE ${countPendV}</span>
+      ${_vBadge('APLICADO', '#2F855A', '✅ APLICADO', countAplicV)}
+      ${_vBadge('PARCIAL', '#D69E2E', '🟡 PARCIAL', countParcV)}
+      ${_vBadge('PENDIENTE', '#C53030', '🔴 PENDIENTE', countPendV)}
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicV}% conciliado</span>
+      ${_vFiltroEstado ? `<span onclick="_vToggleFiltroEstado('${_vFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-size:10px;font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
     </div>
     <div class="resumen-card" style="background:var(--color-secundario)">
       <div class="rc-label">BASE IMPONIBLE</div>
@@ -179,6 +200,14 @@ async function _renderVentasFiltradas() {
     </div>
   `;
 
+  if (!filasVista.length) {
+    wrap.innerHTML = `<p style="text-align:center;color:var(--color-texto-suave);padding:40px">
+      Ningún comprobante con estado "${_vFiltroEstado}" en este período.
+      <span onclick="_vToggleFiltroEstado('${_vFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);text-decoration:underline">Quitar filtro</span>
+    </p>`;
+    return;
+  }
+
   wrap.innerHTML = `
     <div class="tabla-nexum-wrap">
     <table class="tabla-nexum">
@@ -191,7 +220,7 @@ async function _renderVentasFiltradas() {
         <th>Moneda</th><th style="text-align:center">Banco</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filas.map(r => {
+        ${filasVista.map(r => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
           const movs = _conFiltrarPorEmisor(aplicadosMapV.get(nDoc), r.nro_doc_identidad, r.cliente);
           const cov  = _conCobertura(movs, r.total_cp);
@@ -248,7 +277,7 @@ async function _renderVentasFiltradas() {
       </tbody>
     </table>
     </div>
-    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} comprobante(s)</p>
+    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filasVista.length} comprobante(s)${_vFiltroEstado ? ` (filtrado de ${filas.length})` : ''}</p>
   `;
 }
 

@@ -5,6 +5,13 @@
 const TIPOS_DOC_ID_C = {'1':'DNI','4':'Carnet Extranjería','6':'RUC','7':'Pasaporte','0':'Otros'};
 let _mbdLinkCache = []; // Cache para modal de movimiento bancario vinculado
 
+// ── Filtro por estado (clic en los badges APLICADO/PARCIAL/PENDIENTE) ──
+let _cFiltroEstado = null; // null | 'APLICADO' | 'PARCIAL' | 'PENDIENTE'
+function _cToggleFiltroEstado(estado) {
+  _cFiltroEstado = (_cFiltroEstado === estado) ? null : estado;
+  _renderComprasFiltradas();
+}
+
 // ── Período del filtro (mes+año seleccionados) en formato YYYYMM ───
 function _cPeriodoActual() {
   const mes  = document.getElementById('c-mes')?.value;
@@ -138,6 +145,7 @@ async function _renderComprasFiltradas() {
   const _movsDelEmisorC = r => _conFiltrarPorEmisor(aplicadosMap.get(_nDocC(r)), r.nro_doc_identidad, r.proveedor);
   const _covC  = r => _conCobertura(_movsDelEmisorC(r), r.total_cp);
   const covFilas    = filas.map(r => ({ r, cov: _covC(r) }));
+  const _cEstadoSimple = e => e.startsWith('COMPLETO') ? 'APLICADO' : e;
   const countAplicC = covFilas.filter(x => x.cov.estado.startsWith('COMPLETO')).length;
   const countParcC  = covFilas.filter(x => x.cov.estado === 'PARCIAL').length;
   const countPendC  = covFilas.filter(x => x.cov.estado === 'PENDIENTE').length;
@@ -145,16 +153,29 @@ async function _renderComprasFiltradas() {
   const montoPendC  = totalCP - montoAplicC;
   const pctAplicC   = filas.length > 0 ? Math.round(countAplicC / filas.length * 100) : 0;
 
+  // Filas visibles en la tabla: todas, o solo las del estado clicado en los badges
+  const filasVista = _cFiltroEstado
+    ? covFilas.filter(x => _cEstadoSimple(x.cov.estado) === _cFiltroEstado).map(x => x.r)
+    : filas;
+
+  const _cBadge = (estado, color, texto, count) => {
+    const activo = _cFiltroEstado === estado;
+    return `<span class="badge-estado" onclick="_cToggleFiltroEstado('${estado}')"
+      title="Clic para ${activo ? 'quitar el' : 'filtrar por este'} estado"
+      style="background:${color};cursor:pointer;${activo ? `box-shadow:0 0 0 2px var(--color-bg-card),0 0 0 4px ${color};` : (_cFiltroEstado ? 'opacity:.5;' : '')}">${texto} ${count}</span>`;
+  };
+
   const resumen = document.getElementById('c-resumen');
   if (resumen) resumen.innerHTML = `
     <div class="resumen-cards">
     <div style="width:100%;flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
       padding:8px 12px;background:rgba(128,128,128,.05);border:1px solid var(--color-borde);
       border-radius:8px;font-size:11px;font-weight:600;box-sizing:border-box">
-      <span class="badge-estado" style="background:#2F855A">✅ APLICADO ${countAplicC}</span>
-      <span class="badge-estado" style="background:#D69E2E">🟡 PARCIAL ${countParcC}</span>
-      <span class="badge-estado" style="background:#C53030">🔴 PENDIENTE ${countPendC}</span>
+      ${_cBadge('APLICADO', '#2F855A', '✅ APLICADO', countAplicC)}
+      ${_cBadge('PARCIAL', '#D69E2E', '🟡 PARCIAL', countParcC)}
+      ${_cBadge('PENDIENTE', '#C53030', '🔴 PENDIENTE', countPendC)}
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicC}% conciliado</span>
+      ${_cFiltroEstado ? `<span onclick="_cToggleFiltroEstado('${_cFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-size:10px;font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
     </div>
     <div class="resumen-card" style="background:var(--color-secundario)">
       <div class="rc-label">BI GRAVADO DG</div>
@@ -181,6 +202,14 @@ async function _renderComprasFiltradas() {
     </div>
   `;
 
+  if (!filasVista.length) {
+    wrap.innerHTML = `<p style="text-align:center;color:var(--color-texto-suave);padding:40px">
+      Ningún comprobante con estado "${_cFiltroEstado}" en este período.
+      <span onclick="_cToggleFiltroEstado('${_cFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);text-decoration:underline">Quitar filtro</span>
+    </p>`;
+    return;
+  }
+
   wrap.innerHTML = `
     <div class="tabla-nexum-wrap">
     <table class="tabla-nexum">
@@ -193,7 +222,7 @@ async function _renderComprasFiltradas() {
         <th>Moneda</th><th style="text-align:center">Banco</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filas.map(r => {
+        ${filasVista.map(r => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
           const movs = _conFiltrarPorEmisor(aplicadosMap.get(nDoc), r.nro_doc_identidad, r.proveedor);
           const cov  = _conCobertura(movs, r.total_cp);
@@ -250,7 +279,7 @@ async function _renderComprasFiltradas() {
       </tbody>
     </table>
     </div>
-    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filas.length} comprobante(s)</p>
+    <p style="font-size:12px;color:var(--color-texto-suave);margin-top:8px">${filasVista.length} comprobante(s)${_cFiltroEstado ? ` (filtrado de ${filas.length})` : ''}</p>
   `;
 }
 

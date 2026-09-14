@@ -4,6 +4,15 @@
             matching automático RH ↔ Movimientos
    ============================================================ */
 
+// ── Filtro por estado (clic en los badges APLICADO/PARCIAL/POSIBLE/PENDIENTE) ──
+let _rhrFiltroEstado = ''; // '' | 'APLICADO' | 'PARCIAL' | 'POSIBLE' | 'PENDIENTE' | 'CANCELADO'
+function _rhrToggleFiltroEstado(estado) {
+  _rhrFiltroEstado = (_rhrFiltroEstado === estado) ? '' : estado;
+  const sel = document.getElementById('rhr-estado');
+  if (sel) sel.value = _rhrFiltroEstado;
+  _renderRHRTabla();
+}
+
 function renderTabRHRecibidas(area) {
   const hoy = new Date();
   const mesActual = String(hoy.getMonth() + 1).padStart(2, '0');
@@ -23,13 +32,13 @@ function renderTabRHRecibidas(area) {
           <select id="rhr-anio" style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
             ${[anioActual-1, anioActual, anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('')}
           </select>
-          <select id="rhr-estado" style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
-            <option value="">Todos los estados</option>
-            <option value="APLICADO">Aplicado</option>
-            <option value="PARCIAL">Parcial</option>
-            <option value="POSIBLE">Posible match</option>
-            <option value="PENDIENTE">Pendiente</option>
-            <option value="CANCELADO">Cancelado</option>
+          <select id="rhr-estado" onchange="_rhrFiltroEstado=this.value;_renderRHRTabla()" style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:13px;font-family:var(--font)">
+            <option value="" ${_rhrFiltroEstado===''?'selected':''}>Todos los estados</option>
+            <option value="APLICADO" ${_rhrFiltroEstado==='APLICADO'?'selected':''}>Aplicado</option>
+            <option value="PARCIAL" ${_rhrFiltroEstado==='PARCIAL'?'selected':''}>Parcial</option>
+            <option value="POSIBLE" ${_rhrFiltroEstado==='POSIBLE'?'selected':''}>Posible match</option>
+            <option value="PENDIENTE" ${_rhrFiltroEstado==='PENDIENTE'?'selected':''}>Pendiente</option>
+            <option value="CANCELADO" ${_rhrFiltroEstado==='CANCELADO'?'selected':''}>Cancelado</option>
           </select>
           <input type="text" id="rhr-buscar" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
                  data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"
@@ -48,14 +57,8 @@ function renderTabRHRecibidas(area) {
         </div>
       </div>
 
-      <!-- Leyenda de estados -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:11px">
-        <span style="padding:2px 8px;border-radius:10px;background:#2F855A;color:#fff">✅ APLICADO</span>
-        <span style="padding:2px 8px;border-radius:10px;background:#DD6B20;color:#fff">🔶 PARCIAL</span>
-        <span style="padding:2px 8px;border-radius:10px;background:#D69E2E;color:#fff">⚠️ POSIBLE</span>
-        <span style="padding:2px 8px;border-radius:10px;background:#C53030;color:#fff">🔴 PENDIENTE</span>
-        <span style="color:var(--color-texto-suave);font-style:italic">— Ventana de búsqueda: ±9 meses</span>
-      </div>
+      <!-- Leyenda de estados (clicable — filtra la tabla) -->
+      <div id="rhr-leyenda" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:11px"></div>
 
       <div id="rhr-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
       <div id="rhr-tabla-wrap" style="overflow-x:auto;">
@@ -254,22 +257,49 @@ async function cargarRHRecibidas() {
 function _renderRHRTabla() {
   const wrap   = document.getElementById('rhr-tabla-wrap');
   if (!wrap) return;
-  const filtroEstado = document.getElementById('rhr-estado')?.value;
+  const filtroEstado = _rhrFiltroEstado;
   const buscar = document.getElementById('rhr-buscar')?.value.trim().toLowerCase();
   const filas       = _rhrRawFilas;
   const estadosMap  = _rhrEstadosMap;
 
-  // Filtrar por estado si aplica
-  let filasFiltradas = filtroEstado
-    ? filas.filter(r => estadosMap[r.id]?.estado === filtroEstado)
-    : filas;
-  filasFiltradas = _filtrarRHRBuscar(filasFiltradas, estadosMap, buscar);
+  // Búsqueda de texto primero (para que los conteos de la leyenda reflejen la búsqueda activa)
+  const filasBuscadas = _filtrarRHRBuscar(filas, estadosMap, buscar);
+
+  const countPorEstado = est => filasBuscadas.filter(r => estadosMap[r.id]?.estado === est).length;
+  const countAplicRH = countPorEstado('APLICADO');
+  const countParcRH  = countPorEstado('PARCIAL');
+  const countPosRH   = countPorEstado('POSIBLE');
+  const countPendRH  = countPorEstado('PENDIENTE');
+  const countCancRH  = countPorEstado('CANCELADO');
+
+  const leyenda = document.getElementById('rhr-leyenda');
+  if (leyenda) {
+    const _rhrBadge = (estado, color, texto, count) => {
+      const activo = filtroEstado === estado;
+      return `<span onclick="_rhrToggleFiltroEstado('${estado}')" title="Clic para ${activo ? 'quitar el' : 'filtrar por este'} estado"
+        style="padding:2px 8px;border-radius:10px;background:${color};color:#fff;cursor:pointer;${activo ? `box-shadow:0 0 0 2px var(--color-bg-card),0 0 0 4px ${color};` : (filtroEstado ? 'opacity:.5;' : '')}">${texto} ${count}</span>`;
+    };
+    leyenda.innerHTML = `
+      ${_rhrBadge('APLICADO', '#2F855A', '✅ APLICADO', countAplicRH)}
+      ${_rhrBadge('PARCIAL', '#DD6B20', '🔶 PARCIAL', countParcRH)}
+      ${_rhrBadge('POSIBLE', '#D69E2E', '⚠️ POSIBLE', countPosRH)}
+      ${_rhrBadge('PENDIENTE', '#C53030', '🔴 PENDIENTE', countPendRH)}
+      ${countCancRH > 0 ? _rhrBadge('CANCELADO', '#4A5568', '⛔ CANCELADO', countCancRH) : ''}
+      <span style="color:var(--color-texto-suave);font-style:italic">— Ventana de búsqueda: ±9 meses</span>
+      ${filtroEstado ? `<span onclick="_rhrToggleFiltroEstado('${filtroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
+    `;
+  }
+
+  // Filtrar por estado si aplica (sobre lo ya filtrado por búsqueda)
+  const filasFiltradas = filtroEstado
+    ? filasBuscadas.filter(r => estadosMap[r.id]?.estado === filtroEstado)
+    : filasBuscadas;
 
   const totalBruto  = filasFiltradas.reduce((s,r) => s + Number(r.monto_bruto||0), 0);
   const totalRet    = filasFiltradas.reduce((s,r) => s + Number(r.monto_retencion||0), 0);
   const totalNeto   = filasFiltradas.reduce((s,r) => s + Number(r.monto_neto||0), 0);
-  const pendientes  = filasFiltradas.filter(r => estadosMap[r.id]?.estado === 'PENDIENTE').length;
-  const posibles    = filasFiltradas.filter(r => estadosMap[r.id]?.estado === 'POSIBLE').length;
+  const pendientes  = countPendRH;
+  const posibles    = countPosRH;
 
   const resumen = document.getElementById('rhr-resumen');
   if (resumen) resumen.innerHTML = `
@@ -298,7 +328,12 @@ function _renderRHRTabla() {
   `;
 
   if (!filasFiltradas.length) {
-    wrap.innerHTML = '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin RH en este período.</p>';
+    wrap.innerHTML = filtroEstado
+      ? `<p style="text-align:center;color:var(--color-texto-suave);padding:40px">
+          Ningún RH con estado "${filtroEstado}" en este período.
+          <span onclick="_rhrToggleFiltroEstado('${filtroEstado}')" style="cursor:pointer;color:var(--color-secundario);text-decoration:underline">Quitar filtro</span>
+        </p>`
+      : '<p style="text-align:center;color:var(--color-texto-suave);padding:40px">Sin RH en este período.</p>';
     return;
   }
 
