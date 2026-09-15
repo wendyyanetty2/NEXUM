@@ -347,13 +347,13 @@ function _dupClasificarMovimiento(candidato, existentes, conceptosRecurrentes) {
         // MBD y EECC pueden registrar la misma operación con fechas distintas
         // (±3 días tolerados) sin que eso impida reconocerla como la misma.
         if (montoOk && monedaOk && descOk && fechaCerca) {
-          const fechaTxt = fechaOk ? 'fecha exacta' : `fecha a ${Math.round(diasFecha)} día(s), dentro de tolerancia`;
-          return { estado: 'ya_existe', match: ex, razon: `Mismo N° de operación (últimos 6 dígitos) + descripción + moneda + monto (${fechaTxt})` };
+          const fechaTxt = fechaOk ? '' : ' (con unos días de diferencia en la fecha)';
+          return { estado: 'ya_existe', match: ex, razon: `Mismo N° de operación, monto y descripción — ya está registrado${fechaTxt}.` };
         }
         // El N° de operación coincide pero algo más no cuadra (o la fecha se
         // aleja más de lo tolerado) — no se descarta sola, pero tampoco se da
         // por buena automáticamente: a revisar.
-        mejorPosible = { estado: 'posible', match: ex, razon: 'N° de operación coincide, pero descripción/moneda/monto no calzan, o la fecha difiere demasiado' };
+        mejorPosible = { estado: 'posible', match: ex, razon: 'El N° de operación coincide, pero el monto, la moneda o la descripción no calzan del todo — revisa antes de decidir.' };
         continue;
       }
       // Ambos lados tienen N° de operación confiable, pero DISTINTO: son
@@ -370,9 +370,9 @@ function _dupClasificarMovimiento(candidato, existentes, conceptosRecurrentes) {
     if (montoOk && monedaOk && descOk) {
       if (fechaOk) {
         if (conceptosRecurrentes?.has(descCand)) {
-          return { estado: 'ya_existe', match: ex, razon: 'Concepto recurrente (catálogo) + misma fecha' };
+          return { estado: 'ya_existe', match: ex, razon: 'Es un concepto recurrente conocido (comisión, ITF, etc.) en la misma fecha — ya está registrado.' };
         }
-        return { estado: 'ya_existe', match: ex, razon: 'Monto + descripción + fecha exactos' };
+        return { estado: 'ya_existe', match: ex, razon: 'Mismo monto, descripción y fecha — ya está registrado.' };
       }
       // Fecha distinta: si es un concepto recurrente conocido (ITF, comisiones,
       // transferencias entre cuentas de terceros, etc.) NO se marca como dudoso
@@ -381,7 +381,7 @@ function _dupClasificarMovimiento(candidato, existentes, conceptosRecurrentes) {
       // duplicado. Wendy lo señaló (2026-09-12): el sistema comparaba filas de
       // setiembre contra julio solo por coincidir monto+descripción genérica.
       if (conceptosRecurrentes?.has(descCand)) continue;
-      if (!mejorPosible) mejorPosible = { estado: 'posible', match: ex, razon: 'Monto y descripción coinciden, pero la fecha no' };
+      if (!mejorPosible) mejorPosible = { estado: 'posible', match: ex, razon: 'El monto y la descripción coinciden, pero la fecha es distinta — revisa antes de decidir.' };
     }
   }
 
@@ -702,31 +702,42 @@ function _dupMostrarValidacionIntegridad(clasificados) {
 
     const filaFecha = (c) => (c.fila.fecha || '').slice(0, 10);
     const matchFecha = (c) => (c.match.fecha_deposito || '').slice(0, 10);
+    const filaNumOp  = (c) => (c.fila.numero_operacion || '').trim();
+    const matchNumOp = (c) => (c.match.nro_operacion_bancaria || c.match.nro_operacion_alt || '').trim();
     const fechaDifiere = (c) => filaFecha(c) && matchFecha(c) && filaFecha(c) !== matchFecha(c);
+    const numOpDifiere = (c) => filaNumOp(c) && matchNumOp(c) && filaNumOp(c) !== matchNumOp(c);
+    const montoDifiere = (c) => Math.abs(Math.abs(Number(c.fila.monto) || 0) - Math.abs(Number(c.match.monto) || 0)) > 0.01;
+    const descDifiere  = (c) => (c.fila.descripcion || '').trim().toLowerCase() !== (c.match.descripcion || '').trim().toLowerCase();
+    const esIdentico   = (c) => !fechaDifiere(c) && !numOpDifiere(c) && !montoDifiere(c) && !descDifiere(c);
 
     const listaCoincidencias = coincidencias.length ? coincidencias.map((c, i) => {
       const confianza = c.estado === 'ya_existe'
-        ? '<span style="color:var(--color-secundario);font-weight:700">✅ Coincidencia confiable</span>'
+        ? '<span style="color:var(--color-secundario);font-weight:700">✅ Ya está registrado</span>'
         : '<span style="color:#D69E2E;font-weight:700">⚠️ REQUIERE REVISIÓN</span>';
       const difiere = fechaDifiere(c);
-      const normCand  = _dupUltimos6(c.fila.numero_operacion);
-      const normMatch = _dupUltimos6(c.match.nro_operacion_bancaria) || _dupUltimos6(c.match.nro_operacion_alt);
+
+      const bloqueComparacion = esIdentico(c)
+        ? `<div style="font-size:12px;margin-bottom:10px">
+             📄 ${escapar(filaFecha(c)||'—')} · ${formatearMoneda(c.fila.monto, c.fila.moneda)} · ${escapar(c.fila.descripcion||'—')} · Op. ${escapar(c.fila.numero_operacion||'—')}
+           </div>`
+        : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
+             <div>
+               <div style="font-weight:700;margin-bottom:2px">En el archivo que estás importando</div>
+               <div>${escapar(filaFecha(c)||'—')} · ${formatearMoneda(c.fila.monto, c.fila.moneda)} · ${escapar(c.fila.descripcion||'—')}</div>
+               <div style="color:var(--color-texto-suave)">Op. ${escapar(c.fila.numero_operacion||'—')}</div>
+             </div>
+             <div>
+               <div style="font-weight:700;margin-bottom:2px">Ya registrado en NEXUM</div>
+               <div>${escapar(matchFecha(c)||'—')} · ${formatearMoneda(c.match.monto, c.match.moneda)} · ${escapar(c.match.descripcion||'—')}</div>
+               <div style="color:var(--color-texto-suave)">Op. ${escapar(c.match.nro_operacion_bancaria||c.match.nro_operacion_alt||'—')}</div>
+             </div>
+           </div>`;
+
       return `
       <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">
-        <div style="font-size:11px;margin-bottom:4px">${confianza}</div>
-        <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:8px">Motivo: ${escapar(c.razon)}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
-          <div>
-            <div style="font-weight:700;margin-bottom:2px">Archivo que estás importando</div>
-            <div>${escapar(filaFecha(c)||'—')} · ${formatearMoneda(c.fila.monto, c.fila.moneda)} · ${escapar(c.fila.descripcion||'')}</div>
-            <div style="color:var(--color-texto-suave)">Op. ${escapar(c.fila.numero_operacion||'—')} <span style="opacity:.7">(normalizado: ${escapar(normCand||'—')})</span></div>
-          </div>
-          <div>
-            <div style="font-weight:700;margin-bottom:2px">Ya existente en NEXUM (ID ${escapar(String(c.match.id||'—'))})</div>
-            <div>${escapar(matchFecha(c)||'—')} · ${formatearMoneda(c.match.monto, c.match.moneda)} · ${escapar(c.match.descripcion||'')}</div>
-            <div style="color:var(--color-texto-suave)">Op. ${escapar(c.match.nro_operacion_bancaria||c.match.nro_operacion_alt||'—')} <span style="opacity:.7">(normalizado: ${escapar(normMatch||'—')})</span></div>
-          </div>
-        </div>
+        <div style="font-size:12px;margin-bottom:4px">${confianza}</div>
+        <div style="font-size:12px;color:var(--color-texto-suave);margin-bottom:8px">${escapar(c.razon)}</div>
+        ${bloqueComparacion}
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
           <input type="radio" name="dup-rev-${i}" value="existente" checked> Ya existe — no importar de nuevo
         </label>
