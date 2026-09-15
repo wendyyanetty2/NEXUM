@@ -338,19 +338,30 @@ function _dupClasificarMovimiento(candidato, existentes, conceptosRecurrentes) {
     const fechaCerca = diasFecha <= _DUP_TOLERANCIA_DIAS;
     const descOk     = !!descCand && descCand === descEx;
 
-    if (clave6Cand && clave6Ex && clave6Cand === clave6Ex) {
-      // Núcleo de identificación: N° de operación (últimos 6) + descripción +
-      // moneda + monto. La fecha es un validador adicional, no bloqueante —
-      // MBD y EECC pueden registrar la misma operación con fechas distintas
-      // (±3 días tolerados) sin que eso impida reconocerla como la misma.
-      if (montoOk && monedaOk && descOk && fechaCerca) {
-        const fechaTxt = fechaOk ? 'fecha exacta' : `fecha a ${Math.round(diasFecha)} día(s), dentro de tolerancia`;
-        return { estado: 'ya_existe', match: ex, razon: `Mismo N° de operación (últimos 6 dígitos) + descripción + moneda + monto (${fechaTxt})` };
+    const ambosConfiables = !!clave6Cand && !!clave6Ex;
+
+    if (ambosConfiables) {
+      if (clave6Cand === clave6Ex) {
+        // Núcleo de identificación: N° de operación (últimos 6) + descripción +
+        // moneda + monto. La fecha es un validador adicional, no bloqueante —
+        // MBD y EECC pueden registrar la misma operación con fechas distintas
+        // (±3 días tolerados) sin que eso impida reconocerla como la misma.
+        if (montoOk && monedaOk && descOk && fechaCerca) {
+          const fechaTxt = fechaOk ? 'fecha exacta' : `fecha a ${Math.round(diasFecha)} día(s), dentro de tolerancia`;
+          return { estado: 'ya_existe', match: ex, razon: `Mismo N° de operación (últimos 6 dígitos) + descripción + moneda + monto (${fechaTxt})` };
+        }
+        // El N° de operación coincide pero algo más no cuadra (o la fecha se
+        // aleja más de lo tolerado) — no se descarta sola, pero tampoco se da
+        // por buena automáticamente: a revisar.
+        mejorPosible = { estado: 'posible', match: ex, razon: 'N° de operación coincide, pero descripción/moneda/monto no calzan, o la fecha difiere demasiado' };
+        continue;
       }
-      // El N° de operación coincide pero algo más no cuadra (o la fecha se
-      // aleja más de lo tolerado) — no se descarta sola, pero tampoco se da
-      // por buena automáticamente: a revisar.
-      mejorPosible = { estado: 'posible', match: ex, razon: 'N° de operación coincide, pero descripción/moneda/monto no calzan, o la fecha difiere demasiado' };
+      // Ambos lados tienen N° de operación confiable, pero DISTINTO: son
+      // operaciones diferentes aunque coincidan monto/fecha/descripción
+      // (ej. dos transferencias iguales el mismo día con distinto N° de
+      // operación). Wendy 2026-09-15: el N° de operación es la clave única
+      // de cada movimiento — nunca tratar como duplicado (ni "posible") solo
+      // porque monto/fecha/descripción coincidan si el N° de operación difiere.
       continue;
     }
 
@@ -404,6 +415,54 @@ async function _dupClasificarLoteMovimientos(filas) {
     return { fila, ...r };
   });
   return resultados;
+}
+
+// ── Dedup para la tabla "movimientos" (libro bancario en crudo, por
+//    cuenta) — usada por "🏦 Cuentas bancarias" para el saldo. Antes se
+//    insertaban TODAS las filas válidas del Excel en cada importación sin
+//    verificar si ya existían, así que reportes diarios que se solapan
+//    inflaban el saldo con filas repetidas. Wendy 2026-09-15: corregir
+//    esto también, con el mismo motor de coincidencia (N° de operación
+//    normalizado + monto + moneda + descripción, fecha como corroboración
+//    ±3 días). Filtra "validos" (filas ya parseadas del Excel) dejando
+//    solo las que NO son duplicado confiable de un movimiento ya cargado
+//    para esa cuenta (o para la empresa, si aún no se asignó cuenta).
+//    Las "posible" (ambiguas) SÍ se insertan: esta tabla es el libro
+//    crudo, no el registro de negocio, así que ante la duda se prefiere
+//    no perder una fila real en vez de arriesgarse a omitirla en el saldo.
+async function _dupFiltrarNuevosParaMovimientos(validos, cuenta) {
+  if (!validos.length) return validos;
+  const conceptosRecurrentes = await _dupCargarConceptosRecurrentes();
+
+  const fechas = validos.map(r => r.fecha).filter(Boolean).sort();
+  let desde = fechas[0], hasta = fechas[fechas.length - 1];
+  if (desde) { const d = new Date(desde + 'T00:00:00'); d.setMonth(d.getMonth() - 2); desde = d.toISOString().slice(0,10); }
+  if (hasta) { const d = new Date(hasta + 'T00:00:00'); d.setMonth(d.getMonth() + 2); hasta = d.toISOString().slice(0,10); }
+
+  let q = _supabase.from('movimientos').select('fecha, naturaleza, importe, moneda, descripcion, numero_operacion')
+    .eq('empresa_operadora_id', empresa_activa.id);
+  if (cuenta) q = q.eq('cuenta_bancaria_id', cuenta);
+  if (desde) q = q.gte('fecha', desde);
+  if (hasta) q = q.lte('fecha', hasta);
+  const { data: existentesRaw } = await q;
+
+  const aExistente = (m) => ({
+    fecha_deposito: m.fecha, descripcion: m.descripcion, moneda: m.moneda,
+    monto: m.naturaleza === 'CARGO' ? -Math.abs(Number(m.importe) || 0) : Math.abs(Number(m.importe) || 0),
+    nro_operacion_bancaria: m.numero_operacion, nro_operacion_alt: null,
+  });
+  const acumulados = (existentesRaw || []).map(aExistente);
+
+  return validos.filter(r => {
+    const cand = {
+      fecha: r.fecha, descripcion: r.descripcion, moneda: r.moneda,
+      monto: r.naturaleza === 'CARGO' ? -Math.abs(r.importe) : Math.abs(r.importe),
+      numero_operacion: r.numero_operacion,
+    };
+    const esDuplicado = _dupClasificarMovimiento(cand, acumulados, conceptosRecurrentes).estado === 'ya_existe';
+    if (!esDuplicado) acumulados.push({ fecha_deposito: cand.fecha, descripcion: cand.descripcion, moneda: cand.moneda, monto: cand.monto, nro_operacion_bancaria: cand.numero_operacion, nro_operacion_alt: null });
+    return !esDuplicado;
+  });
 }
 
 /* ============================================================
@@ -520,61 +579,207 @@ async function _dupCompararMbdEeccClick() {
   _dupRenderComparacionMbdEecc(desde, hasta, faltanEnEecc, faltanEnMbd);
 }
 
-// ── Modal de revisión para los casos "posible" (dudosos) ──────────
-// Recibe la lista de resultados con estado==='posible'. Devuelve una
-// Promise que resuelve a un array del mismo largo con 'nuevo' o
-// 'existente' según lo que decida la persona, o null si cancela todo
-// (en cuyo caso ninguna fila dudosa se importa, por seguridad).
-function _dupRevisarPosibles(posibles) {
+// ── Validación de integridad + reporte de coincidencias ───────────
+// Wendy 2026-09-15: prioridad absoluta = integridad de datos. Antes de
+// escribir CUALQUIER cosa en la base de datos, el sistema debe mostrar
+// el cuadre completo del lote (cuántos nuevos, cuántos duplicados,
+// cuántos "REQUIERE REVISIÓN", e importe por moneda de cada grupo) y
+// esperar aprobación explícita — incluso cuando no hay ninguna
+// coincidencia (para que quede visible que el archivo completo se
+// reconoció como nuevo). Nada se aplica en silencio: ni el N° de
+// operación alterno, ni una corrección de fecha.
+function _dupResumenIntegridad(clasificados) {
+  const nuevos      = clasificados.filter(c => c.estado === 'nuevo');
+  const duplicados  = clasificados.filter(c => c.estado === 'ya_existe');
+  const revision    = clasificados.filter(c => c.estado === 'posible');
+
+  const sumPorMoneda = (arr) => {
+    const m = {};
+    arr.forEach(c => {
+      const mon = (c.fila.moneda || 'PEN').toUpperCase();
+      m[mon] = (m[mon] || 0) + Math.abs(Number(c.fila.monto) || 0);
+    });
+    return m;
+  };
+  const diferenciasFecha = clasificados.filter(c =>
+    c.match && (c.fila.fecha || '').slice(0, 10) !== (c.match.fecha_deposito || '').slice(0, 10)).length;
+  const diferenciasNumOp = clasificados.filter(c =>
+    c.match && (c.fila.numero_operacion || '').trim() !== (c.match.nro_operacion_bancaria || '').trim()).length;
+
+  return {
+    total: clasificados.length,
+    nuevos: nuevos.length, duplicados: duplicados.length, revision: revision.length,
+    diferenciasFecha, diferenciasNumOp,
+    importePorMoneda: {
+      total:      sumPorMoneda(clasificados),
+      nuevos:     sumPorMoneda(nuevos),
+      duplicados: sumPorMoneda(duplicados),
+      revision:   sumPorMoneda(revision),
+    },
+  };
+}
+
+// Importe que quedará registrado vs. descartado por duplicidad, según las
+// decisiones ACTUALES en el modal (se recalcula en vivo si la persona
+// cambia una fila de "ya existe" a "es nuevo" o viceversa). Pedido por
+// Wendy 2026-09-15: "importe total que quedará registrado después de la
+// importación" es uno de los mínimos exigidos antes de confirmar.
+function _dupCalcularTotalesFinales(coincidencias, resumen, leerDom) {
+  const registrado = {};
+  const descartado = {};
+  Object.keys(resumen.importePorMoneda.nuevos).forEach(mon => { registrado[mon] = resumen.importePorMoneda.nuevos[mon]; });
+
+  coincidencias.forEach((c, i) => {
+    const accion = leerDom ? (document.querySelector(`input[name="dup-rev-${i}"]:checked`)?.value || 'existente') : 'existente';
+    const mon = (c.fila.moneda || 'PEN').toUpperCase();
+    const monto = Math.abs(Number(c.fila.monto) || 0);
+    if (accion === 'nuevo') registrado[mon] = (registrado[mon] || 0) + monto;
+    else descartado[mon] = (descartado[mon] || 0) + monto;
+  });
+  return { registrado, descartado };
+}
+
+function _dupRenderTotalesFinales(coincidencias, resumen, leerDom) {
+  const { registrado, descartado } = _dupCalcularTotalesFinales(coincidencias, resumen, leerDom);
+  const monedas = [...new Set([...Object.keys(registrado), ...Object.keys(descartado), ...Object.keys(resumen.importePorMoneda.total)])];
+  if (!monedas.length) return '<div style="font-size:12px;color:var(--color-texto-suave)">Sin movimientos.</div>';
+  return monedas.map(mon => `
+    <div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0">
+      <span>${escapar(mon)}</span>
+      <span>Quedará registrado: <strong style="color:var(--color-secundario)">${formatearMoneda(registrado[mon]||0, mon)}</strong> · Descartado según tus decisiones actuales: ${formatearMoneda(descartado[mon]||0, mon)}</span>
+    </div>`).join('');
+}
+
+function _dupRenderResumenIntegridad(r) {
+  const monedas = Object.keys(r.importePorMoneda.total);
+  const cuadreOk = r.total === r.nuevos + r.duplicados + r.revision; // siempre verdadero por construcción — se muestra como control visible
+  const filaImporte = (mon) => {
+    const t = r.importePorMoneda.total[mon] || 0;
+    const n = r.importePorMoneda.nuevos[mon] || 0;
+    const d = r.importePorMoneda.duplicados[mon] || 0;
+    const p = r.importePorMoneda.revision[mon] || 0;
+    const cuadraImporte = Math.abs(t - (n + d + p)) < 0.01;
+    return `
+      <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-top:1px solid var(--color-borde)">
+        <span>${escapar(mon)}</span>
+        <span>${cuadraImporte ? '✅' : '⚠️'} Total ${formatearMoneda(t, mon)} = Nuevos ${formatearMoneda(n, mon)} + Duplicados (según clasificación automática) ${formatearMoneda(d, mon)} + Revisión ${formatearMoneda(p, mon)}</span>
+      </div>`;
+  };
+
+  return `
+    <div style="border:1px solid var(--color-borde);border-radius:8px;padding:14px;margin-bottom:16px;background:rgba(44,82,130,.04)">
+      <div style="font-weight:700;margin-bottom:8px;font-size:13px">📋 Validación de integridad del lote</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;font-size:12px;margin-bottom:10px">
+        <div>Total en archivo: <strong>${r.total}</strong></div>
+        <div>Nuevos: <strong style="color:var(--color-secundario)">${r.nuevos}</strong></div>
+        <div>Duplicados: <strong>${r.duplicados}</strong></div>
+        <div>Requieren revisión: <strong style="color:#D69E2E">${r.revision}</strong></div>
+        <div>Coinciden con registros existentes: <strong>${r.duplicados + r.revision}</strong></div>
+        <div>Con fecha distinta: <strong>${r.diferenciasFecha}</strong></div>
+        <div>Con N° operación distinto: <strong>${r.diferenciasNumOp}</strong></div>
+      </div>
+      <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:4px">
+        ${cuadreOk ? '✅' : '⚠️'} Total del archivo = Nuevos + Duplicados + Requieren revisión (${r.nuevos} + ${r.duplicados} + ${r.revision} = ${r.nuevos + r.duplicados + r.revision})
+      </div>
+      ${monedas.map(filaImporte).join('')}
+    </div>`;
+}
+
+// Recibe TODOS los resultados clasificados del lote (nuevo/ya_existe/posible).
+// Devuelve una Promise que resuelve a { decisiones, resumen } — decisiones
+// alineadas 1:1 con las filas que SÍ requerían decisión (ya_existe/posible),
+// cada una { accion: 'existente'|'nuevo', actualizarFecha: bool } — o null
+// si se cancela toda la importación (por seguridad, nada se toca ni se
+// importa). Se muestra SIEMPRE, incluso sin coincidencias, para que la
+// validación de integridad quede visible antes de escribir en la base.
+function _dupMostrarValidacionIntegridad(clasificados) {
+  const resumen = _dupResumenIntegridad(clasificados);
+  const coincidencias = clasificados.filter(c => c.estado === 'ya_existe' || c.estado === 'posible');
+
   return new Promise(resolve => {
     const mc = document.getElementById('modal-container');
-    if (!mc) { resolve(posibles.map(() => 'existente')); return; }
+    if (!mc) { resolve({ decisiones: coincidencias.map(() => ({ accion: 'existente', actualizarFecha: false })), resumen }); return; }
+
+    const filaFecha = (c) => (c.fila.fecha || '').slice(0, 10);
+    const matchFecha = (c) => (c.match.fecha_deposito || '').slice(0, 10);
+    const fechaDifiere = (c) => filaFecha(c) && matchFecha(c) && filaFecha(c) !== matchFecha(c);
+
+    const listaCoincidencias = coincidencias.length ? coincidencias.map((c, i) => {
+      const confianza = c.estado === 'ya_existe'
+        ? '<span style="color:var(--color-secundario);font-weight:700">✅ Coincidencia confiable</span>'
+        : '<span style="color:#D69E2E;font-weight:700">⚠️ REQUIERE REVISIÓN</span>';
+      const difiere = fechaDifiere(c);
+      const normCand  = _dupUltimos6(c.fila.numero_operacion);
+      const normMatch = _dupUltimos6(c.match.nro_operacion_bancaria) || _dupUltimos6(c.match.nro_operacion_alt);
+      return `
+      <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+        <div style="font-size:11px;margin-bottom:4px">${confianza}</div>
+        <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:8px">Motivo: ${escapar(c.razon)}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
+          <div>
+            <div style="font-weight:700;margin-bottom:2px">Archivo que estás importando</div>
+            <div>${escapar(filaFecha(c)||'—')} · ${formatearMoneda(c.fila.monto, c.fila.moneda)} · ${escapar(c.fila.descripcion||'')}</div>
+            <div style="color:var(--color-texto-suave)">Op. ${escapar(c.fila.numero_operacion||'—')} <span style="opacity:.7">(normalizado: ${escapar(normCand||'—')})</span></div>
+          </div>
+          <div>
+            <div style="font-weight:700;margin-bottom:2px">Ya existente en NEXUM (ID ${escapar(String(c.match.id||'—'))})</div>
+            <div>${escapar(matchFecha(c)||'—')} · ${formatearMoneda(c.match.monto, c.match.moneda)} · ${escapar(c.match.descripcion||'')}</div>
+            <div style="color:var(--color-texto-suave)">Op. ${escapar(c.match.nro_operacion_bancaria||c.match.nro_operacion_alt||'—')} <span style="opacity:.7">(normalizado: ${escapar(normMatch||'—')})</span></div>
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
+          <input type="radio" name="dup-rev-${i}" value="existente" checked> Ya existe — no importar de nuevo
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;${difiere?'margin-bottom:6px':''};cursor:pointer">
+          <input type="radio" name="dup-rev-${i}" value="nuevo"> Es un movimiento nuevo — registrar como nuevo
+        </label>
+        ${difiere ? `
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding-left:22px;color:var(--color-texto-suave)">
+          <input type="checkbox" id="dup-fecha-${i}"> Actualizar la fecha registrada (${escapar(matchFecha(c))}) a la fecha de este archivo (${escapar(filaFecha(c))})
+        </label>` : ''}
+      </div>`;
+    }).join('') : `<p class="text-muted text-sm" style="padding:8px 0">No se detectó ninguna coincidencia con registros existentes — todo el archivo se registrará como nuevo.</p>`;
 
     mc.innerHTML = `
       <div class="modal-overlay" style="display:flex">
-        <div class="modal" style="max-width:720px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+        <div class="modal" style="max-width:760px;width:95%;max-height:88vh;display:flex;flex-direction:column">
           <div class="modal-header">
-            <h3>⚠️ ${posibles.length} movimiento(s) necesitan revisión</h3>
+            <h3>🔍 Validación antes de importar — ${resumen.total} movimiento(s)</h3>
           </div>
           <div class="modal-body" style="flex:1;overflow-y:auto">
-            <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
-              No se pudo determinar con seguridad si estos ya existen o son nuevos. Revisa cada uno y decide — por defecto queda marcado como "Ya existe" (más seguro, no se importa).
-            </p>
-            ${posibles.map((p, i) => `
-              <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">
-                <div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:8px">${escapar(p.razon)}</div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;margin-bottom:10px">
-                  <div>
-                    <div style="font-weight:700;margin-bottom:2px">Archivo que estás importando</div>
-                    <div>${escapar(p.fila.fecha||'')} · ${formatearMoneda(p.fila.monto)} · ${escapar(p.fila.descripcion||'')}</div>
-                    <div style="color:var(--color-texto-suave)">Op. ${escapar(p.fila.numero_operacion||'—')}</div>
-                  </div>
-                  <div>
-                    <div style="font-weight:700;margin-bottom:2px">Ya existente en NEXUM</div>
-                    <div>${escapar((p.match.fecha_deposito||'').slice(0,10))} · ${formatearMoneda(p.match.monto)} · ${escapar(p.match.descripcion||'')}</div>
-                    <div style="color:var(--color-texto-suave)">Op. ${escapar(p.match.nro_operacion_bancaria||p.match.nro_operacion_alt||'—')}</div>
-                  </div>
-                </div>
-                <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer">
-                  <input type="radio" name="dup-rev-${i}" value="existente" checked> Ya existe — no importar
-                </label>
-                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-                  <input type="radio" name="dup-rev-${i}" value="nuevo"> Es un movimiento nuevo — importar
-                </label>
-              </div>`).join('')}
+            ${_dupRenderResumenIntegridad(resumen)}
+            <div style="border:1px solid var(--color-borde);border-radius:8px;padding:10px 14px;margin-bottom:16px">
+              <div style="font-weight:700;font-size:12px;margin-bottom:4px">💰 Importe que quedará registrado tras esta importación</div>
+              <div id="dup-total-final-body">${_dupRenderTotalesFinales(coincidencias, resumen, false)}</div>
+            </div>
+            ${coincidencias.length ? `<p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
+              Estos movimientos parecen corresponder a registros ya existentes en NEXUM. Nada se modifica todavía — revisa cada uno y decide antes de confirmar.
+            </p>` : ''}
+            ${listaCoincidencias}
           </div>
           <div class="modal-footer">
             <button class="btn btn-secundario" id="dup-rev-cancelar">Cancelar importación</button>
-            <button class="btn btn-primario" id="dup-rev-confirmar">Confirmar y continuar</button>
+            <button class="btn btn-primario" id="dup-rev-confirmar">Confirmar e importar</button>
           </div>
         </div>
       </div>`;
 
+    mc.querySelector('.modal-body').addEventListener('change', (e) => {
+      if (e.target.name && e.target.name.startsWith('dup-rev-')) {
+        const cont = document.getElementById('dup-total-final-body');
+        if (cont) cont.innerHTML = _dupRenderTotalesFinales(coincidencias, resumen, true);
+      }
+    });
+
     document.getElementById('dup-rev-cancelar').onclick = () => { mc.innerHTML = ''; resolve(null); };
     document.getElementById('dup-rev-confirmar').onclick = () => {
-      const decisiones = posibles.map((_, i) => document.querySelector(`input[name="dup-rev-${i}"]:checked`)?.value || 'existente');
+      const decisiones = coincidencias.map((_, i) => {
+        const accion = document.querySelector(`input[name="dup-rev-${i}"]:checked`)?.value || 'existente';
+        const actualizarFecha = accion === 'existente' && !!document.getElementById(`dup-fecha-${i}`)?.checked;
+        return { accion, actualizarFecha };
+      });
       mc.innerHTML = '';
-      resolve(decisiones);
+      resolve({ decisiones, resumen });
     };
   });
 }

@@ -27,6 +27,14 @@ async function renderTabImportar(area) {
             </select>
           </div>
           <div class="campo" style="margin:0">
+            <label>Tipo de reporte</label>
+            <select id="imp-tipo-reporte" class="w-full">
+              <option value="DIARIO">Diario (últimos 20 movimientos)</option>
+              <option value="MENSUAL">EECC mensual completo</option>
+              <option value="MANUAL">Manual / Otro</option>
+            </select>
+          </div>
+          <div class="campo" style="margin:0">
             <label>Archivo Excel <span class="req">*</span></label>
             <input type="file" id="imp-archivo" accept=".xlsx,.xls,.csv"
                    style="padding:8px;border:2px dashed var(--color-borde);border-radius:var(--radio);width:100%;box-sizing:border-box;cursor:pointer">
@@ -230,8 +238,9 @@ function cancelarPreview() {
 }
 
 async function confirmarImportacion() {
-  const cuenta  = document.getElementById('imp-cuenta')?.value || null;
-  const fuente  = document.getElementById('imp-fuente')?.value || 'MANUAL';
+  const cuenta      = document.getElementById('imp-cuenta')?.value || null;
+  const fuente      = document.getElementById('imp-fuente')?.value || 'MANUAL';
+  const tipoReporte = document.getElementById('imp-tipo-reporte')?.value || 'MANUAL';
   const validos = imp_datos_preview.filter(r => r._ok);
   if (!validos.length) { mostrarToast('No hay registros válidos para importar', 'atencion'); return; }
 
@@ -256,22 +265,41 @@ async function confirmarImportacion() {
   }));
   const clasificados = await _dupClasificarLoteMovimientos(candidatos);
 
-  const nuevos    = clasificados.filter(c => c.estado === 'nuevo');
-  const yaExisten = clasificados.filter(c => c.estado === 'ya_existe');
-  const posibles  = clasificados.filter(c => c.estado === 'posible');
-
-  let decisiones = [];
-  if (posibles.length) {
+  // Control contra inflación financiera (Wendy 2026-09-15): cada fila del
+  // archivo debe caer en EXACTAMENTE una categoría (nuevo/ya_existe/posible).
+  // Si por algún motivo el conteo no cuadra, NO se sigue adelante en silencio
+  // — se detiene la importación completa y se avisa, en vez de arriesgarse a
+  // registrar de más o de menos.
+  const sumaImporteArchivo = candidatos.reduce((s, c) => s + Math.abs(Number(c.monto) || 0), 0);
+  const sumaImporteClasificado = clasificados.reduce((s, c) => s + Math.abs(Number(c.fila.monto) || 0), 0);
+  if (clasificados.length !== candidatos.length || Math.abs(sumaImporteArchivo - sumaImporteClasificado) > 0.01) {
+    mostrarToast('⚠️ Importación detenida: el cuadre de integridad no coincide (filas o importes no calzan). No se registró nada — contacta a soporte antes de reintentar.', 'error');
     btn.disabled = false; btn.textContent = '✅ Confirmar e importar';
-    decisiones = await _dupRevisarPosibles(posibles.map(p => ({ fila: p.fila, match: p.match, razon: p.razon })));
-    if (decisiones === null) { mostrarToast('Importación cancelada.', 'atencion'); return; }
-    btn.disabled = true; btn.textContent = 'Importando…';
+    return;
   }
 
+  const nuevos       = clasificados.filter(c => c.estado === 'nuevo');
+  // Validación de integridad: SIEMPRE se muestra antes de escribir nada en la
+  // base (incluso si todo el archivo es nuevo) — cuadre de conteos e importe
+  // por moneda, y por fila que ya existe (confiable o "REQUIERE REVISIÓN") la
+  // decisión de la persona, incluida la fecha, que ya no se actualiza en
+  // silencio. Wendy 2026-09-15: integridad de datos > evitar duplicados >
+  // conservar información real > automatización.
+  const coincidencias = clasificados.filter(c => c.estado === 'ya_existe' || c.estado === 'posible');
+
+  btn.disabled = false; btn.textContent = '✅ Confirmar e importar';
+  const resultado = await _dupMostrarValidacionIntegridad(clasificados);
+  if (resultado === null) { mostrarToast('Importación cancelada.', 'atencion'); return; }
+  btn.disabled = true; btn.textContent = 'Importando…';
+  const { decisiones, resumen } = resultado;
+
   const paraInsertar   = [...nuevos];
-  posibles.forEach((p, i) => { if (decisiones[i] === 'nuevo') paraInsertar.push(p); });
-  const paraActualizar = [...yaExisten];
-  posibles.forEach((p, i) => { if (decisiones[i] === 'existente') paraActualizar.push(p); });
+  const paraActualizar = []; // { fila, match, razon, _actualizarFecha }
+  coincidencias.forEach((c, i) => {
+    const dec = decisiones[i];
+    if (dec.accion === 'nuevo') paraInsertar.push(c);
+    else paraActualizar.push({ ...c, _actualizarFecha: dec.actualizarFecha });
+  });
 
   // Crear lote de importación (historial — igual que antes)
   const nombreArchivo = document.getElementById('imp-archivo')?.files[0]?.name || 'importacion.xlsx';
@@ -282,7 +310,11 @@ async function confirmarImportacion() {
       cuenta_bancaria_id:   cuenta,
       nombre_archivo:       nombreArchivo,
       tipo_fuente:          fuente,
+      tipo_reporte:         tipoReporte,
       total_registros:      imp_datos_preview.length,
+      registros_duplicados: resumen.duplicados,
+      registros_revision:   resumen.revision,
+      detalle_validacion:   resumen,
       estado:               'PROCESANDO',
       usuario_id:           perfil_usuario?.id || null,
     })
@@ -318,12 +350,15 @@ async function confirmarImportacion() {
     else ok += chunk.length;
   }
 
-  // Además, se conserva el registro en "movimientos" tal como antes — esa
-  // tabla es la que usa "🏦 Cuentas bancarias" para reconciliar el saldo por
-  // cuenta (tesoreria_mbd no guarda a qué cuenta pertenece cada movimiento).
-  // Aquí SÍ se guardan todas las filas válidas del archivo (no solo las
-  // nuevas): es el libro bancario en crudo, no el registro de negocio.
-  const movsCuenta = validos.map(r => ({
+  // Además, se conserva el registro en "movimientos" — esa tabla es la que
+  // usa "🏦 Cuentas bancarias" para reconciliar el saldo por cuenta
+  // (tesoreria_mbd no guarda a qué cuenta pertenece cada movimiento). Antes
+  // se guardaban TODAS las filas válidas sin verificar, así que reportes
+  // diarios que se solapan inflaban el saldo con filas repetidas. Ahora se
+  // dedupe también aquí (mismo motor: N° de operación normalizado + monto +
+  // moneda + descripción). Wendy 2026-09-15.
+  const validosParaMovimientos = await _dupFiltrarNuevosParaMovimientos(validos, cuenta);
+  const movsCuenta = validosParaMovimientos.map(r => ({
     empresa_operadora_id: empresa_activa.id,
     cuenta_bancaria_id:   cuenta,
     fecha:                r.fecha,
@@ -341,18 +376,38 @@ async function confirmarImportacion() {
   }
 
   // Lo que ya existía: conservar el N° de operación de EECC como "alt" si el
-  // registro (creado por MBD) todavía no tenía uno guardado.
+  // registro (creado por MBD) todavía no tenía uno guardado, y actualizar la
+  // fecha SOLO si la persona lo aprobó explícitamente en el reporte de
+  // coincidencias (nunca en silencio — Wendy 2026-09-15).
+  let modificados = 0;
   for (const c of paraActualizar) {
+    const cambios = {};
     if (!c.match.nro_operacion_alt && c.fila.numero_operacion && c.fila.numero_operacion !== c.match.nro_operacion_bancaria) {
-      await _supabase.from('tesoreria_mbd').update({ nro_operacion_alt: c.fila.numero_operacion }).eq('id', c.match.id);
+      cambios.nro_operacion_alt = c.fila.numero_operacion;
+    }
+    if (c._actualizarFecha && c.fila.fecha && c.fila.fecha !== (c.match.fecha_deposito || '').slice(0, 10)) {
+      cambios.fecha_deposito = c.fila.fecha;
+    }
+    if (Object.keys(cambios).length) {
+      const { error } = await _supabase.from('tesoreria_mbd').update(cambios).eq('id', c.match.id);
+      if (!error) modificados++;
     }
   }
 
-  // Actualizar estado del lote
+  // Control contra inflación financiera: lo que se insertó de verdad en
+  // tesoreria_mbd debe cuadrar con lo que se decidió insertar. Si algún
+  // chunk falló (err > 0), NO se marca como completado en silencio — el
+  // lote queda en ERROR para que se revise antes de confiar en el saldo.
+  if (err > 0) {
+    mostrarToast(`⚠️ ERROR CRÍTICO: ${err} de ${movsMbd.length} movimiento(s) NO se guardaron correctamente. Revisa el historial antes de confiar en los saldos.`, 'error');
+  }
+
+  // Actualizar estado del lote (trazabilidad completa)
   await _supabase.from('lotes_importacion').update({
-    estado:           err === 0 ? 'COMPLETADO' : 'ERROR',
-    registros_ok:     ok,
-    registros_error:  err,
+    estado:                err === 0 ? 'COMPLETADO' : 'ERROR',
+    registros_ok:          ok,
+    registros_error:       err,
+    registros_modificados: modificados,
   }).eq('id', lote.id);
 
   btn.disabled = false; btn.textContent = '✅ Confirmar e importar';
