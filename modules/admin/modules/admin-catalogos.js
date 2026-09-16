@@ -34,6 +34,18 @@ function nombreCatalogo(c) {
            tipos_op:'⚡ Tipos operación', estados:'🔘 Estados' }[c] || c;
 }
 
+// ── Config compartida (pantalla + export): columnas reales visibles —
+//    nunca incluye "id" (UUID interno), solo lo que Wendy ve en la tabla. ──
+function _catConfig(cat) {
+  return {
+    monedas:    { tabla: 'catalogo_monedas',          cols: ['codigo','nombre','simbolo'], headers: ['Código','Nombre','Símbolo'] },
+    bancos:     { tabla: 'catalogo_bancos',            cols: ['codigo','nombre','nombre_corto'], headers: ['Código','Nombre','Nombre corto'] },
+    tipos_doc:  { tabla: 'catalogo_tipos_documento',   cols: ['codigo','nombre'], headers: ['Código','Nombre'] },
+    tipos_op:   { tabla: 'catalogo_tipos_operacion',   cols: ['codigo','nombre','naturaleza'], headers: ['Código','Nombre','Naturaleza'] },
+    estados:    { tabla: 'catalogo_estados',            cols: ['codigo','nombre','modulo','color'], headers: ['Código','Nombre','Módulo','Color'] }
+  }[cat];
+}
+
 function activarCatalogo(cat) {
   document.querySelectorAll('#contenido-tab .tab-btn').forEach(b => {
     if (b.id?.startsWith('ctab-')) b.classList.remove('activo');
@@ -42,14 +54,7 @@ function activarCatalogo(cat) {
   if (btn) btn.classList.add('activo');
 
   const area = document.getElementById('contenido-catalogo');
-  const tablas = {
-    monedas:    { tabla: 'catalogo_monedas',          cols: ['codigo','nombre','simbolo'], headers: ['Código','Nombre','Símbolo'] },
-    bancos:     { tabla: 'catalogo_bancos',            cols: ['codigo','nombre','nombre_corto'], headers: ['Código','Nombre','Nombre corto'] },
-    tipos_doc:  { tabla: 'catalogo_tipos_documento',   cols: ['codigo','nombre'], headers: ['Código','Nombre'] },
-    tipos_op:   { tabla: 'catalogo_tipos_operacion',   cols: ['codigo','nombre','naturaleza'], headers: ['Código','Nombre','Naturaleza'] },
-    estados:    { tabla: 'catalogo_estados',            cols: ['codigo','nombre','modulo','color'], headers: ['Código','Nombre','Módulo','Color'] }
-  };
-  cargarCatalogo(cat, tablas[cat], area);
+  cargarCatalogo(cat, _catConfig(cat), area);
 }
 
 async function cargarCatalogo(cat, config, area) {
@@ -127,8 +132,18 @@ async function exportarCatalogoExcel(cat, tabla) {
   const { data } = await _supabase.from(tabla).select('*').order('codigo');
   if (!data?.length) { mostrarToast('No hay datos', 'atencion'); return; }
 
+  // Solo columnas legibles (mismas que se ven en pantalla) — nunca el "id"
+  // interno (UUID) de la fila, que select('*') traería junto con el resto.
+  const config = _catConfig(cat);
+  const filas = data.map(row => {
+    const obj = {};
+    config.cols.forEach((col, i) => { obj[config.headers[i]] = row[col] ?? ''; });
+    obj['Activo'] = row.activo ? 'Sí' : 'No';
+    return obj;
+  });
+
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), nombreCatalogo(cat).replace(/[^\w\s]/g,'').trim());
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), nombreCatalogo(cat).replace(/[^\w\s]/g,'').trim());
   XLSX.writeFile(wb, `NEXUM_${tabla}_${fechaHoy().replace(/\//g,'-')}.xlsx`);
   mostrarToast('Excel exportado', 'exito');
 }

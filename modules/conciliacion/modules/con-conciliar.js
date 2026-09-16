@@ -1625,6 +1625,26 @@ async function _vincularManual(movId, docTipo, docId, nDocDirecto) {
   _conRefrescarPanel(); // actualizar avance en tiempo real
 }
 
+// ── Vinculación manual de RH vía 🔍 lupa guarda el UUID del RH en
+//    nro_factura_doc (dos emisores distintos pueden repetir el mismo N° RH
+//    legible) — ver comentario en busqueda-comprobante.js línea 252. Para que
+//    los Excel exportados se lean igual que en pantalla, se resuelve ese
+//    UUID al N° RH legible (ej. "E001-8") antes de exportar. ──────────────
+const _conUuidRE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function _conMapaNumeroRH(mbdRows) {
+  const ids = [...new Set((mbdRows || [])
+    .filter(r => r.tipo_doc === 'RH' && _conUuidRE.test(r.nro_factura_doc || ''))
+    .map(r => r.nro_factura_doc))];
+  const mapa = new Map();
+  if (!ids.length) return mapa;
+  const { data } = await _supabase.from('rh_registros').select('id,numero_rh').in('id', ids);
+  (data || []).forEach(rh => { if (rh.numero_rh) mapa.set(rh.id, rh.numero_rh); });
+  return mapa;
+}
+function _conNroFacturaLegible(m, mapaRH) {
+  return (m.tipo_doc === 'RH' && mapaRH?.has(m.nro_factura_doc)) ? mapaRH.get(m.nro_factura_doc) : (m.nro_factura_doc || '');
+}
+
 // ── Exportar aprobados ────────────────────────────────────────────
 async function _conExportarAprobados() {
   if (!_con_periodo_actual) { mostrarToast('Primero ejecuta la conciliación', 'atencion'); return; }
@@ -1648,6 +1668,7 @@ async function _conExportarAprobados() {
     .eq('empresa_operadora_id', empresa_activa.id)
     .in('movimiento_id', data.map(m => m.id));
   const concilMap = new Map((concils || []).map(c => [c.movimiento_id, c]));
+  const mapaRH = await _conMapaNumeroRH(data);
 
   const cab = ['N° Operación','Fecha Depósito','Descripción','Moneda','Monto',
     'Proveedor/Empresa/Personal','RUC/DNI','Cotización','OC','Proyecto','Concepto',
@@ -1662,7 +1683,7 @@ async function _conExportarAprobados() {
       m.moneda||'S/', m.monto,
       m.proveedor_empresa_personal||'', m.ruc_dni||'', m.cotizacion||'',
       m.oc||'', m.proyecto||'', m.concepto||'', m.empresa||'',
-      m.entrega_doc||'', m.nro_factura_doc||'', m.tipo_doc||'',
+      m.entrega_doc||'', _conNroFacturaLegible(m, mapaRH), m.tipo_doc||'',
       m.autorizacion||'', m.observaciones||'',
       m.detalles_compra_servicio||'', m.observaciones_2||'',
       c?.tipo_match||'', c?.score ?? '', c?.estado||'',
@@ -1836,6 +1857,7 @@ async function _conExportarAvance() {
     .eq('empresa_operadora_id', empresa_activa.id)
     .in('movimiento_id', data.map(m => m.id));
   const concilMap = new Map((concils || []).map(c => [c.movimiento_id, c]));
+  const mapaRH = await _conMapaNumeroRH(data);
 
   const cab = [
     'N° Operación','Fecha Depósito','Descripción','Moneda','Monto',
@@ -1853,7 +1875,7 @@ async function _conExportarAvance() {
       m.proveedor_empresa_personal || '',
       m.ruc_dni                || '',
       m.entrega_doc            || '',
-      m.nro_factura_doc        || '',
+      _conNroFacturaLegible(m, mapaRH),
       m.tipo_doc               || '',
       c?.tipo_match||'', c?.score ?? '',
     ];
