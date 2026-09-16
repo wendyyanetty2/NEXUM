@@ -100,6 +100,7 @@ async function _cargarCuentasImp() {
 
 let imp_datos_preview    = [];
 let imp_movs_validacion  = [];
+let imp_val_mostrar_cuenta = false;
 
 function descargarPlantilla() {
   const ws = XLSX.utils.aoa_to_sheet([
@@ -231,6 +232,7 @@ function _parsearFecha(val) {
 function cancelarPreview() {
   imp_datos_preview   = [];
   imp_movs_validacion = [];
+  imp_val_mostrar_cuenta = false;
   const preview = document.getElementById('imp-preview');
   if (preview) preview.style.display = 'none';
   const val = document.getElementById('imp-validacion');
@@ -624,11 +626,25 @@ async function _validarLoteVinculado(loteId, cuentaId) {
 
   imp_movs_validacion = (otrosRaw || []).filter(m => !idsLote.has(m.id));
   imp_datos_preview = filaLote.map(r => ({ ...r, _ok: true }));
+  imp_val_mostrar_cuenta = false; // la cuenta ya se conoce (cuentaId) — no hace falta la columna
   cont.style.display = 'block';
   _impRenderValidacion();
 }
 
 // ── Validación cruzada EECC vs Movimientos bancarios ─────────────
+// Ya NO depende de tener cuenta bancaria asignada: si no hay cuenta elegida
+// se valida contra todos los movimientos de la empresa (empresa_activa.id)
+// en el rango de fechas, y se puede vincular a una cuenta después desde el
+// historial. Wendy 2026-09-16: no debe ser obligatorio asignar cuenta para
+// poder ver la validación cruzada.
+const IMP_TOLERANCIA_DIAS = 3;
+
+function _impSumarDias(fechaISO, dias) {
+  const d = new Date(fechaISO + 'T00:00:00');
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
 async function _impCargarValidacion() {
   const cont   = document.getElementById('imp-validacion');
   if (!cont) return;
@@ -636,32 +652,39 @@ async function _impCargarValidacion() {
   const cuenta = document.getElementById('imp-cuenta')?.value;
   const validos = imp_datos_preview.filter(r => r._ok);
   if (!validos.length) { cont.style.display = 'none'; return; }
-  if (!cuenta) {
-    cont.style.display = 'block';
-    cont.innerHTML = `<div class="text-center text-muted text-sm" style="padding:16px">
-      ℹ️ No se validará contra movimientos bancarios porque no asignaste una cuenta. Podrás vincularla y validar después desde el historial.
-    </div>`;
-    return;
-  }
 
-  // Rango de fechas del EECC
+  // Rango de fechas del EECC, ampliado ±3 días: el match real es por N° de
+  // operación, no por fecha exacta, así que el rango solo debe ser lo
+  // bastante amplio para no perder movimientos que el banco liquidó unos
+  // días antes/después.
   const fechas = validos.map(r => r.fecha).filter(Boolean).sort();
-  const desde  = fechas[0];
-  const hasta  = fechas[fechas.length - 1];
+  const desde  = _impSumarDias(fechas[0], -IMP_TOLERANCIA_DIAS);
+  const hasta  = _impSumarDias(fechas[fechas.length - 1], IMP_TOLERANCIA_DIAS);
 
   cont.style.display = 'block';
   cont.innerHTML = `<div class="text-center text-muted text-sm" style="padding:16px">🔍 Validando contra movimientos bancarios registrados…</div>`;
 
-  const { data: movs } = await _supabase
+  let query = _supabase
     .from('movimientos')
-    .select('id, fecha, naturaleza, importe, descripcion, numero_operacion, moneda')
+    .select('id, fecha, naturaleza, importe, descripcion, numero_operacion, moneda, cuenta_bancaria_id, cuentas_bancarias(nombre_alias)')
     .eq('empresa_operadora_id', empresa_activa.id)
-    .eq('cuenta_bancaria_id', cuenta)
     .gte('fecha', desde)
     .lte('fecha', hasta);
+  if (cuenta) query = query.eq('cuenta_bancaria_id', cuenta);
+
+  const { data: movs } = await query;
 
   imp_movs_validacion = movs || [];
+  imp_val_mostrar_cuenta = !cuenta;
   _impRenderValidacion();
+}
+
+function _impFechaEnTolerancia(fechaA, fechaB) {
+  if (!fechaA || !fechaB) return false;
+  const dA = new Date(fechaA + 'T00:00:00');
+  const dB = new Date(fechaB + 'T00:00:00');
+  const dias = Math.abs((dA - dB) / 86400000);
+  return dias <= IMP_TOLERANCIA_DIAS;
 }
 
 function _impRenderValidacion() {
@@ -678,17 +701,18 @@ function _impRenderValidacion() {
 
     if (esComision) {
       const match = movs.find(m =>
-        m.fecha === row.fecha &&
+        _impFechaEnTolerancia(m.fecha, row.fecha) &&
         m.naturaleza === row.naturaleza &&
         Math.abs(parseFloat(m.importe) - row.importe) <= 0.01
       );
       return { row, match, estado: match ? 'COMISION' : 'SIN_MATCH' };
     }
 
-    // Buscar por últimos 6 dígitos del nro_op
+    // Buscar por últimos 6 dígitos del nro_op (misma moneda — evita agrupar
+    // movimientos de cuentas en PEN con otros en USD que compartan dígitos)
     const porNro = movs.filter(m => {
       const nroMov6 = (m.numero_operacion || '').trim().slice(-6);
-      return nroMov6 === nroEecc6 && nroMov6 !== '';
+      return nroMov6 === nroEecc6 && nroMov6 !== '' && (m.moneda || '').toUpperCase() === (row.moneda || '').toUpperCase();
     });
 
     if (porNro.length) {
@@ -696,12 +720,23 @@ function _impRenderValidacion() {
         m.naturaleza === row.naturaleza &&
         Math.abs(parseFloat(m.importe) - row.importe) <= 0.01
       );
-      return { row, match: exacto || porNro[0], estado: exacto ? 'COINCIDE' : 'OBSERVADO' };
+      if (exacto) return { row, match: exacto, estado: 'COINCIDE' };
+
+      // El mismo N° de operación puede repartirse en varios comprobantes:
+      // si la suma de todos los movimientos con este nro_op cuadra con el
+      // importe del EECC, se considera coincidencia agrupada en vez de
+      // observada. Wendy 2026-09-16.
+      const mismaNat = porNro.filter(m => m.naturaleza === row.naturaleza);
+      const suma = mismaNat.reduce((s, m) => s + parseFloat(m.importe || 0), 0);
+      if (mismaNat.length > 1 && Math.abs(suma - row.importe) <= 0.01) {
+        return { row, match: mismaNat, estado: 'COINCIDE_GRUPO' };
+      }
+      return { row, match: porNro[0], estado: 'OBSERVADO' };
     }
 
-    // Viceversa: monto + fecha coinciden pero no el nro_op
+    // Viceversa: monto + fecha (con tolerancia) coinciden pero no el nro_op
     const porMonto = movs.find(m =>
-      m.fecha === row.fecha &&
+      _impFechaEnTolerancia(m.fecha, row.fecha) &&
       m.naturaleza === row.naturaleza &&
       Math.abs(parseFloat(m.importe) - row.importe) <= 0.01
     );
@@ -709,16 +744,19 @@ function _impRenderValidacion() {
   });
 
   const nCoincide  = resultados.filter(r => r.estado === 'COINCIDE').length;
+  const nGrupo     = resultados.filter(r => r.estado === 'COINCIDE_GRUPO').length;
   const nObservado = resultados.filter(r => r.estado === 'OBSERVADO').length;
   const nComision  = resultados.filter(r => r.estado === 'COMISION').length;
   const nSinMatch  = resultados.filter(r => r.estado === 'SIN_MATCH').length;
+  const mostrarCuenta = imp_val_mostrar_cuenta;
 
   const badge = (estado) => {
     const cfg = {
-      COINCIDE:  { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide' },
-      OBSERVADO: { bg:'#FEFCBF', color:'#744210', label:'⚠️ Observado' },
-      COMISION:  { bg:'#BEE3F8', color:'#2A4365', label:'🏦 Comisión' },
-      SIN_MATCH: { bg:'#FED7D7', color:'#742A2A', label:'❌ Sin match' },
+      COINCIDE:       { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide' },
+      COINCIDE_GRUPO: { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide (agrupado)' },
+      OBSERVADO:      { bg:'#FEFCBF', color:'#744210', label:'⚠️ Observado' },
+      COMISION:       { bg:'#BEE3F8', color:'#2A4365', label:'🏦 Comisión' },
+      SIN_MATCH:      { bg:'#FED7D7', color:'#742A2A', label:'❌ Sin match' },
     };
     const c = cfg[estado] || cfg.SIN_MATCH;
     return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${c.bg};color:${c.color}">${c.label}</span>`;
@@ -733,7 +771,7 @@ function _impRenderValidacion() {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <h3 style="font-size:14px">🔍 Validación cruzada con Movimientos Bancarios</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:600">
-        <span style="padding:3px 10px;border-radius:10px;background:#C6F6D5;color:#276749">✅ ${nCoincide} coinciden</span>
+        <span style="padding:3px 10px;border-radius:10px;background:#C6F6D5;color:#276749">✅ ${nCoincide + nGrupo} coinciden${nGrupo ? ` (${nGrupo} agrupados)` : ''}</span>
         ${nObservado ? `<span style="padding:3px 10px;border-radius:10px;background:#FEFCBF;color:#744210">⚠️ ${nObservado} observados</span>` : ''}
         ${nComision  ? `<span style="padding:3px 10px;border-radius:10px;background:#BEE3F8;color:#2A4365">🏦 ${nComision} comisiones</span>` : ''}
         ${nSinMatch  ? `<span style="padding:3px 10px;border-radius:10px;background:#FED7D7;color:#742A2A">❌ ${nSinMatch} sin match</span>` : ''}
@@ -752,6 +790,7 @@ function _impRenderValidacion() {
             <th>Nro Op (Banco)</th>
             <th class="text-right">Importe Banco</th>
             <th>Descripción Banco</th>
+            ${mostrarCuenta ? '<th>Cuenta</th>' : ''}
           </tr>
         </thead>
         <tbody>
@@ -759,6 +798,17 @@ function _impRenderValidacion() {
             const rowBg = estado === 'OBSERVADO' ? 'rgba(254,252,191,.5)'
                         : estado === 'SIN_MATCH'  ? 'rgba(254,215,215,.4)'
                         : '';
+            const matches = Array.isArray(match) ? match : (match ? [match] : []);
+            const nroOpBanco  = matches.length > 1
+              ? `${matches.length} comprobantes`
+              : escapar(matches[0]?.numero_operacion || '—');
+            const importeBanco = matches.length
+              ? matches.reduce((s, m) => s + parseFloat(m.importe || 0), 0)
+              : null;
+            const descBanco = matches.length > 1
+              ? matches.map(m => escapar(m.descripcion || '—')).join(' · ')
+              : escapar(matches[0]?.descripcion || '—');
+            const cuentas = [...new Set(matches.map(m => m.cuentas_bancarias?.nombre_alias).filter(Boolean))];
             return `
               <tr style="background:${rowBg}">
                 <td>${badge(estado)}</td>
@@ -768,11 +818,12 @@ function _impRenderValidacion() {
                   ${row.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(row.importe, row.moneda)}
                 </td>
                 <td style="text-align:center;color:var(--color-texto-suave)">⟷</td>
-                <td class="text-mono">${match ? escapar((match.numero_operacion||'—')) : '<span class="text-muted">—</span>'}</td>
-                <td class="text-right ${match?.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
-                  ${match ? `${match.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(match.importe, match.moneda)}` : '<span class="text-muted">—</span>'}
+                <td class="text-mono">${matches.length ? nroOpBanco : '<span class="text-muted">—</span>'}</td>
+                <td class="text-right ${matches[0]?.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
+                  ${matches.length ? `${matches[0].naturaleza==='CARGO'?'−':'+'}${formatearMoneda(importeBanco, matches[0].moneda)}` : '<span class="text-muted">—</span>'}
                 </td>
-                <td class="celda-truncar text-sm" style="--w:200px" title="${match ? escapar(match.descripcion||'') : ''}">${match ? escapar(match.descripcion||'—') : '<span class="text-muted">Sin movimiento registrado</span>'}</td>
+                <td class="celda-truncar text-sm" style="--w:200px" title="${matches.length ? descBanco : ''}">${matches.length ? descBanco : '<span class="text-muted">Sin movimiento registrado</span>'}</td>
+                ${mostrarCuenta ? `<td class="text-sm">${cuentas.length ? escapar(cuentas.join(', ')) : '<span class="text-muted">—</span>'}</td>` : ''}
               </tr>`;
           }).join('')}
         </tbody>
