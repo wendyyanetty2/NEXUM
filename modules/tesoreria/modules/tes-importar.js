@@ -101,6 +101,7 @@ async function _cargarCuentasImp() {
 let imp_datos_preview    = [];
 let imp_movs_validacion  = [];
 let imp_val_mostrar_cuenta = false;
+let imp_val_rango_fechas = null; // {desde, hasta} EXACTO del EECC (sin el padding de ±3 días) — para el cuadre de totales
 
 function descargarPlantilla() {
   const ws = XLSX.utils.aoa_to_sheet([
@@ -233,6 +234,7 @@ function cancelarPreview() {
   imp_datos_preview   = [];
   imp_movs_validacion = [];
   imp_val_mostrar_cuenta = false;
+  imp_val_rango_fechas = null;
   const preview = document.getElementById('imp-preview');
   if (preview) preview.style.display = 'none';
   const val = document.getElementById('imp-validacion');
@@ -627,6 +629,7 @@ async function _validarLoteVinculado(loteId, cuentaId) {
   imp_movs_validacion = (otrosRaw || []).filter(m => !idsLote.has(m.id));
   imp_datos_preview = filaLote.map(r => ({ ...r, _ok: true }));
   imp_val_mostrar_cuenta = false; // la cuenta ya se conoce (cuentaId) — no hace falta la columna
+  imp_val_rango_fechas = { desde, hasta };
   cont.style.display = 'block';
   _impRenderValidacion();
 }
@@ -658,8 +661,9 @@ async function _impCargarValidacion() {
   // bastante amplio para no perder movimientos que el banco liquidó unos
   // días antes/después.
   const fechas = validos.map(r => r.fecha).filter(Boolean).sort();
-  const desde  = _impSumarDias(fechas[0], -IMP_TOLERANCIA_DIAS);
-  const hasta  = _impSumarDias(fechas[fechas.length - 1], IMP_TOLERANCIA_DIAS);
+  const rangoExacto = { desde: fechas[0], hasta: fechas[fechas.length - 1] };
+  const desde  = _impSumarDias(rangoExacto.desde, -IMP_TOLERANCIA_DIAS);
+  const hasta  = _impSumarDias(rangoExacto.hasta, IMP_TOLERANCIA_DIAS);
 
   cont.style.display = 'block';
   cont.innerHTML = `<div class="text-center text-muted text-sm" style="padding:16px">🔍 Validando contra movimientos bancarios registrados…</div>`;
@@ -676,6 +680,7 @@ async function _impCargarValidacion() {
 
   imp_movs_validacion = movs || [];
   imp_val_mostrar_cuenta = !cuenta;
+  imp_val_rango_fechas = rangoExacto;
   _impRenderValidacion();
 }
 
@@ -687,10 +692,11 @@ function _impFechaEnTolerancia(fechaA, fechaB) {
   return dias <= IMP_TOLERANCIA_DIAS;
 }
 
-function _impRenderValidacion() {
-  const cont   = document.getElementById('imp-validacion');
-  if (!cont) return;
-
+// ── Cálculo puro del cuadre (sin HTML) — lo usan tanto el resumen compacto
+// del submódulo como el modal de reporte completo. Wendy 2026-09-16: no
+// saturar el submódulo con la tabla/panel completos, solo un resumen +
+// botón que abre el reporte.
+function _impCalcularCuadre() {
   const movs   = imp_movs_validacion;
   const validos = imp_datos_preview.filter(r => r._ok);
 
@@ -748,37 +754,171 @@ function _impRenderValidacion() {
   const nObservado = resultados.filter(r => r.estado === 'OBSERVADO').length;
   const nComision  = resultados.filter(r => r.estado === 'COMISION').length;
   const nSinMatch  = resultados.filter(r => r.estado === 'SIN_MATCH').length;
-  const mostrarCuenta = imp_val_mostrar_cuenta;
 
-  const badge = (estado) => {
-    const cfg = {
-      COINCIDE:       { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide' },
-      COINCIDE_GRUPO: { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide (agrupado)' },
-      OBSERVADO:      { bg:'#FEFCBF', color:'#744210', label:'⚠️ Observado' },
-      COMISION:       { bg:'#BEE3F8', color:'#2A4365', label:'🏦 Comisión' },
-      SIN_MATCH:      { bg:'#FED7D7', color:'#742A2A', label:'❌ Sin match' },
-    };
-    const c = cfg[estado] || cfg.SIN_MATCH;
-    return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${c.bg};color:${c.color}">${c.label}</span>`;
+  // ── Cuadre de totales EECC vs Sistema (mismo rango exacto de fechas, sin
+  // el padding de ±3 días que se usó solo para buscar el match) + detección
+  // de movimientos que están en el sistema pero NO en el EECC — el chequeo
+  // inverso que hacía falta para poder decir "el mes cuadra" de verdad, no
+  // solo que cada fila del EECC encontró su par. Wendy 2026-09-16.
+  const rango = imp_val_rango_fechas;
+  const matchedIds = new Set();
+  resultados.forEach(({ match }) => {
+    (Array.isArray(match) ? match : (match ? [match] : [])).forEach(m => matchedIds.add(m.id));
+  });
+  const movsEnRango   = rango ? movs.filter(m => m.fecha >= rango.desde && m.fecha <= rango.hasta) : movs;
+  const extraSistema  = movsEnRango.filter(m => !matchedIds.has(m.id));
+
+  const totalesPorMoneda = {};
+  const _acum = (moneda, campo, monto) => {
+    const key = (moneda || 'PEN').toUpperCase();
+    totalesPorMoneda[key] = totalesPorMoneda[key] || { eeccCargo: 0, eeccAbono: 0, sisCargo: 0, sisAbono: 0 };
+    totalesPorMoneda[key][campo] += (parseFloat(monto) || 0);
   };
+  validos.forEach(r => _acum(r.moneda, r.naturaleza === 'CARGO' ? 'eeccCargo' : 'eeccAbono', r.importe));
+  movsEnRango.forEach(m => _acum(m.moneda, m.naturaleza === 'CARGO' ? 'sisCargo' : 'sisAbono', m.importe));
 
-  const avisoObservados = (nObservado || nSinMatch)
-    ? `<p class="text-sm" style="color:#744210;margin-bottom:10px;padding:8px 12px;background:#FFFFF0;border-left:3px solid #D69E2E;border-radius:4px">
-        ⚠️ Hay ${nObservado + nSinMatch} registro(s) con observaciones. Revísalos antes de confirmar la importación.
-       </p>` : '';
+  const filasCuadre = Object.entries(totalesPorMoneda).map(([moneda, t]) => {
+    const netoEecc = t.eeccAbono - t.eeccCargo;
+    const netoSis  = t.sisAbono - t.sisCargo;
+    const cuadra   = Math.abs(netoEecc - netoSis) <= 0.01;
+    return { moneda, ...t, netoEecc, netoSis, diff: netoSis - netoEecc, cuadra };
+  });
+  const todoCuadra = filasCuadre.every(f => f.cuadra) && extraSistema.length === 0;
+
+  const filasTabla = [
+    ...resultados,
+    ...extraSistema.map(m => ({ row: null, match: m, estado: 'EXTRA_SISTEMA' })),
+  ];
+
+  return {
+    rango, filasCuadre, todoCuadra, extraSistema, filasTabla,
+    nCoincide, nGrupo, nObservado, nComision, nSinMatch,
+    mostrarCuenta: imp_val_mostrar_cuenta,
+  };
+}
+
+const _impBadgeCfg = {
+  COINCIDE:       { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide' },
+  COINCIDE_GRUPO: { bg:'#C6F6D5', color:'#276749', label:'✅ Coincide (agrupado)' },
+  OBSERVADO:      { bg:'#FEFCBF', color:'#744210', label:'⚠️ Observado' },
+  COMISION:       { bg:'#BEE3F8', color:'#2A4365', label:'🏦 Comisión' },
+  SIN_MATCH:      { bg:'#FED7D7', color:'#742A2A', label:'❌ Sin match' },
+  EXTRA_SISTEMA:  { bg:'#E9D8FD', color:'#553C9A', label:'🔵 Solo en sistema' },
+};
+function _impBadge(estado) {
+  const c = _impBadgeCfg[estado] || _impBadgeCfg.SIN_MATCH;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${c.bg};color:${c.color}">${c.label}</span>`;
+}
+
+// ── Resumen compacto dentro del submódulo: solo estado general + botón que
+// abre el reporte completo en una ventana aparte, para no saturar la
+// pantalla de importar con la tabla y el panel de cuadre. Wendy 2026-09-16.
+function _impRenderValidacion() {
+  const cont = document.getElementById('imp-validacion');
+  if (!cont) return;
+
+  const c = _impCalcularCuadre();
+  const totalRevisar = c.nObservado + c.nSinMatch + c.extraSistema.length;
 
   cont.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <h3 style="font-size:14px">🔍 Validación cruzada con Movimientos Bancarios</h3>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:600">
-        <span style="padding:3px 10px;border-radius:10px;background:#C6F6D5;color:#276749">✅ ${nCoincide + nGrupo} coinciden${nGrupo ? ` (${nGrupo} agrupados)` : ''}</span>
-        ${nObservado ? `<span style="padding:3px 10px;border-radius:10px;background:#FEFCBF;color:#744210">⚠️ ${nObservado} observados</span>` : ''}
-        ${nComision  ? `<span style="padding:3px 10px;border-radius:10px;background:#BEE3F8;color:#2A4365">🏦 ${nComision} comisiones</span>` : ''}
-        ${nSinMatch  ? `<span style="padding:3px 10px;border-radius:10px;background:#FED7D7;color:#742A2A">❌ ${nSinMatch} sin match</span>` : ''}
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">
+          ${c.todoCuadra ? '✅ El mes cuadra' : '⚠️ Hay diferencias por revisar'} — Validación cruzada con Movimientos Bancarios
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:600">
+          <span style="padding:2px 8px;border-radius:10px;background:#C6F6D5;color:#276749">✅ ${c.nCoincide + c.nGrupo} coinciden</span>
+          ${c.nComision  ? `<span style="padding:2px 8px;border-radius:10px;background:#BEE3F8;color:#2A4365">🏦 ${c.nComision} comisiones</span>` : ''}
+          ${totalRevisar ? `<span style="padding:2px 8px;border-radius:10px;background:#FEFCBF;color:#744210">⚠️ ${totalRevisar} por revisar</span>` : ''}
+        </div>
       </div>
-    </div>
+      <button class="btn btn-secundario btn-sm" onclick="_impAbrirModalCuadre()">📊 Ver reporte de cuadre</button>
+    </div>`;
+}
+
+// ── Fila de la tabla del reporte — incluye, cuando aplica, el control para
+// corregir la fecha del movimiento YA guardado en el sistema si difiere de
+// la fecha del EECC (el N° de operación manda; la fecha puede variar por
+// cuándo liquida el banco). Wendy 2026-09-16: esto debe poder usarse tanto
+// antes de importar (aquí) como después, al vincular un lote ya importado.
+function _impFilaTablaHTML({ row, match, estado }, mostrarCuenta) {
+  const rowBg = estado === 'OBSERVADO'     ? 'rgba(254,252,191,.5)'
+              : estado === 'SIN_MATCH'     ? 'rgba(254,215,215,.4)'
+              : estado === 'EXTRA_SISTEMA' ? 'rgba(233,216,253,.4)'
+              : '';
+  const matches = Array.isArray(match) ? match : (match ? [match] : []);
+  const nroOpBanco  = matches.length > 1
+    ? `${matches.length} comprobantes`
+    : escapar(matches[0]?.numero_operacion || '—');
+  const importeBanco = matches.length
+    ? matches.reduce((s, m) => s + parseFloat(m.importe || 0), 0)
+    : null;
+  const descBanco = matches.length > 1
+    ? matches.map(m => escapar(m.descripcion || '—')).join(' · ')
+    : escapar(matches[0]?.descripcion || '—');
+  const cuentas = [...new Set(matches.map(m => m.cuentas_bancarias?.nombre_alias).filter(Boolean))];
+
+  // Corrección de fecha: solo tiene sentido con exactamente 1 movimiento del
+  // sistema emparejado (no agrupado) y cuando la fecha realmente difiere.
+  const unico = matches.length === 1 ? matches[0] : null;
+  const fechaDifiere = row && unico && row.fecha && unico.fecha && row.fecha !== unico.fecha;
+  const corregirFechaHTML = fechaDifiere ? `
+    <div style="margin-top:4px;font-size:11px;color:#744210">
+      📅 EECC: ${row.fecha} · Sistema: ${unico.fecha}
+      <button onclick="_impCorregirFecha('${unico.id}','${row.fecha}',this)"
+        style="margin-left:6px;padding:1px 6px;border:1px solid #D69E2E;border-radius:4px;background:transparent;color:#744210;cursor:pointer;font-size:11px"
+        title="Actualizar la fecha del movimiento en el sistema para que coincida con el EECC">Usar fecha EECC</button>
+    </div>` : '';
+
+  return `
+    <tr style="background:${rowBg}">
+      <td>${_impBadge(estado)}</td>
+      <td style="white-space:nowrap">${row ? (row.fecha || '—') : '<span class="text-muted">—</span>'}</td>
+      <td class="text-mono">${row ? escapar(row.numero_operacion || '—') : '<span class="text-muted">—</span>'}</td>
+      <td class="text-right ${row?.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
+        ${row ? `${row.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(row.importe, row.moneda)}` : '<span class="text-muted">—</span>'}
+      </td>
+      <td style="text-align:center;color:var(--color-texto-suave)">⟷</td>
+      <td class="text-mono">
+        ${matches.length ? nroOpBanco : '<span class="text-muted">—</span>'}
+        ${corregirFechaHTML}
+      </td>
+      <td class="text-right ${matches[0]?.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
+        ${matches.length ? `${matches[0].naturaleza==='CARGO'?'−':'+'}${formatearMoneda(importeBanco, matches[0].moneda)}` : '<span class="text-muted">—</span>'}
+      </td>
+      <td class="celda-truncar text-sm" style="--w:200px" title="${matches.length ? descBanco : ''}">${matches.length ? descBanco : '<span class="text-muted">Sin movimiento registrado</span>'}</td>
+      ${mostrarCuenta ? `<td class="text-sm">${cuentas.length ? escapar(cuentas.join(', ')) : '<span class="text-muted">—</span>'}</td>` : ''}
+    </tr>`;
+}
+
+function _impCuerpoModalCuadreHTML() {
+  const c = _impCalcularCuadre();
+  const panelCuadre = `
+    <div style="margin-bottom:14px;padding:12px 14px;border-radius:8px;background:${c.todoCuadra ? 'rgba(56,161,105,.08)' : 'rgba(214,158,46,.08)'};border-left:3px solid ${c.todoCuadra ? '#38A169' : '#D69E2E'}">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">${c.todoCuadra ? '✅ El mes cuadra' : '⚠️ El mes NO cuadra'} — EECC vs. Sistema (${c.rango ? `${formatearFecha(c.rango.desde)} – ${formatearFecha(c.rango.hasta)}` : 'rango del EECC'})</div>
+      <div style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+        ${c.filasCuadre.map(f => `
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+            <strong style="min-width:40px">${f.moneda}</strong>
+            <span>EECC neto: <strong>${formatearMoneda(f.netoEecc, f.moneda)}</strong></span>
+            <span>Sistema neto: <strong>${formatearMoneda(f.netoSis, f.moneda)}</strong></span>
+            <span style="color:${f.cuadra ? '#276749' : '#C53030'};font-weight:600">
+              ${f.cuadra ? '✅ Cuadra' : `❌ Diferencia: ${formatearMoneda(f.diff, f.moneda)}`}
+            </span>
+          </div>`).join('')}
+        ${c.extraSistema.length ? `<div style="color:#553C9A;margin-top:4px">🔵 ${c.extraSistema.length} movimiento(s) en el sistema no aparecen en el EECC (marcados "Solo en sistema" abajo).</div>` : ''}
+      </div>
+    </div>`;
+
+  const avisoObservados = (c.nObservado || c.nSinMatch)
+    ? `<p class="text-sm" style="color:#744210;margin-bottom:10px;padding:8px 12px;background:#FFFFF0;border-left:3px solid #D69E2E;border-radius:4px">
+        ⚠️ Hay ${c.nObservado + c.nSinMatch} registro(s) con observaciones. Revísalos antes de confirmar la importación.
+       </p>` : '';
+
+  return `
+    ${panelCuadre}
     ${avisoObservados}
-    <div class="table-wrap tabla-nexum-wrap" style="max-height:380px;overflow-y:auto">
+    <div class="table-wrap tabla-nexum-wrap" style="max-height:min(50vh,420px);overflow-y:auto">
       <table class="tabla-nexum" style="font-size:12px">
         <thead>
           <tr>
@@ -790,43 +930,58 @@ function _impRenderValidacion() {
             <th>Nro Op (Banco)</th>
             <th class="text-right">Importe Banco</th>
             <th>Descripción Banco</th>
-            ${mostrarCuenta ? '<th>Cuenta</th>' : ''}
+            ${c.mostrarCuenta ? '<th>Cuenta</th>' : ''}
           </tr>
         </thead>
-        <tbody>
-          ${resultados.map(({ row, match, estado }) => {
-            const rowBg = estado === 'OBSERVADO' ? 'rgba(254,252,191,.5)'
-                        : estado === 'SIN_MATCH'  ? 'rgba(254,215,215,.4)'
-                        : '';
-            const matches = Array.isArray(match) ? match : (match ? [match] : []);
-            const nroOpBanco  = matches.length > 1
-              ? `${matches.length} comprobantes`
-              : escapar(matches[0]?.numero_operacion || '—');
-            const importeBanco = matches.length
-              ? matches.reduce((s, m) => s + parseFloat(m.importe || 0), 0)
-              : null;
-            const descBanco = matches.length > 1
-              ? matches.map(m => escapar(m.descripcion || '—')).join(' · ')
-              : escapar(matches[0]?.descripcion || '—');
-            const cuentas = [...new Set(matches.map(m => m.cuentas_bancarias?.nombre_alias).filter(Boolean))];
-            return `
-              <tr style="background:${rowBg}">
-                <td>${badge(estado)}</td>
-                <td style="white-space:nowrap">${row.fecha || '—'}</td>
-                <td class="text-mono">${escapar(row.numero_operacion || '—')}</td>
-                <td class="text-right ${row.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
-                  ${row.naturaleza==='CARGO'?'−':'+'}${formatearMoneda(row.importe, row.moneda)}
-                </td>
-                <td style="text-align:center;color:var(--color-texto-suave)">⟷</td>
-                <td class="text-mono">${matches.length ? nroOpBanco : '<span class="text-muted">—</span>'}</td>
-                <td class="text-right ${matches[0]?.naturaleza==='CARGO'?'text-rojo':'text-verde'}" style="font-weight:500;white-space:nowrap">
-                  ${matches.length ? `${matches[0].naturaleza==='CARGO'?'−':'+'}${formatearMoneda(importeBanco, matches[0].moneda)}` : '<span class="text-muted">—</span>'}
-                </td>
-                <td class="celda-truncar text-sm" style="--w:200px" title="${matches.length ? descBanco : ''}">${matches.length ? descBanco : '<span class="text-muted">Sin movimiento registrado</span>'}</td>
-                ${mostrarCuenta ? `<td class="text-sm">${cuentas.length ? escapar(cuentas.join(', ')) : '<span class="text-muted">—</span>'}</td>` : ''}
-              </tr>`;
-          }).join('')}
-        </tbody>
+        <tbody>${c.filasTabla.map(f => _impFilaTablaHTML(f, c.mostrarCuenta)).join('')}</tbody>
       </table>
     </div>`;
+}
+
+function _impAbrirModalCuadre() {
+  if (document.getElementById('imp-modal-cuadre')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'imp-modal-cuadre';
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9998;padding:20px`;
+  overlay.innerHTML = `
+    <div style="background:var(--color-bg-card);border-radius:12px;padding:20px 24px;max-width:900px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:var(--sombra-lg);border:1px solid var(--color-borde)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <h3 style="font-size:15px">📊 Reporte de cuadre — EECC vs. Sistema</h3>
+        <button id="imp-cerrar-modal-cuadre" style="border:none;background:transparent;font-size:20px;cursor:pointer;color:var(--color-texto-suave)">✕</button>
+      </div>
+      <div id="imp-modal-cuadre-body">${_impCuerpoModalCuadreHTML()}</div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#imp-cerrar-modal-cuadre').onclick = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+function _impRefrescarModalCuadre() {
+  const body = document.getElementById('imp-modal-cuadre-body');
+  if (body) body.innerHTML = _impCuerpoModalCuadreHTML();
+  _impRenderValidacion();
+}
+
+// ── Corregir la fecha de un movimiento YA GUARDADO en el sistema para que
+// coincida con el EECC (que es la fuente de verdad del banco). Requiere
+// aprobación explícita por fila — nunca en silencio, igual que el resto del
+// flujo de importación. Aplica tanto en la validación previa a importar
+// como en la de un lote ya vinculado, porque en ambos casos el movimiento
+// que se corrige ya existe en la tabla `movimientos`. Wendy 2026-09-16.
+async function _impCorregirFecha(movimientoId, fechaNueva, btn) {
+  const ok = await confirmar(
+    `¿Actualizar la fecha de este movimiento a ${fechaNueva} para que coincida con el EECC? Esto modifica un registro ya guardado en el sistema.`,
+    { btnOk: 'Actualizar fecha', btnColor: '#2C5282' }
+  );
+  if (!ok) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Actualizando…'; }
+  const { error } = await _supabase.from('movimientos').update({ fecha: fechaNueva }).eq('id', movimientoId);
+  if (error) { mostrarToast('Error al actualizar la fecha: ' + error.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Usar fecha EECC'; } return; }
+
+  const m = imp_movs_validacion.find(x => x.id === movimientoId);
+  if (m) m.fecha = fechaNueva;
+
+  mostrarToast('Fecha actualizada', 'exito');
+  _impRefrescarModalCuadre();
 }
