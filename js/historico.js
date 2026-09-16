@@ -75,16 +75,37 @@ const CAB_MBD = ['N° de operación','Fecha de Deposito','Descripcion','Moneda',
   'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.','Tipo de DOC','Autorización',
   'Observaciones','Detalles Compra / Servicio','Observaciones 2',
   'Estado Conciliación EECC','Tipo Comprobante','Última Actualización'];
-function _filasMBD(data) {
-  return data.map(r => [
-    r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : '',
-    _histFmtFecha(r.fecha_deposito), r.descripcion||'', r.moneda||'S/', r.monto,
-    r.proveedor_empresa_personal||'', r.ruc_dni||'', r.cotizacion||'', r.oc||'', r.proyecto||'',
-    r.concepto||'', r.empresa||'', r.entrega_doc||'PENDIENTE', r.nro_factura_doc||'', r.tipo_doc||'', r.autorizacion||'',
-    r.observaciones||'', r.detalles_compra_servicio||'', r.observaciones_2||'',
-    r.estado_conciliacion === 'conciliado' ? 'CONCILIADO' : 'PENDIENTE',
-    r.tipo_comprobante||'', _histFmtFecha(r.fecha_actualizacion),
-  ]);
+
+// ── Vinculación manual de RH vía 🔍 lupa guarda el UUID del RH en
+//    nro_factura_doc (dos emisores distintos pueden repetir el mismo N° RH
+//    legible) — ver comentario en busqueda-comprobante.js línea 252. Para que
+//    el histórico se lea igual que en pantalla, se resuelve ese UUID al N°
+//    RH legible (ej. "E001-8") antes de exportar. ──────────────────────────
+const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function _histMapaNumeroRH(mbdData) {
+  const ids = [...new Set(mbdData
+    .filter(r => r.tipo_doc === 'RH' && _UUID_RE.test(r.nro_factura_doc || ''))
+    .map(r => r.nro_factura_doc))];
+  const mapa = new Map();
+  if (!ids.length) return mapa;
+  const { data } = await _supabase.from('rh_registros').select('id,numero_rh').in('id', ids);
+  (data || []).forEach(rh => { if (rh.numero_rh) mapa.set(rh.id, rh.numero_rh); });
+  return mapa;
+}
+function _filasMBD(data, rhNumeroPorId) {
+  return data.map(r => {
+    let nDoc = r.nro_factura_doc || '';
+    if (r.tipo_doc === 'RH' && rhNumeroPorId?.has(nDoc)) nDoc = rhNumeroPorId.get(nDoc);
+    return [
+      r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : '',
+      _histFmtFecha(r.fecha_deposito), r.descripcion||'', r.moneda||'S/', r.monto,
+      r.proveedor_empresa_personal||'', r.ruc_dni||'', r.cotizacion||'', r.oc||'', r.proyecto||'',
+      r.concepto||'', r.empresa||'', r.entrega_doc||'PENDIENTE', nDoc, r.tipo_doc||'', r.autorizacion||'',
+      r.observaciones||'', r.detalles_compra_servicio||'', r.observaciones_2||'',
+      r.estado_conciliacion === 'conciliado' ? 'CONCILIADO' : 'PENDIENTE',
+      r.tipo_comprobante||'', _histFmtFecha(r.fecha_actualizacion),
+    ];
+  });
 }
 
 const CAB_EECC = ['Período','Fecha','Cuenta','Naturaleza','Importe','Moneda','N° Operación','Descripción',
@@ -279,11 +300,12 @@ async function _histDatosPeriodo(empresaId, periodo) {
   const linksPeriodo = linksData.filter(l => rhIds.has(l.rh_id) || movIds.has(l.movimiento_id));
 
   // Estos usan la MISMA lógica que ve Wendy en pantalla en cada módulo
-  const [filasContabCompras, filasContabVentas, filasRH, resAsientosDet] = await Promise.all([
+  const [filasContabCompras, filasContabVentas, filasRH, resAsientosDet, rhNumeroPorId] = await Promise.all([
     _filasContabComprasConEstado(resContCompras.data||[], empresaId),
     _filasContabVentasConEstado(resContVentas.data||[], empresaId),
     _filasRHRecibidosConEstado(rhData),
     _filasAsientos(resAsientos.data||[]),
+    _histMapaNumeroRH(resMbd.data||[]),
   ]);
 
   const conteos = {
@@ -316,7 +338,7 @@ async function _histDatosPeriodo(empresaId, periodo) {
   return {
     periodo, conteos, crudo,
     filas: {
-      MBD: _filasMBD(resMbd.data||[]),
+      MBD: _filasMBD(resMbd.data||[], rhNumeroPorId),
       EECC_MOVIMIENTOS: _filasEECC(movData, periodo),
       CONTABILIDAD_COMPRAS: filasContabCompras,
       CONTABILIDAD_VENTAS: filasContabVentas,
