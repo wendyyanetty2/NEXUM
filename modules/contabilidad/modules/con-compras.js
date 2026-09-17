@@ -175,7 +175,7 @@ async function _renderComprasFiltradas() {
 
   // Filas visibles en la tabla: todas, o solo las del estado clicado en los badges
   const filasVista = _cFiltroEstado
-    ? covFilas.filter(x => x.estado5 === _cFiltroEstado)
+    ? covFilas.filter(x => _conCoincideFiltroEstado(x.estado5, _cFiltroEstado))
     : covFilas;
 
   const _cBadge = (estado, count) => {

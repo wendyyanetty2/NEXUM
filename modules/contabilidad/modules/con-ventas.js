@@ -170,7 +170,7 @@ async function _renderVentasFiltradas() {
 
   // Filas visibles en la tabla: todas, o solo las del estado clicado en los badges
   const filasVista = _vFiltroEstado
-    ? covFilasV.filter(x => x.estado5 === _vFiltroEstado)
+    ? covFilasV.filter(x => _conCoincideFiltroEstado(x.estado5, _vFiltroEstado))
     : covFilasV;
 
   const _vBadge = (estado, count) => {

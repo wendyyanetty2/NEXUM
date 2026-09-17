@@ -40,45 +40,44 @@ function _conCobertura(movsVinculados, totalComprobante) {
 }
 
 // ── Validación de duplicados/descuadres ANTES de vincular — bloqueante
-//    (Wendy, 2026-09-17). La clave de un comprobante es su N° (nro_factura_doc)
-//    + tipo_doc — NO el nombre del proveedor, porque puede venir escrito
-//    distinto entre el banco y el comprobante. Antes de grabar un nuevo
-//    vínculo se recalcula cuánto suman TODOS los movimientos que ya
-//    apuntan a ese mismo N° de comprobante (en cualquiera de los 3
-//    módulos: Compras, Ventas o RH, según tipoDoc) y si, al sumar este
-//    movimiento nuevo, se pasa del total del comprobante en más del
-//    margen normal de tolerancia (el mismo 5%/S/5 mínimo que usa la
-//    búsqueda de candidatos en 🔗/🔍), se BLOQUEA — no se permite
-//    continuar sin desvincular primero el sobrante. Esto es lo que
-//    debió atajar el caso real: un movimiento de un proveedor A quedó
-//    con el N° de comprobante de un proveedor B, duplicando el monto.
+//    (Wendy, 2026-09-17; corregido en auditoría 2026-09-17 sección 6).
+//    La clave de un comprobante es su N° (nro_factura_doc) + tipo_doc —
+//    NO el nombre del proveedor, porque puede venir escrito distinto
+//    entre el banco y el comprobante. Antes de grabar un nuevo vínculo
+//    se recalcula cuánto suman TODOS los movimientos que ya apuntan a
+//    ese mismo N° de comprobante y se reutiliza _conCobertura (misma
+//    tolerancia 0.01 que ya decide el badge EXCESIVO) para decidir si
+//    hay exceso — UNA sola regla para la misma decisión, no dos. Antes
+//    esta función usaba su propio margen (5%/S/5), lo que abría una
+//    ventana donde el badge ya decía EXCESIVO pero el sistema todavía
+//    dejaba vincular más — corregido tras la auditoría del documento
+//    "NEXUM_Auditoria_y_Mejora_Conciliacion".
 async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, totalComprobante, movIdExcluir, montoNuevo) {
   const total = Number(totalComprobante) || 0;
   if (!nroFacturaDoc || !total) return { ok: true };
 
   const { data: existentes } = await _supabase
     .from('tesoreria_mbd')
-    .select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
     .eq('empresa_id', empresaId)
     .eq('tipo_doc', tipoDoc)
     .eq('nro_factura_doc', nroFacturaDoc)
     .neq('id', movIdExcluir || '');
 
-  const lista       = existentes || [];
-  const sumaPrevia   = lista.reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
-  const margen       = Math.max(total * 0.05, 5);
-  const montoAbs     = Math.abs(Number(montoNuevo) || 0);
-  const sumaNueva    = sumaPrevia + montoAbs;
+  const lista    = existentes || [];
+  const montoAbs = Math.abs(Number(montoNuevo) || 0);
+  const cov      = _conCobertura([...lista, { monto: montoAbs, entrega_doc: 'OBSERVADO' }], total);
 
-  if (sumaNueva > total + margen) {
+  if (cov.estado === 'PARCIAL' && cov.excede) {
+    const sumaPrevia = cov.suma - montoAbs;
     const detalle = lista.map(m =>
       `• Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.proveedor_empresa_personal || '—')}`
     ).join('\n');
     return {
-      ok: false, lista, sumaPrevia, sumaNueva, total, margen,
+      ok: false, lista, sumaPrevia, sumaNueva: cov.suma, total, excede: cov.excede,
       mensaje: `⛔ No se puede vincular.\n\n`
         + `El comprobante "${escapar(nroFacturaDoc)}" ya tiene ${lista.length} movimiento(s) bancario(s) vinculado(s) que suman ${formatearMoneda(sumaPrevia)}.\n`
-        + `Agregar este movimiento (${formatearMoneda(montoAbs)}) llevaría el total vinculado a ${formatearMoneda(sumaNueva)}, que excede el total del comprobante (${formatearMoneda(total)}) por más del margen permitido (${formatearMoneda(margen)}).\n`
+        + `Agregar este movimiento (${formatearMoneda(montoAbs)}) llevaría el total vinculado a ${formatearMoneda(cov.suma)}, que excede el total del comprobante (${formatearMoneda(total)}) por ${formatearMoneda(cov.excede)}.\n`
         + (detalle ? `\nMovimiento(s) ya vinculado(s) a este comprobante:\n${detalle}\n` : '')
         + `\nSi este movimiento en realidad pertenece a otro comprobante, revisa el N° antes de continuar. Si el vínculo anterior está mal, desvincúlalo primero.`,
     };
@@ -119,6 +118,17 @@ function _conEstado5(cov, esPosible) {
   if (cov.estado === 'PENDIENTE') return esPosible ? 'POSIBLE' : 'PENDIENTE';
   if (cov.estado === 'PARCIAL')   return cov.excede ? 'EXCESIVO' : 'PARCIAL';
   return 'APLICADO'; // COMPLETO_EMITIDO / COMPLETO_OBSERVADO
+}
+
+// ── Filtro PENDIENTE = PENDIENTE + POSIBLE (auditoría 2026-09-17, regla
+//    3.3): POSIBLE sigue siendo una conciliación sin resolver, así que al
+//    hacer clic en el badge PENDIENTE debe aparecer también lo POSIBLE —
+//    pero POSIBLE conserva su identidad propia: filtrar específicamente
+//    por POSIBLE muestra solo eso, nunca se mezcla con el conteo general.
+function _conCoincideFiltroEstado(estado5, filtro) {
+  if (!filtro) return true;
+  if (filtro === 'PENDIENTE') return estado5 === 'PENDIENTE' || estado5 === 'POSIBLE';
+  return estado5 === filtro;
 }
 
 // ── Busca movimientos SIN vincular (entrega_doc != EMITIDO) cuyo monto cae
