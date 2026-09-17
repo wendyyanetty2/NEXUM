@@ -75,6 +75,7 @@ async function _bmBuscarDoc(movBancoId, nroOp, monto, fecha, tablaBanco = 'tesor
           <option value="COMPRA">Compras</option>
           <option value="VENTA">Ventas</option>
           <option value="RH">RH Honorarios</option>
+          <option value="PM">Planilla Movilidad</option>
         </select>
       </div>
       <div>
@@ -188,6 +189,18 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     });
   }
 
+  // ── Planillas de Movilidad ────────────────────────────────────
+  if (!tipo || tipo === 'PM') {
+    let q = _supabase.from('planillas_movilidad').select('id,numero_planilla,trabajador_nombre,trabajador_dni,total_gastos,fecha_emision,mes,estado')
+      .eq('empresa_operadora_id', empId);
+    if (desde) q = q.gte('fecha_emision', desde);
+    if (hasta) q = q.lte('fecha_emision', hasta);
+    const { data } = await q.limit(50);
+    (data || []).forEach(d => {
+      todos.push({ _tipo:'PM', _ndoc: d.numero_planilla||d.id?.slice(0,8), _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, _fecha: d.fecha_emision, id: d.id, _estado: d.estado });
+    });
+  }
+
   // ── Filtrado local ────────────────────────────────────────────
   let filtrados = todos.filter(d => {
     if (qNum  && !(d._ndoc||'').toLowerCase().includes(qNum))  return false;
@@ -201,8 +214,8 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     return;
   }
 
-  const tipoBg = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210' };
-  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾' };
+  const tipoBg = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210', PM:'#553C9A' };
+  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾', PM:'🚗' };
 
   resEl.innerHTML = `
     <div style="margin-bottom:8px;font-size:11px;color:var(--color-texto-suave)">${filtrados.length} resultado(s)</div>

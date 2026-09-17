@@ -1503,6 +1503,7 @@ async function _abrirPanelManual(movId, monto, fecha, nroOp) {
         <option value="COMPRA">🛒 Compras</option>
         <option value="VENTA">📄 Ventas</option>
         <option value="RH">🧾 RH Honorarios</option>
+        <option value="PM">🚗 Planilla Movilidad</option>
       </select>
       <input type="text" id="pm-q-num" placeholder="N° comprobante / planilla…"
         style="padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
@@ -1542,15 +1543,20 @@ async function _panelBuscar(movId) {
     promesas.push(_supabase.from('rh_registros').select('id,numero_rh,monto_neto,fecha_emision,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
   else promesas.push(Promise.resolve({ data: [] }));
 
-  const [resC, resV, resR] = await Promise.all(promesas);
+  if (!qTipo || qTipo === 'PM')
+    promesas.push(_supabase.from('planillas_movilidad').select('id,numero_planilla,trabajador_nombre,trabajador_dni,total_gastos,mes,fecha_emision,estado').eq('empresa_operadora_id', empId).in('mes', periodosVentana));
+  else promesas.push(Promise.resolve({ data: [] }));
 
-  const tipoBg   = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210' };
-  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾' };
+  const [resC, resV, resR, resPM] = await Promise.all(promesas);
+
+  const tipoBg   = { COMPRA:'#2C5282', VENTA:'#276749', RH:'#744210', PM:'#553C9A' };
+  const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾', PM:'🚗' };
 
   const todos = [
     ...(resC.data||[]).map(d => ({ _tipo:'COMPRA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.proveedor||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
     ...(resV.data||[]).map(d => ({ _tipo:'VENTA',  _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.cliente||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
     ...(resR.data||[]).map(d => ({ _tipo:'RH',     _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, id: d.id })),
+    ...(resPM.data||[]).map(d => ({ _tipo:'PM',    _ndoc: d.numero_planilla||d.id?.slice(0,8), _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, id: d.id, _estado: d.estado })),
   ].filter(d => {
     const ndocL = (d._ndoc||'').toLowerCase();
     const provL = [(d._prov||''),(d._ruc||'')].join(' ').toLowerCase();
