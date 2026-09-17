@@ -39,6 +39,124 @@ function _conCobertura(movsVinculados, totalComprobante) {
   };
 }
 
+// ── Validación de duplicados/descuadres ANTES de vincular — bloqueante
+//    (Wendy, 2026-09-17). La clave de un comprobante es su N° (nro_factura_doc)
+//    + tipo_doc — NO el nombre del proveedor, porque puede venir escrito
+//    distinto entre el banco y el comprobante. Antes de grabar un nuevo
+//    vínculo se recalcula cuánto suman TODOS los movimientos que ya
+//    apuntan a ese mismo N° de comprobante (en cualquiera de los 3
+//    módulos: Compras, Ventas o RH, según tipoDoc) y si, al sumar este
+//    movimiento nuevo, se pasa del total del comprobante en más del
+//    margen normal de tolerancia (el mismo 5%/S/5 mínimo que usa la
+//    búsqueda de candidatos en 🔗/🔍), se BLOQUEA — no se permite
+//    continuar sin desvincular primero el sobrante. Esto es lo que
+//    debió atajar el caso real: un movimiento de un proveedor A quedó
+//    con el N° de comprobante de un proveedor B, duplicando el monto.
+async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, totalComprobante, movIdExcluir, montoNuevo) {
+  const total = Number(totalComprobante) || 0;
+  if (!nroFacturaDoc || !total) return { ok: true };
+
+  const { data: existentes } = await _supabase
+    .from('tesoreria_mbd')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal')
+    .eq('empresa_id', empresaId)
+    .eq('tipo_doc', tipoDoc)
+    .eq('nro_factura_doc', nroFacturaDoc)
+    .neq('id', movIdExcluir || '');
+
+  const lista       = existentes || [];
+  const sumaPrevia   = lista.reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
+  const margen       = Math.max(total * 0.05, 5);
+  const montoAbs     = Math.abs(Number(montoNuevo) || 0);
+  const sumaNueva    = sumaPrevia + montoAbs;
+
+  if (sumaNueva > total + margen) {
+    const detalle = lista.map(m =>
+      `• Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.proveedor_empresa_personal || '—')}`
+    ).join('\n');
+    return {
+      ok: false, lista, sumaPrevia, sumaNueva, total, margen,
+      mensaje: `⛔ No se puede vincular.\n\n`
+        + `El comprobante "${escapar(nroFacturaDoc)}" ya tiene ${lista.length} movimiento(s) bancario(s) vinculado(s) que suman ${formatearMoneda(sumaPrevia)}.\n`
+        + `Agregar este movimiento (${formatearMoneda(montoAbs)}) llevaría el total vinculado a ${formatearMoneda(sumaNueva)}, que excede el total del comprobante (${formatearMoneda(total)}) por más del margen permitido (${formatearMoneda(margen)}).\n`
+        + (detalle ? `\nMovimiento(s) ya vinculado(s) a este comprobante:\n${detalle}\n` : '')
+        + `\nSi este movimiento en realidad pertenece a otro comprobante, revisa el N° antes de continuar. Si el vínculo anterior está mal, desvincúlalo primero.`,
+    };
+  }
+  return { ok: true };
+}
+
+// ── Aviso bloqueante de un solo botón (a diferencia de confirmar(), que
+//    ofrece seguir adelante) — para cuando la acción simplemente NO puede
+//    continuar y solo queda que la persona lea por qué y cierre el aviso.
+function _conAlertaBloqueo(mensaje) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+    overlay.innerHTML = `
+      <div style="background:var(--color-bg-card);border-radius:12px;padding:26px 30px;max-width:480px;width:100%;box-shadow:var(--sombra-lg);border:1px solid var(--color-borde)">
+        <div style="font-size:36px;margin-bottom:10px;text-align:center">⛔</div>
+        <p style="color:var(--color-texto);font-size:13px;margin:0 0 20px;line-height:1.6;white-space:pre-line">${mensaje}</p>
+        <div style="text-align:center">
+          <button id="btn-alerta-entendido" style="padding:10px 28px;border:none;border-radius:8px;background:#C53030;color:#fff;cursor:pointer;font-size:14px;font-family:var(--font);font-weight:600">Entendido</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#btn-alerta-entendido').onclick = () => { overlay.remove(); resolve(); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) { overlay.remove(); resolve(); } });
+  });
+}
+
+// ── Modelo de 5 estados visibles en Compras/Ventas (Wendy, 2026-09-17):
+//    PENDIENTE, POSIBLE, PARCIAL, EXCESIVO, APLICADO — mismo criterio de
+//    color/palabra en toda la UI (compartido entre con-compras.js y
+//    con-ventas.js). "POSIBLE" usa el MISMO margen (5%/S/5 mínimo) que ya
+//    usa el ícono 🔗 al buscar candidatos — no es un mecanismo nuevo, es
+//    "hay al menos un movimiento bancario sin vincular que calza".
+const _CON_ESTADO5_COLOR = { PENDIENTE: '#C53030', POSIBLE: '#D69E2E', PARCIAL: '#DD6B20', EXCESIVO: '#9B2C2C', APLICADO: '#2F855A' };
+const _CON_ESTADO5_ICONO = { PENDIENTE: '🔴', POSIBLE: '🟡', PARCIAL: '🔶', EXCESIVO: '🔺', APLICADO: '✅' };
+function _conEstado5(cov, esPosible) {
+  if (cov.estado === 'PENDIENTE') return esPosible ? 'POSIBLE' : 'PENDIENTE';
+  if (cov.estado === 'PARCIAL')   return cov.excede ? 'EXCESIVO' : 'PARCIAL';
+  return 'APLICADO'; // COMPLETO_EMITIDO / COMPLETO_OBSERVADO
+}
+
+// ── Busca movimientos SIN vincular (entrega_doc != EMITIDO) cuyo monto cae
+//    dentro del margen normal (5%/S/5 mínimo) del total de un comprobante —
+//    usado por el ícono 🔗. Corrige un bug real: en tesoreria_mbd los CARGOS
+//    (compras/egresos) se guardan con monto NEGATIVO (ver tes-importar.js:267
+//    y el filtro de naturaleza en tes-movimientos.js:221), así que comparar
+//    el monto crudo contra un rango [total-margen, total+margen] siempre
+//    positivo nunca encontraba compras reales — solo por casualidad podía
+//    matchear ventas (abonos, positivos). Se compara por valor absoluto.
+async function _conBuscarCandidatosPorMonto(empresaId, total, limite = 30) {
+  const margen = Math.max((Number(total)||0) * 0.05, 5);
+  const { data } = await _supabase.from('tesoreria_mbd').select('*')
+    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO')
+    .order('fecha_deposito', { ascending: false }).limit(500);
+
+  return (data || [])
+    .filter(m => {
+      const abs = Math.abs(Number(m.monto) || 0);
+      return abs >= total - margen && abs <= total + margen;
+    })
+    .sort((a, b) => Math.abs(Math.abs(Number(a.monto)) - total) - Math.abs(Math.abs(Number(b.monto)) - total))
+    .slice(0, limite);
+}
+
+// ── Trae los montos de movimientos SIN vincular (entrega_doc != EMITIDO) de
+//    la empresa, para marcar como POSIBLE cualquier PENDIENTE que tenga al
+//    menos un candidato dentro del margen — reutilizado por Compras y Ventas.
+async function _conCandidatosMontoDisponibles(empresaId) {
+  const { data } = await _supabase.from('tesoreria_mbd').select('monto')
+    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO').limit(3000);
+  return (data || []).map(m => Math.abs(Number(m.monto) || 0));
+}
+function _conHayCandidato(montos, total) {
+  const margen = Math.max((Number(total)||0) * 0.05, 5);
+  return montos.some(m => m >= total - margen && m <= total + margen);
+}
+
 // ── Evalúa completitud de los 5 campos requeridos (fórmula histórica,
 //    2 niveles: EMITIDO/OBSERVADO). Usada hoy solo por "🔄 Consolidar
 //    estados" (proceso retroactivo masivo) para no alterar de golpe
@@ -254,6 +372,18 @@ async function consolidarEstadosRetroactivo() {
 
     const newConcs = [];
 
+    // Regla N:M (_conCobertura): varios movimientos pueden sumar el total de un
+    // mismo comprobante (pago dividido). Sumar por clave ANTES de comparar montos
+    // evita el mismo falso positivo de detectarDiscrepanciasMontos — y aquí es más
+    // grave, porque antes bloqueaba la reparación real de entrega_doc de esos movs.
+    const sumaPorClave = new Map(); // `${tipo_doc}|${nro_factura_doc}` → suma abs(monto)
+    movs.forEach(m => {
+      if (m.tipo_doc !== 'COMPRA' && m.tipo_doc !== 'VENTA') return;
+      const k = `${m.tipo_doc}|${m.nro_factura_doc}`;
+      sumaPorClave.set(k, (sumaPorClave.get(k) || 0) + Math.abs(Number(m.monto) || 0));
+    });
+    const discrepanciasVistas = new Set(); // no contar el mismo comprobante 2 veces
+
     // ── Paso 2 + 3: Cruce con clave compuesta → actualizar estados
     for (const mov of movs) {
       const periodoMov = _conPeriodoFromFecha(mov.fecha_deposito);
@@ -270,21 +400,24 @@ async function consolidarEstadosRetroactivo() {
           _conPeriodoCercano(periodoMov, c.periodo)
         );
         const claveValida = !candidatos.length || matchNombrePeriodo.length > 0;
+        const sumaGrupo   = sumaPorClave.get(`${mov.tipo_doc}|${mov.nro_factura_doc}`) ?? Math.abs(Number(mov.monto) || 0);
 
-        // Reforzado (1.2): además verificar que el MONTO del movimiento coincida
-        // razonablemente con el total del comprobante — si no coincide, no se
-        // actualiza el estado automáticamente (queda para revisión manual).
+        // Reforzado (1.2): además verificar que la SUMA de movimientos vinculados a
+        // este comprobante (regla N:M) coincida razonablemente con su total — si no
+        // coincide, no se actualiza el estado automáticamente (revisión manual).
         const montoOk = !matchNombrePeriodo.length || matchNombrePeriodo.some(c =>
-          Math.abs(Math.abs(Number(mov.monto) || 0) - c.total) < Math.max(c.total * 0.02, 1)
+          Math.abs(sumaGrupo - c.total) < Math.max(c.total * 0.02, 1)
         );
-        if (claveValida && matchNombrePeriodo.length && !montoOk) {
+        const claveGrupo = `${mov.tipo_doc}|${mov.nro_factura_doc}`;
+        if (claveValida && matchNombrePeriodo.length && !montoOk && !discrepanciasVistas.has(claveGrupo)) {
+          discrepanciasVistas.add(claveGrupo);
           const mejorCandidato = matchNombrePeriodo.reduce((a, b) =>
-            Math.abs(Math.abs(Number(mov.monto)||0) - a.total) <= Math.abs(Math.abs(Number(mov.monto)||0) - b.total) ? a : b
+            Math.abs(sumaGrupo - a.total) <= Math.abs(sumaGrupo - b.total) ? a : b
           );
           discrepanciasDetalle.push({
             id: mov.id, nDoc: mov.nro_factura_doc, tipoDoc: mov.tipo_doc,
             nroOp: mov.nro_operacion_bancaria, fecha: mov.fecha_deposito,
-            montoMov: Math.abs(Number(mov.monto)||0), montoComprobante: mejorCandidato.total,
+            montoMov: sumaGrupo, montoComprobante: mejorCandidato.total,
             proveedor: mejorCandidato.proveedor,
           });
         }
@@ -416,22 +549,36 @@ async function detectarDiscrepanciasMontos() {
     });
   }
 
-  for (const mov of movs) {
-    const periodoMov = _conPeriodoFromFecha(mov.fecha_deposito);
-    const mapa = mov.tipo_doc === 'COMPRA' ? comprasMap : ventasMap;
-    const candidatos = mapa.get(mov.nro_factura_doc) || [];
+  // Agrupar por comprobante — regla N:M (_conCobertura): varios movimientos
+  // pueden sumar el total de un mismo comprobante. Comparar cada movimiento
+  // por separado contra el total daba falsos positivos (Wendy, 2026-09-17):
+  // 2 movimientos de S/4.80 vinculados al mismo comprobante de S/9.60 — cada
+  // uno "no coincidía" solo, pero sumados cuadran exacto.
+  const gruposPorClave = new Map(); // `${tipo_doc}|${nro_factura_doc}` → [movs]
+  movs.forEach(m => {
+    const k = `${m.tipo_doc}|${m.nro_factura_doc}`;
+    if (!gruposPorClave.has(k)) gruposPorClave.set(k, []);
+    gruposPorClave.get(k).push(m);
+  });
+
+  for (const grupo of gruposPorClave.values()) {
+    const mov0 = grupo[0];
+    const periodoMov = _conPeriodoFromFecha(mov0.fecha_deposito);
+    const mapa = mov0.tipo_doc === 'COMPRA' ? comprasMap : ventasMap;
+    const candidatos = mapa.get(mov0.nro_factura_doc) || [];
     const matchNombrePeriodo = candidatos.filter(c =>
-      _conNombreCoincide(mov.proveedor_empresa_personal, c.proveedor) && _conPeriodoCercano(periodoMov, c.periodo));
+      _conNombreCoincide(mov0.proveedor_empresa_personal, c.proveedor) && _conPeriodoCercano(periodoMov, c.periodo));
     if (!matchNombrePeriodo.length) continue;
-    const montoOk = matchNombrePeriodo.some(c =>
-      Math.abs(Math.abs(Number(mov.monto) || 0) - c.total) < Math.max(c.total * 0.02, 1));
+    const sumaGrupo = grupo.reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
+    const montoOk = matchNombrePeriodo.some(c => Math.abs(sumaGrupo - c.total) < Math.max(c.total * 0.02, 1));
     if (!montoOk) {
       const mejorCandidato = matchNombrePeriodo.reduce((a, b) =>
-        Math.abs(Math.abs(Number(mov.monto)||0) - a.total) <= Math.abs(Math.abs(Number(mov.monto)||0) - b.total) ? a : b);
+        Math.abs(sumaGrupo - a.total) <= Math.abs(sumaGrupo - b.total) ? a : b);
       discrepanciasDetalle.push({
-        id: mov.id, nDoc: mov.nro_factura_doc, tipoDoc: mov.tipo_doc,
-        nroOp: mov.nro_operacion_bancaria, fecha: mov.fecha_deposito,
-        montoMov: Math.abs(Number(mov.monto)||0), montoComprobante: mejorCandidato.total,
+        id: mov0.id, nDoc: mov0.nro_factura_doc, tipoDoc: mov0.tipo_doc,
+        nroOp: grupo.map(m => m.nro_operacion_bancaria).filter(Boolean).join(', '),
+        fecha: mov0.fecha_deposito,
+        montoMov: sumaGrupo, montoComprobante: mejorCandidato.total,
         proveedor: mejorCandidato.proveedor,
       });
     }

@@ -5,8 +5,12 @@
 const TIPOS_DOC_ID_C = {'1':'DNI','4':'Carnet Extranjería','6':'RUC','7':'Pasaporte','0':'Otros'};
 let _mbdLinkCache = []; // Cache para modal de movimiento bancario vinculado
 
-// ── Filtro por estado (clic en los badges APLICADO/PARCIAL/PENDIENTE) ──
-let _cFiltroEstado = null; // null | 'APLICADO' | 'PARCIAL' | 'PENDIENTE'
+// ── Filtro por estado (clic en los badges APLICADO/PARCIAL/EXCESIVO/POSIBLE/PENDIENTE) ──
+let _cFiltroEstado = null;
+// Cache de montos candidatos (movimientos sin vincular) para el estado POSIBLE —
+// se recalcula solo cuando cargarCompras() trae datos nuevos, no en cada
+// re-render por búsqueda de texto (que es puramente local, sin ir a la BD).
+let _cCandidatosMontoCache = null;
 function _cToggleFiltroEstado(estado) {
   _cFiltroEstado = (_cFiltroEstado === estado) ? null : estado;
   _renderComprasFiltradas();
@@ -104,6 +108,7 @@ async function cargarCompras() {
   if (error) { wrap.innerHTML = `<p class="error-texto">Error: ${escapar(error.message)}</p>`; return; }
 
   _comprasRawData = data || [];
+  _cCandidatosMontoCache = null; // se refresca: puede haber cambiado qué movimientos están sin vincular
   await _renderComprasFiltradas();
 }
 
@@ -138,31 +143,47 @@ async function _renderComprasFiltradas() {
     aplicadosMap.get(r.nro_factura_doc).push(r);
   });
 
-  // Estadísticas de conciliación (ahora con 3 estados: completo/parcial/pendiente)
+  // Estadísticas de conciliación — modelo de 5 estados (Wendy, 2026-09-17):
+  // PENDIENTE, POSIBLE, PARCIAL, EXCESIVO, APLICADO (ver _conEstado5).
   // La serie+número SUNAT es única POR EMISOR — se filtra por RUC/proveedor para
   // no mezclar montos si dos proveedores distintos comparten la misma serie+número.
   const _nDocC = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
   const _movsDelEmisorC = r => _conFiltrarPorEmisor(aplicadosMap.get(_nDocC(r)), r.nro_doc_identidad, r.proveedor);
   const _covC  = r => _conCobertura(_movsDelEmisorC(r), r.total_cp);
-  const covFilas    = filas.map(r => ({ r, cov: _covC(r) }));
-  const _cEstadoSimple = e => e.startsWith('COMPLETO') ? 'APLICADO' : e;
-  const countAplicC = covFilas.filter(x => x.cov.estado.startsWith('COMPLETO')).length;
-  const countParcC  = covFilas.filter(x => x.cov.estado === 'PARCIAL').length;
-  const countPendC  = covFilas.filter(x => x.cov.estado === 'PENDIENTE').length;
-  const montoAplicC = covFilas.filter(x => x.cov.estado.startsWith('COMPLETO')).reduce((s,x) => s + Number(x.r.total_cp||0), 0);
-  const montoPendC  = totalCP - montoAplicC;
+  const covFilasBase = filas.map(r => ({ r, cov: _covC(r) }));
+
+  // POSIBLE: un PENDIENTE con al menos un movimiento bancario SIN vincular que
+  // calza dentro del margen normal (5%/S/5 mínimo, el mismo que usa 🔗).
+  const hayPendientes = covFilasBase.some(x => x.cov.estado === 'PENDIENTE');
+  if (hayPendientes && _cCandidatosMontoCache === null) {
+    _cCandidatosMontoCache = await _conCandidatosMontoDisponibles(empresa_activa.id);
+  }
+  const candidatosMonto = hayPendientes ? _cCandidatosMontoCache : [];
+  const covFilas = covFilasBase.map(x => ({
+    ...x,
+    estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && _conHayCandidato(candidatosMonto, x.r.total_cp)),
+  }));
+
+  const countAplicC = covFilas.filter(x => x.estado5 === 'APLICADO').length;
+  const countParcC  = covFilas.filter(x => x.estado5 === 'PARCIAL').length;
+  const countExcC   = covFilas.filter(x => x.estado5 === 'EXCESIVO').length;
+  const countPosC   = covFilas.filter(x => x.estado5 === 'POSIBLE').length;
+  const countPendC  = covFilas.filter(x => x.estado5 === 'PENDIENTE').length;
+  const montoAplicC = covFilas.filter(x => x.estado5 === 'APLICADO').reduce((s,x) => s + Number(x.r.total_cp||0), 0);
+  const montoPendC  = covFilas.filter(x => x.estado5 === 'PENDIENTE').reduce((s,x) => s + Number(x.r.total_cp||0), 0);
   const pctAplicC   = filas.length > 0 ? Math.round(countAplicC / filas.length * 100) : 0;
 
   // Filas visibles en la tabla: todas, o solo las del estado clicado en los badges
   const filasVista = _cFiltroEstado
-    ? covFilas.filter(x => _cEstadoSimple(x.cov.estado) === _cFiltroEstado).map(x => x.r)
-    : filas;
+    ? covFilas.filter(x => x.estado5 === _cFiltroEstado)
+    : covFilas;
 
-  const _cBadge = (estado, color, texto, count) => {
+  const _cBadge = (estado, count) => {
     const activo = _cFiltroEstado === estado;
+    const color  = _CON_ESTADO5_COLOR[estado];
     return `<span class="badge-estado" onclick="_cToggleFiltroEstado('${estado}')"
       title="Clic para ${activo ? 'quitar el' : 'filtrar por este'} estado"
-      style="background:${color};cursor:pointer;${activo ? `box-shadow:0 0 0 2px var(--color-bg-card),0 0 0 4px ${color};` : (_cFiltroEstado ? 'opacity:.5;' : '')}">${texto} ${count}</span>`;
+      style="background:${color};cursor:pointer;${activo ? `box-shadow:0 0 0 2px var(--color-bg-card),0 0 0 4px ${color};` : (_cFiltroEstado ? 'opacity:.5;' : '')}">${_CON_ESTADO5_ICONO[estado]} ${estado} ${count}</span>`;
   };
 
   const resumen = document.getElementById('c-resumen');
@@ -171,9 +192,11 @@ async function _renderComprasFiltradas() {
     <div style="width:100%;flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
       padding:8px 12px;background:rgba(128,128,128,.05);border:1px solid var(--color-borde);
       border-radius:8px;font-size:11px;font-weight:600;box-sizing:border-box">
-      ${_cBadge('APLICADO', '#2F855A', '✅ APLICADO', countAplicC)}
-      ${_cBadge('PARCIAL', '#D69E2E', '🟡 PARCIAL', countParcC)}
-      ${_cBadge('PENDIENTE', '#C53030', '🔴 PENDIENTE', countPendC)}
+      ${_cBadge('APLICADO', countAplicC)}
+      ${_cBadge('PARCIAL', countParcC)}
+      ${_cBadge('EXCESIVO', countExcC)}
+      ${_cBadge('POSIBLE', countPosC)}
+      ${_cBadge('PENDIENTE', countPendC)}
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicC}% conciliado</span>
       ${_cFiltroEstado ? `<span onclick="_cToggleFiltroEstado('${_cFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-size:10px;font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
     </div>
@@ -222,36 +245,19 @@ async function _renderComprasFiltradas() {
         <th>Moneda</th><th style="text-align:center">Banco</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filasVista.map(r => {
+        ${filasVista.map(({ r, cov, estado5 }) => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-          const movs = _conFiltrarPorEmisor(aplicadosMap.get(nDoc), r.nro_doc_identidad, r.proveedor);
-          const cov  = _conCobertura(movs, r.total_cp);
           const conciliarArgs = `'${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}'`;
-          let bancoHtml;
-          if (cov.estado === 'PENDIENTE') {
-            bancoHtml = `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
-                 title="Click para conciliar" onclick="_conciliarCompraIndividual(${conciliarArgs})">🔴 PEND.</span>`;
-          } else if (cov.estado === 'PARCIAL') {
-            const tituloParcial = cov.excede
-              ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Revisar manualmente.`
-              : `Parcial: ${formatearMoneda(cov.suma)} registrados, faltan ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`;
-            bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
-                 title="${tituloParcial}"
-                 onclick="_conciliarCompraIndividual(${conciliarArgs})">
-                <span style="background:${cov.excede?'#C53030':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">${cov.excede?'🔺 EXCEDE':'🟡 PARCIAL'}</span>
-                <span style="font-size:9px;color:${cov.excede?'#C53030':'#D69E2E'};white-space:nowrap">${formatearMoneda(cov.suma)} / ${formatearMoneda(cov.total)}</span>
-              </div>`;
-          } else {
-            const emitido = cov.estado === 'COMPLETO_EMITIDO';
-            bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
-                 title="Click para ver movimiento(s) bancario(s) vinculado(s)"
-                 onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')">
-                <span style="background:${emitido?'#2F855A':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">
-                  ${emitido?'✅ APLIC.':'⚠️ OBSERV.'}
-                </span>
-                <span style="font-family:monospace;font-size:9px;color:${emitido?'#22c55e':'#D69E2E'}">${movs.length>1?`${movs.length} movs.`:escapar(movs[0].nro_operacion_bancaria||'')}</span>
-              </div>`;
-          }
+          const onclickBanco = estado5 === 'APLICADO'
+            ? `_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')`
+            : `_conciliarCompraIndividual(${conciliarArgs})`;
+          const tituloBanco = estado5 === 'APLICADO' ? 'Click para ver con qué movimiento(s) bancario(s) está vinculado'
+            : estado5 === 'EXCESIVO'  ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Click para revisar y desvincular el que sobra.`
+            : estado5 === 'PARCIAL'   ? `Parcial: ${formatearMoneda(cov.suma)} de ${formatearMoneda(cov.total)} vinculado, falta ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`
+            : estado5 === 'POSIBLE'   ? 'Hay un movimiento bancario sin vincular con un monto parecido — click para revisar y confirmar.'
+            : 'Click para conciliar con banco';
+          const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap"
+               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -875,18 +881,16 @@ async function _cSunatConfirmar() {
 // ── Conciliar una compra individual — busca movs que coincidan ────
 async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fechaEmision, ruc = '') {
   // Buscar en tesoreria_mbd: movimientos sin comprobante + monto cercano
-  const margen  = Math.max(total * 0.05, 5);
-  const { data: movs } = await _supabase
-    .from('tesoreria_mbd')
-    .select('*')
-    .eq('empresa_id', empresa_activa.id)
-    .neq('entrega_doc', 'EMITIDO')
-    .gte('monto', total - margen)
-    .lte('monto', total + margen)
-    .order('fecha_deposito', { ascending: false })
-    .limit(30);
+  const [movs, { data: yaVinculados }] = await Promise.all([
+    _conBuscarCandidatosPorMonto(empresa_activa.id, total),
+    // Ya vinculados a este mismo comprobante — para saber, antes de vincular otro,
+    // con qué N° de operación ya está afiliado (mismo panel que ya muestra la 🔍 lupa).
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
+      .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').eq('nro_factura_doc', nDoc)
+      .order('fecha_deposito', { ascending: false }),
+  ]);
 
-  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, ruc, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || []);
+  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, ruc, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || [], yaVinculados || []);
 }
 
 // ── Conciliar lote — todos los PEND. del periodo actual ──────────
@@ -934,28 +938,15 @@ async function _conciliarLoteCompras() {
     return;
   }
 
-  // Buscar matches automáticos por monto para cada una
+  // Buscar matches automáticos por monto para cada una (por valor absoluto —
+  // los cargos/compras se guardan con monto negativo, ver _conBuscarCandidatosPorMonto)
   const matches = [];
   for (const c of pendientes.slice(0, 20)) {
     const nDoc    = [c.serie_cdp, c.nro_cp_inicial].filter(Boolean).join('-');
     const total   = Number(c.total_cp || 0);
-    const margen  = Math.max(total * 0.05, 5);
-    const { data: movs } = await _supabase
-      .from('tesoreria_mbd')
-      .select('id, fecha_deposito, monto, descripcion, nro_operacion_bancaria, proveedor_empresa_personal, ruc_dni, entrega_doc')
-      .eq('empresa_id', empresa_activa.id)
-      .neq('entrega_doc', 'EMITIDO')
-      .gte('monto', total - margen)
-      .lte('monto', total + margen)
-      .limit(5);
-    if (movs?.length) {
-      // Calcular score simple: monto exacto + proveedor
-      const mejor = movs.sort((a, b) => {
-        const da = Math.abs(Number(a.monto) - total);
-        const db = Math.abs(Number(b.monto) - total);
-        return da - db;
-      })[0];
-      matches.push({ compra: { ...c, nDoc }, mov: mejor, total });
+    const movs    = await _conBuscarCandidatosPorMonto(empresa_activa.id, total, 5);
+    if (movs.length) {
+      matches.push({ compra: { ...c, nDoc }, mov: movs[0], total });
     }
   }
 
@@ -987,7 +978,7 @@ async function _conciliarLoteCompras() {
               ☐ Desmarcar todos</button>
           </div>
           ${matches.map((m, i) => {
-            const diff = Math.abs(Number(m.mov.monto) - m.total);
+            const diff = Math.abs(Math.abs(Number(m.mov.monto)) - m.total);
             const pct  = m.total > 0 ? Math.round(diff / m.total * 100) : 0;
             return `
             <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:8px;background:var(--color-bg-card)">
@@ -1008,7 +999,7 @@ async function _conciliarLoteCompras() {
                         ${m.mov.proveedor_empresa_personal ? `<div style="font-size:11px;margin-top:1px">${escapar(m.mov.proveedor_empresa_personal)}</div>` : ''}
                       </div>
                       <div style="text-align:right;flex-shrink:0">
-                        <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(m.mov.monto)}</div>
+                        <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(Math.abs(Number(m.mov.monto)))}</div>
                         ${diff > 0 ? `<div style="font-size:10px;color:${pct>5?'#ef4444':'#f59e0b'}">Dif: ${formatearMoneda(diff)} (${pct}%)</div>` : '<div style="font-size:10px;color:#22c55e">✓ Monto exacto</div>'}
                       </div>
                     </div>
@@ -1020,7 +1011,7 @@ async function _conciliarLoteCompras() {
         </div>
         <div class="modal-footer" style="flex-shrink:0;gap:8px">
           <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-          <button class="btn btn-primario" onclick="_cAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,proveedor:m.compra.proveedor||'',ruc:m.compra.nro_doc_identidad||'',total:m.total})))})">
+          <button class="btn btn-primario" onclick="_cAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,proveedor:m.compra.proveedor||'',ruc:m.compra.nro_doc_identidad||'',total:m.total,monto:m.mov.monto})))})">
             ✅ Aplicar seleccionados
           </button>
         </div>
@@ -1029,11 +1020,26 @@ async function _conciliarLoteCompras() {
 }
 
 // ── Conciliar compra individual — modal de búsqueda ───────────────
-function _cAbrirModalConciliar(compra, movs) {
+function _cAbrirModalConciliar(compra, movs, yaVinculados = []) {
   const mc = document.getElementById('modal-container');
+  // Panel "ya vinculados" — mismo dato que muestra la 🔍 lupa, para saber ANTES
+  // de vincular otro movimiento con qué N° de operación ya está afiliado este
+  // comprobante (evita duplicar el mismo N° de operación por error).
+  const linksHtml = yaVinculados.length
+    ? yaVinculados.map(m => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;font-size:12px">
+          <span><span style="font-family:monospace;font-weight:600;color:var(--color-secundario)">${escapar(m.nro_operacion_bancaria||'—')}</span>
+            · ${formatearFecha(m.fecha_deposito)} · ${escapar(m.proveedor_empresa_personal||'—')}</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <strong>${formatearMoneda(m.monto)}</strong>
+            <span style="font-size:9px;padding:1px 6px;border-radius:8px;${m.entrega_doc==='EMITIDO'?'background:#2F855A;color:#fff':'background:#718096;color:#fff'}">${escapar(m.entrega_doc||'')}</span>
+          </span>
+        </div>`).join('')
+    : '<span style="font-style:italic;font-size:12px;color:var(--color-texto-suave)">Sin operaciones vinculadas aún.</span>';
+
   const movHtml = movs.length
     ? movs.slice(0, 15).map(m => {
-        const diff = Math.abs(Number(m.monto) - compra.total);
+        const diff = Math.abs(Math.abs(Number(m.monto)) - compra.total);
         const pct  = compra.total > 0 ? Math.round(diff / compra.total * 100) : 0;
         return `
           <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px;margin-bottom:8px;background:var(--color-bg-card)">
@@ -1043,7 +1049,7 @@ function _cAbrirModalConciliar(compra, movs) {
                 <div style="font-size:11px;color:var(--color-texto-suave)">${formatearFecha(m.fecha_deposito)}</div>
               </div>
               <div style="text-align:right">
-                <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(m.monto)}</div>
+                <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(Math.abs(Number(m.monto)))}</div>
                 ${diff > 0 ? `<div style="font-size:10px;color:${pct>5?'#ef4444':'#f59e0b'}">Dif: ${formatearMoneda(diff)} (${pct}%)</div>` : '<div style="font-size:10px;color:#22c55e">✓ Monto exacto</div>'}
               </div>
             </div>
@@ -1051,7 +1057,7 @@ function _cAbrirModalConciliar(compra, movs) {
             ${m.proveedor_empresa_personal ? `<div style="font-size:11px;color:var(--color-texto-suave)">${escapar(m.proveedor_empresa_personal)}</div>` : ''}
             <div style="margin-top:8px;text-align:right">
               <span style="font-size:10px;padding:2px 6px;border-radius:4px;${m.entrega_doc==='EMITIDO'?'background:#2F855A;color:#fff':'background:#C53030;color:#fff'}">${escapar(m.entrega_doc||'PENDIENTE')}</span>
-              <button onclick="_cVincularMovimiento('${compra.id}','${m.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}','${escapar(compra.proveedor||'')}','${escapar(compra.ruc||'')}')"
+              <button onclick="_cVincularMovimiento('${compra.id}','${m.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}','${escapar(compra.proveedor||'')}','${escapar(compra.ruc||'')}',${Number(compra.total)||0})"
                 style="margin-left:8px;padding:4px 12px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:var(--font)">
                 🔗 Vincular
               </button>
@@ -1076,6 +1082,12 @@ function _cAbrirModalConciliar(compra, movs) {
             <div style="margin-top:4px"><strong>Proveedor:</strong> ${escapar(truncar(compra.proveedor||'—',40))}</div>
             <div><strong>Fecha:</strong> ${formatearFecha(compra.fecha)}</div>
           </div>
+          <div style="padding:10px 14px;background:rgba(44,82,130,.06);border:1px solid rgba(44,82,130,.2);border-radius:8px;margin-bottom:14px">
+            <div style="font-size:11px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">
+              Operaciones bancarias ya vinculadas — <span style="color:var(--color-secundario)">${yaVinculados.length} operación(es)</span>
+            </div>
+            ${linksHtml}
+          </div>
           <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:10px">
             ${movs.length} movimiento(s) bancario(s) con monto similar encontrado(s):
           </p>
@@ -1085,7 +1097,7 @@ function _cAbrirModalConciliar(compra, movs) {
             <div style="display:flex;gap:8px">
               <input type="text" id="c-conc-buscar" autocomplete="off" placeholder="N° operación o proveedor"
                 style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
-              <button onclick="_cBuscarMovManual('${compra.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}','${escapar(compra.proveedor||'')}','${escapar(compra.ruc||'')}')"
+              <button onclick="_cBuscarMovManual('${compra.id}','${escapar(compra.nDoc)}','${escapar(compra.tipo||'COMPRA')}','${escapar(compra.proveedor||'')}','${escapar(compra.ruc||'')}',${Number(compra.total)||0})"
                 class="btn btn-primario" style="font-size:12px;white-space:nowrap">🔍 Buscar</button>
             </div>
             <div id="c-conc-manual-res" style="margin-top:10px"></div>
@@ -1098,7 +1110,7 @@ function _cAbrirModalConciliar(compra, movs) {
     </div>`;
 }
 
-async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = '') {
+async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = '', total = 0) {
   const q   = (document.getElementById('c-conc-buscar')?.value || '').trim().toLowerCase();
   const res = document.getElementById('c-conc-manual-res');
   if (!q || !res) return;
@@ -1121,7 +1133,7 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = 
         </div>
         <div style="text-align:right">
           <div style="font-weight:700">${formatearMoneda(m.monto)}</div>
-          <button onclick="_cVincularMovimiento('${compraId}','${m.id}','${escapar(nDoc)}','${escapar(tipoDoc)}','${escapar(proveedor||'')}','${escapar(ruc||'')}')"
+          <button onclick="_cVincularMovimiento('${compraId}','${m.id}','${escapar(nDoc)}','${escapar(tipoDoc)}','${escapar(proveedor||'')}','${escapar(ruc||'')}',${Number(total)||0})"
             style="padding:3px 10px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)">
             🔗 Vincular
           </button>
@@ -1130,10 +1142,16 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = 
     </div>`).join('');
 }
 
-async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = '', ruc = '') {
+async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = '', ruc = '', total = 0) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc').eq('id', movId).maybeSingle();
+  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto').eq('id', movId).maybeSingle();
+
+  if (typeof _conValidarAntesDeVincular === 'function') {
+    const val = await _conValidarAntesDeVincular(empresa_activa.id, tipoDoc, nDoc, total, movId, movPrevio?.monto);
+    if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
+  }
+
   const mensajeConfirm = movPrevio?.entrega_doc === 'EMITIDO'
     ? `⚠️ Este movimiento bancario ya fue registrado por completo (EMITIDO)${movPrevio.nro_factura_doc ? ` con el comprobante ${escapar(movPrevio.nro_factura_doc)}` : ''}.\n¿Está segura de vincularlo con "${escapar(nDoc)}"?`
     : `¿Está segura de vincular el comprobante "${escapar(nDoc)}" con este movimiento bancario?`;
@@ -1179,12 +1197,18 @@ async function _cAplicarLoteConciliacion(items) {
   if (!await confirmar(`¿Está segura de aplicar la conciliación a ${nMarcados} movimiento(s) seleccionado(s)?`, { btnOk: 'Sí, aplicar', btnColor: '#2C5282' })) return;
   const hoy    = new Date().toISOString().slice(0, 10);
   let ok = 0, errores = 0;
+  const bloqueados = [];
 
   for (const chk of checks) {
     if (!chk.checked) continue;
     const idx  = parseInt(chk.dataset.idx, 10);
     const item = items[idx];
     if (!item) continue;
+
+    if (typeof _conValidarAntesDeVincular === 'function') {
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, 'COMPRA', item.nDoc, item.total, item.movId, item.monto);
+      if (!val.ok) { bloqueados.push(item.nDoc); continue; }
+    }
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
       nro_factura_doc:      item.nDoc,
@@ -1217,8 +1241,9 @@ async function _cAplicarLoteConciliacion(items) {
 
   document.querySelector('.modal-overlay')?.remove();
   mostrarToast(
-    `✅ ${ok} conciliación(es) aplicada(s)${errores ? ` · ${errores} con error` : ''}`,
-    ok > 0 ? 'exito' : 'error'
+    `✅ ${ok} conciliación(es) aplicada(s)${errores ? ` · ${errores} con error` : ''}${bloqueados.length ? ` · ${bloqueados.length} bloqueada(s) por posible duplicado (revisar: ${bloqueados.join(', ')})` : ''}`,
+    bloqueados.length ? 'atencion' : (ok > 0 ? 'exito' : 'error'),
+    bloqueados.length ? 7000 : 3500
   );
   cargarCompras();
 }

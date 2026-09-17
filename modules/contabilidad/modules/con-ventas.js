@@ -4,8 +4,11 @@
 
 const TIPOS_DOC_ID_V = {'1':'DNI','4':'Carnet Extranjería','6':'RUC','7':'Pasaporte','0':'Otros'};
 
-// ── Filtro por estado (clic en los badges APLICADO/PARCIAL/PENDIENTE) ──
-let _vFiltroEstado = null; // null | 'APLICADO' | 'PARCIAL' | 'PENDIENTE'
+// ── Filtro por estado (clic en los badges APLICADO/PARCIAL/EXCESIVO/POSIBLE/PENDIENTE) ──
+let _vFiltroEstado = null;
+// Cache de montos candidatos (movimientos sin vincular) para el estado POSIBLE —
+// se recalcula solo cuando cargarVentas() trae datos nuevos.
+let _vCandidatosMontoCache = null;
 function _vToggleFiltroEstado(estado) {
   _vFiltroEstado = (_vFiltroEstado === estado) ? null : estado;
   _renderVentasFiltradas();
@@ -103,6 +106,7 @@ async function cargarVentas() {
   if (error) { wrap.innerHTML = `<p class="error-texto">Error: ${escapar(error.message)}</p>`; return; }
 
   _ventasRawData = data || [];
+  _vCandidatosMontoCache = null; // se refresca: puede haber cambiado qué movimientos están sin vincular
   await _renderVentasFiltradas();
 }
 
@@ -136,31 +140,45 @@ async function _renderVentasFiltradas() {
     aplicadosMapV.get(r.nro_factura_doc).push(r);
   });
 
-  // Estadísticas de conciliación (completo/parcial/pendiente).
+  // Estadísticas de conciliación — modelo de 5 estados (Wendy, 2026-09-17):
+  // PENDIENTE, POSIBLE, PARCIAL, EXCESIVO, APLICADO (ver _conEstado5).
   // La serie+número SUNAT es única POR EMISOR — se filtra por RUC/cliente para
   // no mezclar montos si dos clientes distintos comparten la misma serie+número.
   const _nDocV = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
   const _movsDelEmisorV = r => _conFiltrarPorEmisor(aplicadosMapV.get(_nDocV(r)), r.nro_doc_identidad, r.cliente);
   const _covV  = r => _conCobertura(_movsDelEmisorV(r), r.total_cp);
-  const covFilasV   = filas.map(r => ({ r, cov: _covV(r) }));
-  const _vEstadoSimple = e => e.startsWith('COMPLETO') ? 'APLICADO' : e;
-  const countAplicV = covFilasV.filter(x => x.cov.estado.startsWith('COMPLETO')).length;
-  const countParcV  = covFilasV.filter(x => x.cov.estado === 'PARCIAL').length;
-  const countPendV  = covFilasV.filter(x => x.cov.estado === 'PENDIENTE').length;
-  const montoAplicV = covFilasV.filter(x => x.cov.estado.startsWith('COMPLETO')).reduce((s,x) => s + Number(x.r.total_cp||0), 0);
-  const montoPendV  = totalCP - montoAplicV;
+  const covFilasVBase = filas.map(r => ({ r, cov: _covV(r) }));
+
+  const hayPendientesV = covFilasVBase.some(x => x.cov.estado === 'PENDIENTE');
+  if (hayPendientesV && _vCandidatosMontoCache === null) {
+    _vCandidatosMontoCache = await _conCandidatosMontoDisponibles(empresa_activa.id);
+  }
+  const candidatosMontoV = hayPendientesV ? _vCandidatosMontoCache : [];
+  const covFilasV = covFilasVBase.map(x => ({
+    ...x,
+    estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && _conHayCandidato(candidatosMontoV, x.r.total_cp)),
+  }));
+
+  const countAplicV = covFilasV.filter(x => x.estado5 === 'APLICADO').length;
+  const countParcV  = covFilasV.filter(x => x.estado5 === 'PARCIAL').length;
+  const countExcV   = covFilasV.filter(x => x.estado5 === 'EXCESIVO').length;
+  const countPosV   = covFilasV.filter(x => x.estado5 === 'POSIBLE').length;
+  const countPendV  = covFilasV.filter(x => x.estado5 === 'PENDIENTE').length;
+  const montoAplicV = covFilasV.filter(x => x.estado5 === 'APLICADO').reduce((s,x) => s + Number(x.r.total_cp||0), 0);
+  const montoPendV  = covFilasV.filter(x => x.estado5 === 'PENDIENTE').reduce((s,x) => s + Number(x.r.total_cp||0), 0);
   const pctAplicV   = filas.length > 0 ? Math.round(countAplicV / filas.length * 100) : 0;
 
   // Filas visibles en la tabla: todas, o solo las del estado clicado en los badges
   const filasVista = _vFiltroEstado
-    ? covFilasV.filter(x => _vEstadoSimple(x.cov.estado) === _vFiltroEstado).map(x => x.r)
-    : filas;
+    ? covFilasV.filter(x => x.estado5 === _vFiltroEstado)
+    : covFilasV;
 
-  const _vBadge = (estado, color, texto, count) => {
+  const _vBadge = (estado, count) => {
     const activo = _vFiltroEstado === estado;
+    const color  = _CON_ESTADO5_COLOR[estado];
     return `<span class="badge-estado" onclick="_vToggleFiltroEstado('${estado}')"
       title="Clic para ${activo ? 'quitar el' : 'filtrar por este'} estado"
-      style="background:${color};cursor:pointer;${activo ? `box-shadow:0 0 0 2px var(--color-bg-card),0 0 0 4px ${color};` : (_vFiltroEstado ? 'opacity:.5;' : '')}">${texto} ${count}</span>`;
+      style="background:${color};cursor:pointer;${activo ? `box-shadow:0 0 0 2px var(--color-bg-card),0 0 0 4px ${color};` : (_vFiltroEstado ? 'opacity:.5;' : '')}">${_CON_ESTADO5_ICONO[estado]} ${estado} ${count}</span>`;
   };
 
   const resumen = document.getElementById('v-resumen');
@@ -169,9 +187,11 @@ async function _renderVentasFiltradas() {
     <div style="width:100%;flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
       padding:8px 12px;background:rgba(128,128,128,.05);border:1px solid var(--color-borde);
       border-radius:8px;font-size:11px;font-weight:600;box-sizing:border-box">
-      ${_vBadge('APLICADO', '#2F855A', '✅ APLICADO', countAplicV)}
-      ${_vBadge('PARCIAL', '#D69E2E', '🟡 PARCIAL', countParcV)}
-      ${_vBadge('PENDIENTE', '#C53030', '🔴 PENDIENTE', countPendV)}
+      ${_vBadge('APLICADO', countAplicV)}
+      ${_vBadge('PARCIAL', countParcV)}
+      ${_vBadge('EXCESIVO', countExcV)}
+      ${_vBadge('POSIBLE', countPosV)}
+      ${_vBadge('PENDIENTE', countPendV)}
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicV}% conciliado</span>
       ${_vFiltroEstado ? `<span onclick="_vToggleFiltroEstado('${_vFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-size:10px;font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
     </div>
@@ -220,36 +240,19 @@ async function _renderVentasFiltradas() {
         <th>Moneda</th><th style="text-align:center">Banco</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filasVista.map(r => {
+        ${filasVista.map(({ r, cov, estado5 }) => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-          const movs = _conFiltrarPorEmisor(aplicadosMapV.get(nDoc), r.nro_doc_identidad, r.cliente);
-          const cov  = _conCobertura(movs, r.total_cp);
           const conciliarArgs = `'${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}'`;
-          let bancoHtml;
-          if (cov.estado === 'PENDIENTE') {
-            bancoHtml = `<span style="background:#C53030;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer"
-                 title="Click para conciliar con banco" onclick="_conciliarVentaIndividual(${conciliarArgs})">🔴 PEND.</span>`;
-          } else if (cov.estado === 'PARCIAL') {
-            const tituloParcial = cov.excede
-              ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Revisar manualmente.`
-              : `Parcial: ${formatearMoneda(cov.suma)} registrados, faltan ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`;
-            bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
-                 title="${tituloParcial}"
-                 onclick="_conciliarVentaIndividual(${conciliarArgs})">
-                <span style="background:${cov.excede?'#C53030':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">${cov.excede?'🔺 EXCEDE':'🟡 PARCIAL'}</span>
-                <span style="font-size:9px;color:${cov.excede?'#C53030':'#D69E2E'};white-space:nowrap">${formatearMoneda(cov.suma)} / ${formatearMoneda(cov.total)}</span>
-              </div>`;
-          } else {
-            const emitido = cov.estado === 'COMPLETO_EMITIDO';
-            bancoHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer"
-                 title="Click para ver movimiento(s) bancario(s) vinculado(s)"
-                 onclick="_verMovBancarioLink('${escapar(nDoc)}','VENTA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.cliente||'')}')">
-                <span style="background:${emitido?'#2F855A':'#D69E2E'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700">
-                  ${emitido?'✅ APLIC.':'⚠️ OBSERV.'}
-                </span>
-                <span style="font-family:monospace;font-size:9px;color:${emitido?'#22c55e':'#D69E2E'}">${movs.length>1?`${movs.length} movs.`:escapar(movs[0].nro_operacion_bancaria||'')}</span>
-              </div>`;
-          }
+          const onclickBanco = estado5 === 'APLICADO'
+            ? `_verMovBancarioLink('${escapar(nDoc)}','VENTA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.cliente||'')}')`
+            : `_conciliarVentaIndividual(${conciliarArgs})`;
+          const tituloBanco = estado5 === 'APLICADO' ? 'Click para ver con qué movimiento(s) bancario(s) está vinculado'
+            : estado5 === 'EXCESIVO'  ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Click para revisar y desvincular el que sobra.`
+            : estado5 === 'PARCIAL'   ? `Parcial: ${formatearMoneda(cov.suma)} de ${formatearMoneda(cov.total)} vinculado, falta ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`
+            : estado5 === 'POSIBLE'   ? 'Hay un movimiento bancario sin vincular con un monto parecido — click para revisar y confirmar.'
+            : 'Click para conciliar con banco';
+          const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap"
+               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -868,18 +871,15 @@ async function _vSunatConfirmar() {
 // ══════════════════════════════════════════════════════════════════
 
 async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmision, ruc = '') {
-  const margen  = Math.max(total * 0.05, 5);
-  const { data: movs } = await _supabase
-    .from('tesoreria_mbd')
-    .select('*')
-    .eq('empresa_id', empresa_activa.id)
-    .neq('entrega_doc', 'EMITIDO')
-    .gte('monto', total - margen)
-    .lte('monto', total + margen)
-    .order('fecha_deposito', { ascending: false })
-    .limit(30);
+  const [movs, { data: yaVinculados }] = await Promise.all([
+    _conBuscarCandidatosPorMonto(empresa_activa.id, total),
+    // Ya vinculados a este mismo comprobante — mismo panel que ya muestra la 🔍 lupa.
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
+      .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').eq('nro_factura_doc', nDoc)
+      .order('fecha_deposito', { ascending: false }),
+  ]);
 
-  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, ruc, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || []);
+  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, ruc, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || [], yaVinculados || []);
 }
 
 async function _conciliarLoteVentas() {
@@ -926,20 +926,11 @@ async function _conciliarLoteVentas() {
 
   const matches = [];
   for (const v of pendientes.slice(0, 20)) {
-    const nDoc   = [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-');
-    const total  = Number(v.total_cp || 0);
-    const margen = Math.max(total * 0.05, 5);
-    const { data: movs } = await _supabase
-      .from('tesoreria_mbd')
-      .select('id, fecha_deposito, monto, descripcion, nro_operacion_bancaria, proveedor_empresa_personal, ruc_dni, entrega_doc')
-      .eq('empresa_id', empresa_activa.id)
-      .neq('entrega_doc', 'EMITIDO')
-      .gte('monto', total - margen)
-      .lte('monto', total + margen)
-      .limit(5);
-    if (movs?.length) {
-      const mejor = movs.sort((a, b) => Math.abs(Number(a.monto) - total) - Math.abs(Number(b.monto) - total))[0];
-      matches.push({ compra: { ...v, nDoc }, mov: mejor, total });
+    const nDoc  = [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-');
+    const total = Number(v.total_cp || 0);
+    const movs  = await _conBuscarCandidatosPorMonto(empresa_activa.id, total, 5);
+    if (movs.length) {
+      matches.push({ compra: { ...v, nDoc }, mov: movs[0], total });
     }
   }
 
@@ -969,7 +960,7 @@ async function _conciliarLoteVentas() {
               ☐ Desmarcar todos</button>
           </div>
           ${matches.map((m, i) => {
-            const diff = Math.abs(Number(m.mov.monto) - m.total);
+            const diff = Math.abs(Math.abs(Number(m.mov.monto)) - m.total);
             const pct  = m.total > 0 ? Math.round(diff / m.total * 100) : 0;
             return `
             <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:8px;background:var(--color-bg-card)">
@@ -989,7 +980,7 @@ async function _conciliarLoteVentas() {
                         <div style="color:var(--color-texto-suave);font-size:11px">${formatearFecha(m.mov.fecha_deposito)} · ${escapar(truncar(m.mov.descripcion||'—',45))}</div>
                       </div>
                       <div style="text-align:right;flex-shrink:0">
-                        <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(m.mov.monto)}</div>
+                        <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(Math.abs(Number(m.mov.monto)))}</div>
                         ${diff > 0 ? `<div style="font-size:10px;color:${pct>5?'#ef4444':'#f59e0b'}">Dif: ${formatearMoneda(diff)} (${pct}%)</div>` : '<div style="font-size:10px;color:#22c55e">✓ Exacto</div>'}
                       </div>
                     </div>
@@ -1002,7 +993,7 @@ async function _conciliarLoteVentas() {
         <div class="modal-footer" style="flex-shrink:0;gap:8px">
           <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
           <button class="btn btn-primario"
-            onclick="_vAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,cliente:m.compra.cliente||'',ruc:m.compra.nro_doc_identidad||'',total:m.total})))})">
+            onclick="_vAplicarLoteConciliacion(${JSON.stringify(matches.map(m=>({movId:m.mov.id,nDoc:m.compra.nDoc,cliente:m.compra.cliente||'',ruc:m.compra.nro_doc_identidad||'',total:m.total,monto:m.mov.monto})))})">
             ✅ Aplicar seleccionados
           </button>
         </div>
@@ -1016,12 +1007,18 @@ async function _vAplicarLoteConciliacion(items) {
   if (!await confirmar(`¿Está segura de aplicar la conciliación a ${nMarcados} movimiento(s) seleccionado(s)?`, { btnOk: 'Sí, aplicar', btnColor: '#2C5282' })) return;
   const hoy    = new Date().toISOString().slice(0, 10);
   let ok = 0, errores = 0;
+  const bloqueados = [];
 
   for (const chk of checks) {
     if (!chk.checked) continue;
     const idx  = parseInt(chk.dataset.idx, 10);
     const item = items[idx];
     if (!item) continue;
+
+    if (typeof _conValidarAntesDeVincular === 'function') {
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, 'VENTA', item.nDoc, item.total, item.movId, item.monto);
+      if (!val.ok) { bloqueados.push(item.nDoc); continue; }
+    }
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
       nro_factura_doc:      item.nDoc,
@@ -1054,8 +1051,9 @@ async function _vAplicarLoteConciliacion(items) {
 
   document.querySelector('.modal-overlay')?.remove();
   mostrarToast(
-    `✅ ${ok} conciliación(es) aplicada(s)${errores ? ` · ${errores} con error` : ''}`,
-    ok > 0 ? 'exito' : 'error'
+    `✅ ${ok} conciliación(es) aplicada(s)${errores ? ` · ${errores} con error` : ''}${bloqueados.length ? ` · ${bloqueados.length} bloqueada(s) por posible duplicado (revisar: ${bloqueados.join(', ')})` : ''}`,
+    bloqueados.length ? 'atencion' : (ok > 0 ? 'exito' : 'error'),
+    bloqueados.length ? 7000 : 3500
   );
   cargarVentas();
 }

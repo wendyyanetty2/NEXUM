@@ -226,7 +226,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
             ${d._fecha ? `<span style="color:var(--color-texto-suave);margin-left:8px">${d._fecha}</span>` : ''}
           </div>
         </div>
-        <button data-bm-vincular data-tipo="${d._tipo}" data-id="${d.id}" data-ndoc="${escapar(d._ndoc)}" data-prov="${escapar(d._prov||'')}" data-ruc="${escapar(d._ruc||'')}"
+        <button data-bm-vincular data-tipo="${d._tipo}" data-id="${d.id}" data-ndoc="${escapar(d._ndoc)}" data-prov="${escapar(d._prov||'')}" data-ruc="${escapar(d._ruc||'')}" data-total="${Number(d._total)||0}"
           style="flex-shrink:0;padding:7px 14px;background:var(--color-secundario);color:#fff;border:none;
             border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--font);font-weight:600;white-space:nowrap">
           ✓ Vincular
@@ -239,7 +239,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
       const docTipo = btn.dataset.tipo;
       const docId   = btn.dataset.id;
       const nDoc    = btn.dataset.ndoc;
-      await _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco, { proveedor: btn.dataset.prov, ruc: btn.dataset.ruc });
+      await _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tablaBanco, { proveedor: btn.dataset.prov, ruc: btn.dataset.ruc, total: Number(btn.dataset.total)||0 });
       overlay.remove();
     };
   });
@@ -271,6 +271,11 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
         nro_factura_doc:            nroFacturaKey,
         tipo_doc:                   docTipo,
       });
+    }
+
+    if (typeof _conValidarAntesDeVincular === 'function' && typeof empresa_activa !== 'undefined' && empresa_activa?.id) {
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKey, extra.total, movBancoId, mov?.monto);
+      if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
     }
   }
 
@@ -429,7 +434,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc, ru
   };
   overlay.querySelector('#bm2-desc')?.addEventListener('keydown', e => { if(e.key==='Enter') doSearch(); });
 
-  const doManual = () => _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor, ruc);
+  const doManual = () => _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor, ruc, montoRef);
   overlay.querySelector('#bm2-manual-btn').onclick = doManual;
   overlay.querySelector('#bm2-manual-q')?.addEventListener('keydown', e => { if(e.key==='Enter') doManual(); });
 
@@ -546,7 +551,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor =
       const nrop  = btn.dataset.nrop;
       btn.disabled = true;
       btn.textContent = '…';
-      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd', { proveedor, ruc });
+      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd', { proveedor, ruc, total: totalFactura });
       mostrarToast(`✓ Movimiento ${nrop} vinculado al comprobante ${nDoc}`, 'exito');
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
@@ -559,7 +564,7 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor =
   });
 }
 
-async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor = '', ruc = '') {
+async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor = '', ruc = '', totalFactura = 0) {
   const q   = (overlay.querySelector('#bm2-manual-q')?.value || '').trim();
   const res = overlay.querySelector('#bm2-manual-res');
   if (!q || !res) return;
@@ -611,7 +616,7 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor = '',
       const nrop  = btn.dataset.bm2mNrop;
       btn.disabled = true;
       btn.textContent = '…';
-      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd', { proveedor, ruc });
+      await _bmEjecutarVinculacionDoc(movId, docTipo, docId, nDoc, 'tesoreria_mbd', { proveedor, ruc, total: totalFactura });
       mostrarToast(`✓ Movimiento ${nrop} vinculado a ${nDoc}`, 'exito');
       if (docTipo === 'RH') {
         btn.textContent = '✓ Vinculado';
@@ -750,6 +755,12 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
   const signo = montoOriginal < 0 ? -1 : 1;
   const montoFactura = signo * Math.abs(Number(totalFactura) || 0);
   const montoResto = montoOriginal - montoFactura;
+
+  if (typeof _conValidarAntesDeVincular === 'function' && typeof empresa_activa !== 'undefined' && empresa_activa?.id) {
+    const nroFacturaKeyDiv = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
+    const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKeyDiv, totalFactura, movId, montoFactura);
+    if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
+  }
 
   const ok = await confirmar(
     `✂️ Se dividirá el movimiento ${escapar(r.nro_operacion_bancaria || '')} (${formatearMoneda(montoOriginal)}) en 2 partes:\n\n` +

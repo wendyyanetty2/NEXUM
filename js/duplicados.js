@@ -276,6 +276,139 @@ function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir, criterioTxt) {
 }
 
 /* ============================================================
+   DESCUADRES DE VINCULACIÓN — Compras/Ventas/RH vs Tesorería MBD
+   (pedido por Wendy, 2026-09-17): un comprobante puede pagarse con
+   varios movimientos bancarios (regla N:M, ver _conCobertura), pero
+   si la SUMA de los movimientos vinculados a un mismo N° de
+   comprobante supera su total en más del margen normal (5% o S/5
+   mínimo — el mismo que usa la búsqueda de candidatos 🔗/🔍), casi
+   siempre es porque un movimiento de OTRO comprobante quedó
+   enganchado por error (mismo N° tecleado o elegido por error en la
+   búsqueda manual). La clave es el N° de comprobante + tipo_doc —
+   NO el proveedor, porque el nombre puede venir escrito distinto
+   entre el banco y el comprobante (Wendy: "la clave está en el
+   número de comprobante"). Cubre Compras, Ventas y RH.
+   Solo lectura — no modifica ni desvincula nada automáticamente.
+   ============================================================ */
+function _dupClaveDoc(r) { return [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-'); }
+
+async function _dupDescuadresVinculacion() {
+  mostrarToast('Buscando descuadres de vinculación…', 'atencion');
+  const empId = empresa_activa.id;
+
+  const [{ data: compras }, { data: ventas }, { data: rh }, { data: movs }] = await Promise.all([
+    _supabase.from('contabilidad_compras').select('id,serie_cdp,nro_cp_inicial,proveedor,total_cp').eq('empresa_id', empId),
+    _supabase.from('contabilidad_ventas').select('id,serie_cdp,nro_cp_inicial,cliente,total_cp').eq('empresa_id', empId),
+    _supabase.from('rh_registros').select('id,numero_rh,monto_neto,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId),
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,tipo_doc,nro_factura_doc,proveedor_empresa_personal,entrega_doc')
+      .eq('empresa_id', empId).not('nro_factura_doc', 'is', null).in('tipo_doc', ['COMPRA', 'VENTA', 'RH']),
+  ]);
+
+  const movsPorClave = new Map(); // `${tipo_doc}|${nro_factura_doc}` → [movs]
+  (movs || []).forEach(m => {
+    if (_esComprobantePlaceholder(m.nro_factura_doc)) return;
+    const k = `${m.tipo_doc}|${m.nro_factura_doc}`;
+    if (!movsPorClave.has(k)) movsPorClave.set(k, []);
+    movsPorClave.get(k).push(m);
+  });
+
+  const descuadres = [];
+  const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn) => {
+    (comprobantes || []).forEach(c => {
+      const clave = claveFn(c);
+      if (!clave) return;
+      const lista = movsPorClave.get(`${tipoDoc}|${clave}`) || [];
+      if (!lista.length) return;
+      const total  = totalFn(c);
+      if (!total) return;
+      const suma   = lista.reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
+      const margen = Math.max(total * 0.05, 5);
+      if (suma > total + margen) {
+        descuadres.push({ tipoDoc, nDoc: clave, label: labelFn(c), total, suma, exceso: suma - total, movs: lista });
+      }
+    });
+  };
+
+  evaluar(compras, 'COMPRA', _dupClaveDoc, c => c.proveedor || '—', c => Number(c.total_cp) || 0);
+  evaluar(ventas,  'VENTA',  _dupClaveDoc, c => c.cliente   || '—', c => Number(c.total_cp) || 0);
+  // RH: nro_factura_doc puede ser el UUID (vínculo manual 🔍/📂) o el N° de RH legible
+  // (carga por Excel/Importar MBD) — se evalúan ambas claves, igual criterio que _bmCargarLinks.
+  evaluar(rh, 'RH', c => c.id,        c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0);
+  evaluar(rh, 'RH', c => c.numero_rh, c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0);
+
+  // Un mismo RH puede calzar por las dos claves a la vez — no listarlo dos veces.
+  const vistos = new Set();
+  const descuadresUnicos = descuadres.filter(d => {
+    const k = `${d.tipoDoc}|${d.nDoc}`;
+    if (vistos.has(k)) return false;
+    vistos.add(k);
+    return true;
+  });
+
+  _dupRenderDescuadres(descuadresUnicos);
+}
+
+function _dupRenderDescuadres(descuadres) {
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+  const tipoLabel = { COMPRA: '🛒 Compra', VENTA: '📄 Venta', RH: '🧾 RH' };
+
+  if (!descuadres.length) {
+    mc.innerHTML = `
+      <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+        <div class="modal" style="max-width:460px;width:95%;padding:28px;text-align:center">
+          <div style="font-size:36px;margin-bottom:10px">✅</div>
+          <p style="color:var(--color-texto)">No se encontraron comprobantes (Compras/Ventas/RH) cuyos movimientos bancarios vinculados sumen más del total permitido.</p>
+          <button class="btn btn-secundario" style="margin-top:16px" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:720px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+        <div class="modal-header">
+          <h3>⚖️ Descuadres de vinculación — ${descuadres.length} comprobante(s)</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
+            Solo lectura — nada se modifica automáticamente. Comprobantes (Compras/Ventas/RH) cuyos movimientos bancarios vinculados
+            (agrupados por N° de comprobante) suman más de lo que corresponde — casi siempre porque un movimiento de otro comprobante
+            quedó enganchado por error. Revisa cada grupo y desvincula el que sobra desde su modal de edición (✏️).
+          </p>
+          ${descuadres.map(d => `
+            <div style="border:1px solid #C53030;border-radius:8px;padding:12px 14px;margin-bottom:10px;background:rgba(197,48,48,.04)">
+              <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+                <div><span style="font-weight:700">${tipoLabel[d.tipoDoc]||d.tipoDoc}</span> — <strong style="color:var(--color-secundario)">${escapar(d.nDoc)}</strong> · ${escapar(d.label)}</div>
+                <div style="font-weight:700;color:#C53030">Exceso: ${formatearMoneda(d.exceso)}</div>
+              </div>
+              <div style="font-size:12px;color:var(--color-texto-suave);margin-bottom:8px">
+                Total del comprobante: ${formatearMoneda(d.total)} · Suma vinculada: ${formatearMoneda(d.suma)} (${d.movs.length} movimiento(s))
+              </div>
+              ${d.movs.map(m => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--color-borde);font-size:12px">
+                  <span>Op. ${escapar(m.nro_operacion_bancaria||'—')} · ${formatearFecha(m.fecha_deposito)} · ${escapar(m.proveedor_empresa_personal||'—')} · ${escapar(m.entrega_doc||'')}</span>
+                  <span style="display:flex;align-items:center;gap:10px">
+                    <strong>${formatearMoneda(m.monto)}</strong>
+                    ${typeof abrirModalMovimiento === 'function'
+                      ? `<button onclick="document.querySelector('.modal-overlay').remove();abrirModalMovimiento('${m.id}')"
+                          style="padding:3px 10px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">✏️ Ver/editar</button>`
+                      : `<button onclick="navigator.clipboard.writeText('${escapar(m.nro_operacion_bancaria||'')}').then(()=>mostrarToast('N° de operación copiado','exito'))"
+                          style="padding:3px 10px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px" title="Cópialo y búscalo en Tesorería → Movimientos para editar o desvincular">📋 Copiar N° op.</button>`}
+                  </span>
+                </div>`).join('')}
+            </div>`).join('')}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ============================================================
    Motor de coincidencia MBD ↔ EECC (punto 6, acordado con Wendy)
 
    Al importar por "Importar MBD" (últimos 20 movimientos) o por
