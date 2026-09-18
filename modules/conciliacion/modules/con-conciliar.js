@@ -815,6 +815,7 @@ async function _conVincularComprobante(doc, movId) {
 
   mostrarToast(`✓ Vinculado: ${doc.nDoc}`, 'exito');
   document.querySelector('.modal-overlay')?.remove();
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
 }
 
 // ── Helpers visuales ─────────────────────────────────────────────
@@ -1242,6 +1243,7 @@ async function _aprobarMatchMultiComprobante(key, idx) {
   _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
   document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
   _conRefrescarPanel();
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
   mostrarToast(`✅ Movimiento dividido en ${ok} comprobante(s)${errores ? ` · ${errores} con error` : ''}`, ok ? 'exito' : 'error');
 }
 
@@ -1739,6 +1741,9 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
     document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
   }
   _conRefrescarPanel(); // actualizar panel de avance en tiempo real
+  // Compras/Ventas/RH y Movimientos calculan su estado en vivo desde
+  // tesoreria_mbd — sin esto se quedaban con el estado viejo (auditoría 2026-09-18).
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
 }
 
 // ── Rechazar match ────────────────────────────────────────────────
@@ -1807,6 +1812,7 @@ async function _aprobarMatchMulti(key, idx) {
   _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
   document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
   _conRefrescarPanel();
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
   mostrarToast(`✅ Multi-transferencia aprobada (${ok} movimientos)${errores ? ` · ${errores} con error` : ''}`, ok ? 'exito' : 'error');
 }
 
@@ -1871,6 +1877,9 @@ async function _aprobarEnLote() {
   _conActualizarBtnLote();
   _conActivarSubtab('exactos');
   _conRefrescarPanel(); // actualizar panel de avance en tiempo real
+  // Compras/Ventas/RH y Movimientos calculan su estado en vivo desde
+  // tesoreria_mbd — sin esto se quedaban con el estado viejo (auditoría 2026-09-18).
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
 
   mostrarToast(`✅ ${ok} aprobados${errores ? ` · ${errores} con error` : ''}.`, ok ? 'exito' : 'error');
 }
@@ -1904,6 +1913,9 @@ async function _guardarClasificacion(movId, idx) {
   mostrarToast('✓ Clasificación guardada', 'exito');
   _conActivarSubtab('sin_match');
   _conRefrescarPanel(); // actualizar panel de avance en tiempo real
+  // Compras/Ventas/RH y Movimientos calculan su estado en vivo desde
+  // tesoreria_mbd — sin esto se quedaban con el estado viejo (auditoría 2026-09-18).
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
 }
 
 // ── Panel lateral búsqueda manual ────────────────────────────────
@@ -2053,6 +2065,7 @@ async function _vincularManual(movId, docTipo, docId, nDocDirecto) {
   _conActualizarBtnLote();
   _conActivarSubtab(_con_tab_activo);
   _conRefrescarPanel(); // actualizar avance en tiempo real
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
 }
 
 // ── Vinculación manual de RH vía 🔍 lupa guarda el UUID del RH en

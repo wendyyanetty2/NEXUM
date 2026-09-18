@@ -295,6 +295,22 @@ function _conPeriodoCercano(periodoMov, periodoComp) {
   return Math.abs(ym - yc) <= 2;
 }
 
+// ── Refresca las vistas cuyo estado se calcula en vivo desde tesoreria_mbd
+//    (Tesorería > Movimientos, Compras, Ventas, RH Recibidas). Cualquier
+//    acción que vincule, desvincule o apruebe un match debe llamar esto —
+//    si no, la vista se queda mostrando el estado viejo hasta que se
+//    recarga el módulo a mano (auditoría 2026-09-18: varias funciones de
+//    vinculación en con-compras.js/con-ventas.js/con-conciliar.js escribían
+//    en tesoreria_mbd pero nunca avisaban a las demás vistas). Cada carga
+//    está protegida por typeof porque solo el módulo que está montado en
+//    pantalla tiene su función definida.
+function _refrescarVistasVinculadas() {
+  if (typeof cargarMovimientos === 'function') cargarMovimientos(true);
+  if (typeof cargarCompras     === 'function') cargarCompras();
+  if (typeof cargarVentas      === 'function') cargarVentas();
+  if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
+}
+
 // ════════════════════════════════════════════════════════════════
 // CONSOLIDACIÓN INDIVIDUAL
 // Llamada automáticamente tras cada vinculación nueva.

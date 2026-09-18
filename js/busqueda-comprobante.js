@@ -833,4 +833,6 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
   if (typeof cargarCompras === 'function') cargarCompras();
   if (typeof cargarVentas  === 'function') cargarVentas();
   if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
+  if (typeof cargarMovimientos === 'function') cargarMovimientos(true);
+  if (typeof _concCargarDatos  === 'function') _concCargarDatos();
 }

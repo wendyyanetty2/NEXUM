@@ -1085,5 +1085,6 @@ async function _vAplicarLoteConciliacion(items) {
     bloqueados.length ? 'atencion' : (ok > 0 ? 'exito' : 'error'),
     bloqueados.length ? 7000 : 3500
   );
-  cargarVentas();
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
+  else cargarVentas();
 }

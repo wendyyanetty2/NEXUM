@@ -1221,7 +1221,10 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
 
   document.querySelector('.modal-overlay')?.remove();
   mostrarToast(`✅ Vinculado: ${nDoc} → movimiento bancario`, 'exito');
-  cargarCompras();
+  // Se usa tanto desde Compras como desde Ventas (ver comentario en con-ventas.js) —
+  // antes siempre refrescaba Compras aunque se vinculara una Venta.
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
+  else { cargarCompras(); if (typeof cargarVentas === 'function') cargarVentas(); }
 }
 
 async function _cAplicarLoteConciliacion(items) {
@@ -1278,7 +1281,8 @@ async function _cAplicarLoteConciliacion(items) {
     bloqueados.length ? 'atencion' : (ok > 0 ? 'exito' : 'error'),
     bloqueados.length ? 7000 : 3500
   );
-  cargarCompras();
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
+  else cargarCompras();
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1379,6 +1383,7 @@ async function _desvincularmovLink(idx, nDoc, tipo) {
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
   mostrarToast('✅ Desvinculado correctamente', 'exito');
   document.getElementById('modal-container').innerHTML = '';
-  if (tipo === 'VENTA') cargarVentas();
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
+  else if (tipo === 'VENTA') cargarVentas();
   else cargarCompras();
 }

@@ -670,6 +670,14 @@ async function _rhAplicarSeleccionados(listaPlana) {
     5000
   );
   cargarRHRecibidas();
+  // confirmarLinkRH ya escribió en tesoreria_mbd (entrega_doc, nro_factura_doc,
+  // estado_conciliacion) — sin esto, Movimientos/Compras/Ventas/Conciliación
+  // se quedaban con el estado viejo hasta recargar el módulo a mano (mismo bug
+  // ya corregido en guardarMBD y _bmDesvincularmovLink, Wendy 2026-09-18).
+  if (typeof cargarMovimientos === 'function') cargarMovimientos(true);
+  if (typeof cargarCompras     === 'function') cargarCompras();
+  if (typeof cargarVentas      === 'function') cargarVentas();
+  if (typeof _concCargarDatos  === 'function') _concCargarDatos();
 }
 
 // ── Ver links de un RH ────────────────────────────────────────────
@@ -803,6 +811,12 @@ async function rhConfirmarLink(rhId, movId, recargar = false) {
     mostrarToast('Vinculación confirmada.', 'exito');
     if (recargar) { document.querySelector('.modal-overlay')?.remove(); cargarRHRecibidas(); }
     else cargarRHRecibidas();
+    // Igual que en el matching masivo: confirmarLinkRH escribe en tesoreria_mbd,
+    // así que Movimientos/Compras/Ventas/Conciliación también deben refrescarse.
+    if (typeof cargarMovimientos === 'function') cargarMovimientos(true);
+    if (typeof cargarCompras     === 'function') cargarCompras();
+    if (typeof cargarVentas      === 'function') cargarVentas();
+    if (typeof _concCargarDatos  === 'function') _concCargarDatos();
   } else {
     mostrarToast('Error al confirmar vinculación.', 'error');
   }
@@ -1456,5 +1470,6 @@ async function _rhRevertirLink(rhId, movId) {
   const overlay = document.querySelector('.modal-overlay');
   if (overlay) overlay.remove();
   rhVerHistorialConciliacion();
-  cargarRHRecibidas();
+  if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
+  else cargarRHRecibidas();
 }
