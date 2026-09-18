@@ -31,6 +31,7 @@ async function renderTabClientes(area) {
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarClientesExcel()">⬇ Excel</button>
           <button class="btn btn-secundario btn-sm" onclick="precargarClientes()" title="Insertar empresas/proveedores predefinidos (omite los que ya existen)">📋 Precargar datos</button>
+          <button class="btn btn-secundario btn-sm" onclick="abrirModalCopiarCatalogo('empresas_clientes','Clientes/Proveedores','cargarClientes')" title="Copiar registros de otra empresa que todavía no estén aquí">📥 Copiar de otra empresa</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalCliente(null)">+ Nuevo</button>
         </div>
       </div>

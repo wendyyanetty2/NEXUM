@@ -23,6 +23,7 @@ async function renderTabConceptos(area) {
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarConceptosExcel()">⬇ Excel</button>
           <button class="btn btn-secundario btn-sm" onclick="precargarConceptos()" title="Insertar la lista de conceptos predefinidos (omite los que ya existen)">📋 Precargar datos</button>
+          <button class="btn btn-secundario btn-sm" onclick="abrirModalCopiarCatalogo('conceptos','Conceptos','cargarConceptos')" title="Copiar registros de otra empresa que todavía no estén aquí">📥 Copiar de otra empresa</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalConcepto(null)">+ Nuevo</button>
         </div>
       </div>

@@ -15,6 +15,7 @@ async function renderTabAutorizaciones(area) {
         <div style="display:flex;gap:8px">
           <button class="btn btn-secundario btn-sm" onclick="exportarAutorizacionesExcel()">⬇ Excel</button>
           <button class="btn btn-secundario btn-sm" onclick="precargarAutorizaciones()" title="Insertar autorizaciones predefinidas (omite las que ya existen)">📋 Precargar datos</button>
+          <button class="btn btn-secundario btn-sm" onclick="abrirModalCopiarCatalogo('autorizaciones','Autorizaciones','cargarAutorizaciones')" title="Copiar registros de otra empresa que todavía no estén aquí">📥 Copiar de otra empresa</button>
           <button class="btn btn-primario btn-sm"   onclick="abrirModalAutorizacion(null)">+ Nuevo</button>
         </div>
       </div>
