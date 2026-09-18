@@ -114,6 +114,11 @@ async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, tot
 //    ofrece seguir adelante) — para cuando la acción simplemente NO puede
 //    continuar y solo queda que la persona lea por qué y cierre el aviso.
 function _conAlertaBloqueo(mensaje) {
+  // Bug 2026-09-18: cuando _conValidarAntesDeVincular pregunta "¿procedes de
+  // todas formas?" (dentro del margen) y la respuesta es no, no hay mensaje
+  // de bloqueo que mostrar — antes esto abría un aviso roto con "undefined"
+  // en vez de simplemente cancelar en silencio (la persona ya dijo que no).
+  if (!mensaje) return Promise.resolve();
   return new Promise(resolve => {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
