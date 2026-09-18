@@ -1178,7 +1178,7 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = 
 async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = '', ruc = '', total = 0) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto').eq('id', movId).maybeSingle();
+  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto,proveedor_empresa_personal').eq('id', movId).maybeSingle();
 
   if (typeof _conValidarAntesDeVincular === 'function') {
     const val = await _conValidarAntesDeVincular(empresa_activa.id, tipoDoc, nDoc, total, movId, movPrevio?.monto);
@@ -1197,9 +1197,17 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
     estado_conciliacion:  'conciliado',
     fecha_actualizacion:  hoy,
   };
-  // Proveedor/Empresa y RUC/DNI siempre se sincronizan desde el comprobante (Compras/Ventas/RH)
-  if (proveedor) patch.proveedor_empresa_personal = proveedor;
-  if (ruc)       patch.ruc_dni                    = ruc;
+  // Proveedor/Empresa: si ya tenía un nombre distinto al del comprobante (pago a
+  // tercero), se conserva y el del comprobante se guarda aparte en
+  // titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
+  if (typeof _resolverProveedorTitular === 'function') {
+    const rt = _resolverProveedorTitular(movPrevio?.proveedor_empresa_personal, proveedor);
+    patch.proveedor_empresa_personal = rt.proveedor;
+    patch.titular_comprobante = rt.titular;
+  } else if (proveedor) {
+    patch.proveedor_empresa_personal = proveedor;
+  }
+  if (ruc) patch.ruc_dni = ruc;
 
   const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
 
@@ -1246,12 +1254,19 @@ async function _cAplicarLoteConciliacion(items) {
       if (!val.ok) { bloqueados.push(item.nDoc); continue; }
     }
 
+    let rt = { proveedor: item.proveedor || undefined, titular: null };
+    if (typeof _resolverProveedorTitular === 'function') {
+      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal').eq('id', item.movId).maybeSingle();
+      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.proveedor);
+    }
+
     const { error } = await _supabase.from('tesoreria_mbd').update({
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'COMPRA',
       tipo_comprobante:     _mbdCodigoTipoComprobante('COMPRA', item.nDoc),
       estado_conciliacion:  'conciliado',
-      proveedor_empresa_personal: item.proveedor || undefined,
+      proveedor_empresa_personal: rt.proveedor,
+      titular_comprobante: rt.titular,
       ruc_dni:              item.ruc || undefined,
       fecha_actualizacion:  hoy,
     }).eq('id', item.movId);

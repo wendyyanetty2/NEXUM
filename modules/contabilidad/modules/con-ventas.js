@@ -1050,12 +1050,19 @@ async function _vAplicarLoteConciliacion(items) {
       if (!val.ok) { bloqueados.push(item.nDoc); continue; }
     }
 
+    let rt = { proveedor: item.cliente || undefined, titular: null };
+    if (typeof _resolverProveedorTitular === 'function') {
+      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal').eq('id', item.movId).maybeSingle();
+      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.cliente);
+    }
+
     const { error } = await _supabase.from('tesoreria_mbd').update({
       nro_factura_doc:      item.nDoc,
       tipo_doc:             'VENTA',
       tipo_comprobante:     _mbdCodigoTipoComprobante('VENTA', item.nDoc),
       estado_conciliacion:  'conciliado',
-      proveedor_empresa_personal: item.cliente || undefined,
+      proveedor_empresa_personal: rt.proveedor,
+      titular_comprobante: rt.titular,
       ruc_dni:              item.ruc || undefined,
       fecha_actualizacion:  hoy,
     }).eq('id', item.movId);

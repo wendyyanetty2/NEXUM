@@ -800,7 +800,13 @@ async function _conVincularComprobante(doc, movId) {
     tipo_comprobante: _conCodigoTipoComprobante(doc.tipo, doc.nDoc),
     fecha_actualizacion: hoy,
   };
-  if (doc.proveedor) patch.proveedor_empresa_personal = doc.proveedor;
+  if (typeof _resolverProveedorTitular === 'function') {
+    const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor);
+    patch.proveedor_empresa_personal = rt.proveedor;
+    patch.titular_comprobante = rt.titular;
+  } else if (doc.proveedor) {
+    patch.proveedor_empresa_personal = doc.proveedor;
+  }
   if (doc.ruc) patch.ruc_dni = doc.ruc;
 
   const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
@@ -1207,11 +1213,15 @@ async function _aprobarMatchMultiComprobante(key, idx) {
 
   let ok = 0, errores = 0;
   for (const d of item.docs) {
+    const rt = typeof _resolverProveedorTitular === 'function'
+      ? _resolverProveedorTitular(base.proveedor_empresa_personal, d._proveedor)
+      : { proveedor: d._proveedor || base.proveedor_empresa_personal || null, titular: null };
     const { data: ins, error: errIns } = await _supabase.from('tesoreria_mbd').insert({
       empresa_id: base.empresa_id, nro_operacion_bancaria: base.nro_operacion_bancaria,
       fecha_deposito: base.fecha_deposito, moneda: base.moneda, monto: signo * Math.abs(d._total || 0),
       descripcion: (base.descripcion || '') + ` (${d._ndoc})`,
-      proveedor_empresa_personal: d._proveedor || base.proveedor_empresa_personal || null,
+      proveedor_empresa_personal: rt.proveedor,
+      titular_comprobante: rt.titular,
       ruc_dni: d._ruc || base.ruc_dni || null,
       tipo_doc: d._tipo, nro_factura_doc: d._ndoc,
       tipo_comprobante: _conCodigoTipoComprobante(d._tipo, d._ndoc),
@@ -1692,8 +1702,13 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
     tipo_doc:             tipoDoc,
     fecha_actualizacion:  hoy,
   };
-  if (itemLocal?.doc?._proveedor && !itemLocal?.mov?.proveedor_empresa_personal)
+  if (typeof _resolverProveedorTitular === 'function') {
+    const rt = _resolverProveedorTitular(itemLocal?.mov?.proveedor_empresa_personal, itemLocal?.doc?._proveedor);
+    updateMov.proveedor_empresa_personal = rt.proveedor;
+    updateMov.titular_comprobante = rt.titular;
+  } else if (itemLocal?.doc?._proveedor && !itemLocal?.mov?.proveedor_empresa_personal) {
     updateMov.proveedor_empresa_personal = itemLocal.doc._proveedor;
+  }
   if (itemLocal?.doc?._ruc && !itemLocal?.mov?.ruc_dni)
     updateMov.ruc_dni = itemLocal.doc._ruc;
 
@@ -1782,8 +1797,13 @@ async function _aprobarMatchMulti(key, idx) {
       tipo_doc:             d._tipo || null,
       fecha_actualizacion:  hoy,
     };
-    if (d._proveedor && !m.proveedor_empresa_personal)
+    if (typeof _resolverProveedorTitular === 'function') {
+      const rt = _resolverProveedorTitular(m.proveedor_empresa_personal, d._proveedor);
+      updateMov.proveedor_empresa_personal = rt.proveedor;
+      updateMov.titular_comprobante = rt.titular;
+    } else if (d._proveedor && !m.proveedor_empresa_personal) {
       updateMov.proveedor_empresa_personal = d._proveedor;
+    }
     if (d._ruc && !m.ruc_dni)
       updateMov.ruc_dni = d._ruc;
 
@@ -1850,8 +1870,13 @@ async function _aprobarEnLote() {
       tipo_doc:             item.doc._tipo || null,
       fecha_actualizacion:  hoy,
     };
-    if (item.doc._proveedor && !item.mov.proveedor_empresa_personal)
+    if (typeof _resolverProveedorTitular === 'function') {
+      const rt = _resolverProveedorTitular(item.mov.proveedor_empresa_personal, item.doc._proveedor);
+      updLote.proveedor_empresa_personal = rt.proveedor;
+      updLote.titular_comprobante = rt.titular;
+    } else if (item.doc._proveedor && !item.mov.proveedor_empresa_personal) {
       updLote.proveedor_empresa_personal = item.doc._proveedor;
+    }
     if (item.doc._ruc && !item.mov.ruc_dni)
       updLote.ruc_dni = item.doc._ruc;
     const { error: e1 } = await _supabase.from('tesoreria_mbd')

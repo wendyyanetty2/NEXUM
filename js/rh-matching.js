@@ -219,9 +219,17 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
       if (rh?.numero_rh   && !mbd.nro_factura_doc)             patch.nro_factura_doc            = rh.numero_rh;
       if (!mbd.tipo_doc)                                        patch.tipo_doc                   = 'RH';
       patch.tipo_comprobante = 'RH';
-      // Proveedor/Empresa y RUC/DNI siempre se sincronizan desde el RH (el resto se completa manualmente)
-      if (rh?.nombre_emisor)  patch.proveedor_empresa_personal = rh.nombre_emisor;
-      if (rh?.nro_doc_emisor) patch.ruc_dni                    = rh.nro_doc_emisor;
+      // Proveedor/Empresa: si ya tenía un nombre distinto al del RH (pago a
+      // tercero), se conserva y el del RH se guarda aparte en titular_comprobante
+      // — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
+      if (typeof _resolverProveedorTitular === 'function') {
+        const rt = _resolverProveedorTitular(mbd.proveedor_empresa_personal, rh?.nombre_emisor);
+        patch.proveedor_empresa_personal = rt.proveedor;
+        patch.titular_comprobante = rt.titular;
+      } else if (rh?.nombre_emisor) {
+        patch.proveedor_empresa_personal = rh.nombre_emisor;
+      }
+      if (rh?.nro_doc_emisor) patch.ruc_dni = rh.nro_doc_emisor;
 
       // EMITIDO solo si TODOS los campos clave están completos
       const proveedor = (patch.proveedor_empresa_personal || mbd.proveedor_empresa_personal || '').trim();

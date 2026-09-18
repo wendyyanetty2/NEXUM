@@ -295,6 +295,28 @@ function _conPeriodoCercano(periodoMov, periodoComp) {
   return Math.abs(ym - yc) <= 2;
 }
 
+// ── Pago a terceros (Wendy, 2026-09-18): decide qué va en
+//    proveedor_empresa_personal (a quién se le depositó, dato del banco —
+//    NUNCA se sobrescribe si ya tiene un nombre distinto) y qué va en
+//    titular_comprobante (el emisor del comprobante, solo cuando difiere
+//    de verdad — no solo el mismo nombre en otro orden). Se usa en TODOS
+//    los caminos que escriben proveedor_empresa_personal al vincular un
+//    comprobante (antes cada uno tenía su propia regla suelta, y algunos
+//    — ej. dividir un movimiento en varios comprobantes — sobrescribían
+//    el nombre del banco sin avisar ni guardar el original en ningún lado).
+function _tercNombreNorm(v) {
+  return (v || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toUpperCase().replace(/[^A-Z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+}
+function _resolverProveedorTitular(proveedorActual, proveedorComprobante) {
+  const actual = (proveedorActual || '').toString().trim();
+  const comp   = (proveedorComprobante || '').toString().trim();
+  if (!comp)   return { proveedor: actual || null, titular: null };
+  if (!actual) return { proveedor: comp, titular: null };
+  if (_tercNombreNorm(actual) === _tercNombreNorm(comp)) return { proveedor: actual, titular: null };
+  return { proveedor: actual, titular: comp };
+}
+
 // ── Refresca las vistas cuyo estado se calcula en vivo desde tesoreria_mbd
 //    (Tesorería > Movimientos, Compras, Ventas, RH Recibidas). Cualquier
 //    acción que vincule, desvincule o apruebe un match debe llamar esto —

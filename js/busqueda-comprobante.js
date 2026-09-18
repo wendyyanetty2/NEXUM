@@ -306,10 +306,17 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     fecha_actualizacion: hoy,
   };
 
-  // Migrar Proveedor/Empresa/Personal y RUC/DNI del comprobante — siempre, ya que el resto de
-  // campos (proyecto, concepto, empresa, cotización/OC) se completan manualmente.
-  if (extra.proveedor) updatePayload.proveedor_empresa_personal = extra.proveedor;
-  if (extra.ruc)       updatePayload.ruc_dni                    = extra.ruc;
+  // Proveedor/Empresa/Personal: si ya tenía un nombre distinto al del comprobante
+  // (pago a tercero), se conserva y el del comprobante se guarda aparte en
+  // titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
+  if (tabla === 'tesoreria_mbd' && typeof _resolverProveedorTitular === 'function') {
+    const rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, extra.proveedor);
+    updatePayload.proveedor_empresa_personal = rt.proveedor;
+    updatePayload.titular_comprobante = rt.titular;
+  } else if (extra.proveedor) {
+    updatePayload.proveedor_empresa_personal = extra.proveedor;
+  }
+  if (extra.ruc) updatePayload.ruc_dni = extra.ruc;
 
   const { error: errMov } = await _supabase.from(tabla).update(updatePayload).eq('id', movBancoId);
   if (errMov) { mostrarToast('Error al vincular: ' + errMov.message, 'error'); return; }
@@ -787,12 +794,19 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
   if (!ok) return;
 
   const hoy = new Date().toISOString().slice(0, 10);
+  // Proveedor/Empresa: si el movimiento original ya tenía un nombre distinto al
+  // del comprobante (pago a tercero), se conserva y el del comprobante se guarda
+  // aparte en titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
+  const rtDiv = typeof _resolverProveedorTitular === 'function'
+    ? _resolverProveedorTitular(r.proveedor_empresa_personal, proveedor)
+    : { proveedor: proveedor || r.proveedor_empresa_personal || null, titular: null };
   const nuevasFilas = [
     {
       empresa_id: r.empresa_id, nro_operacion_bancaria: r.nro_operacion_bancaria,
       fecha_deposito: r.fecha_deposito, moneda: r.moneda, monto: montoFactura,
       descripcion: (r.descripcion || '') + ' (1/2)',
-      proveedor_empresa_personal: proveedor || r.proveedor_empresa_personal || null,
+      proveedor_empresa_personal: rtDiv.proveedor,
+      titular_comprobante: rtDiv.titular,
       ruc_dni: ruc || r.ruc_dni || null,
       tipo_doc: docTipo, nro_factura_doc: nDoc,
       tipo_comprobante: _mbdCodigoTipoComprobante(docTipo, nDoc),
