@@ -32,40 +32,34 @@ function actualizarIconoTema() {
 document.addEventListener('DOMContentLoaded', actualizarIconoTema);
 
 /**
- * Densidad visual NEXUM — opción interna de UI (Normal 100% / Compacta 90% /
- * Muy compacta 80%). NO es el zoom del navegador: solo ajusta padding y
- * espaciado vía variables CSS. Se guarda en sessionStorage (no localStorage)
- * para que cada pestaña/sesión mantenga su propia preferencia sin afectar
- * a otras pestañas ni a otros usuarios.
+ * Zoom visual NEXUM — botón 🔍 en el header. Aplica un zoom real de
+ * pantalla (CSS zoom) a un % elegido libremente por el usuario, guardado
+ * en sessionStorage: cada pestaña/ventana mantiene su propio nivel, sin
+ * afectar a otras pestañas del mismo link ni a otros usuarios.
  */
-const NEXUM_DENSIDADES = ['normal', 'compacta', 'muy-compacta'];
-const NEXUM_DENSIDAD_LABEL = {
-  'normal':       { texto: '🔍 100%', title: 'Densidad visual: Normal (100%) — clic para cambiar' },
-  'compacta':     { texto: '🔍 90%',  title: 'Densidad visual: Compacta (90%) — clic para cambiar' },
-  'muy-compacta': { texto: '🔍 80%',  title: 'Densidad visual: Muy compacta (80%) — clic para cambiar' },
-};
-
 (function () {
-  const densidad = sessionStorage.getItem('nexum_densidad') || 'normal';
-  if (densidad !== 'normal') document.documentElement.setAttribute('data-densidad', densidad);
+  const pct = parseInt(sessionStorage.getItem('nexum_zoom'), 10) || 100;
+  if (pct !== 100) document.documentElement.style.zoom = pct + '%';
 })();
 
 function alternarDensidad() {
-  const actual = document.documentElement.getAttribute('data-densidad') || 'normal';
-  const idx    = (NEXUM_DENSIDADES.indexOf(actual) + 1) % NEXUM_DENSIDADES.length;
-  const nuevo  = NEXUM_DENSIDADES[idx];
-  if (nuevo === 'normal') document.documentElement.removeAttribute('data-densidad');
-  else document.documentElement.setAttribute('data-densidad', nuevo);
-  sessionStorage.setItem('nexum_densidad', nuevo);
+  const actual = parseInt(sessionStorage.getItem('nexum_zoom'), 10) || 100;
+  const input = window.prompt('Zoom de esta ventana (50% – 200%):', actual);
+  if (input === null) return;
+  let pct = parseInt(input, 10);
+  if (isNaN(pct)) return;
+  pct = Math.min(200, Math.max(50, pct));
+  if (pct === 100) document.documentElement.style.zoom = '';
+  else document.documentElement.style.zoom = pct + '%';
+  sessionStorage.setItem('nexum_zoom', String(pct));
   actualizarIconoDensidad();
 }
 
 function actualizarIconoDensidad() {
-  const densidad = document.documentElement.getAttribute('data-densidad') || 'normal';
-  const info = NEXUM_DENSIDAD_LABEL[densidad] || NEXUM_DENSIDAD_LABEL.normal;
+  const pct = parseInt(sessionStorage.getItem('nexum_zoom'), 10) || 100;
   document.querySelectorAll('.btn-densidad').forEach(btn => {
-    btn.textContent = info.texto;
-    btn.title = info.title;
+    btn.textContent = `🔍 ${pct}%`;
+    btn.title = 'Zoom de esta ventana — clic para elegir % (solo afecta esta pestaña)';
   });
 }
 
