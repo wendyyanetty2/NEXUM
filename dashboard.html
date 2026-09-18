@@ -72,6 +72,10 @@
       <a class="nav-item" id="nav-conciliacion" onclick="navegarA('conciliacion')">
         <span class="icono">🔗</span> Conciliación
       </a>
+
+      <a class="nav-item" id="nav-planilla-movilidad" onclick="navegarA('planilla-movilidad')">
+        <span class="icono">🚗</span> Planilla Movilidad
+      </a>
     </nav>
 
     <!-- Pie del sidebar -->
@@ -206,6 +210,7 @@ function navegarA(modulo) {
     reportes:     'Reportes',
     contabilidad: 'Contabilidad',
     conciliacion: 'Conciliación',
+    'planilla-movilidad': 'Planilla Movilidad',
   };
   document.getElementById('breadcrumb').innerHTML =
     `NEXUM &rsaquo; <span>${nombres[modulo] || modulo}</span>`;
@@ -223,6 +228,7 @@ function navegarA(modulo) {
     reportes:     '/modules/reportes/index.html',
     contabilidad: '/modules/contabilidad/index.html',
     conciliacion: '/modules/conciliacion/index.html',
+    'planilla-movilidad': '/modules/planilla-movilidad/index.html',
   };
 
   if (modulo === 'dashboard') {
@@ -327,6 +333,7 @@ function renderDashboard(area) {
           ${[
             ['🏦','Tesorería','tesoreria'],
             ['🔗','Conciliación','conciliacion'],
+            ['🚗','Planilla Movilidad','planilla-movilidad'],
             ['📊','Reportes','reportes'],
             ['⚙️','Administración','admin'],
           ].map(([ico,nom,id])=>`
