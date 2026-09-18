@@ -1456,6 +1456,15 @@ async function guardarMBD(id) {
   const _y = window.scrollY;
   await cargarMovimientos(true);
   requestAnimationFrame(() => window.scrollTo(0, _y));
+  // El estado de un comprobante (Compras/Ventas/RH y Conciliación) se calcula
+  // en vivo a partir de tesoreria_mbd — si se registra o edita un vínculo aquí
+  // manualmente y esas otras vistas ya estaban cargadas, se quedan con el
+  // estado viejo hasta refrescarlas (mismo bug que en _bmDesvincularmovLink,
+  // Wendy 2026-09-18).
+  if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
+  if (typeof cargarCompras     === 'function') cargarCompras();
+  if (typeof cargarVentas      === 'function') cargarVentas();
+  if (typeof _concCargarDatos  === 'function') _concCargarDatos();
 }
 
 function _mbdAgregarNroOp() {
