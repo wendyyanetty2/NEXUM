@@ -153,7 +153,7 @@ async function _renderComprasFiltradas() {
   const covFilasBase = filas.map(r => ({ r, cov: _covC(r) }));
 
   // POSIBLE: un PENDIENTE con al menos un movimiento bancario SIN vincular que
-  // calza dentro del margen normal (5%/S/5 mínimo, el mismo que usa 🔗).
+  // calza dentro del margen ±S/3 (_CON_MARGEN_POSIBLE, el mismo que usa 🔗).
   const hayPendientes = covFilasBase.some(x => x.cov.estado === 'PENDIENTE');
   if (hayPendientes && _cCandidatosMontoCache === null) {
     _cCandidatosMontoCache = await _conCandidatosMontoDisponibles(empresa_activa.id);

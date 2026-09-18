@@ -1726,7 +1726,7 @@ async function _conRefrescarPanel() {
 
   const { data, error } = await _supabase
     .from('tesoreria_mbd')
-    .select('entrega_doc, monto, nro_factura_doc')
+    .select('entrega_doc, monto, nro_factura_doc, tipo_doc')
     .eq('empresa_id', empresa_activa.id)
     .gte('fecha_deposito', `${yyyy}-${mm}-01`)
     .lte('fecha_deposito', fin);
@@ -1817,15 +1817,35 @@ async function _conValidar(filas, { emitN, obsN, pendN, totalN }) {
       msg: `🔴 ${pendN} pendiente${pendN > 1 ? 's' : ''} (${Math.round(pendN / totalN * 100)}%)` });
   }
 
-  // 4. Comprobantes duplicados
+  // 4. Mismo N° de comprobante en varios movimientos EMITIDO — puede ser un
+  //    pago dividido legítimo (regla N:M, ver _conCobertura) o un error real
+  //    (dos movimientos distintos enganchados al mismo N° por error). Aquí
+  //    solo se avisa para revisar — el análisis real (¿la suma excede el
+  //    total del comprobante?) está en "⚖️ Descuadres de vínculo". Se agrupa
+  //    por tipo_doc + N° (no solo N°, para no mezclar Compra/Venta/RH que
+  //    coincidan en el mismo número), y el UUID de RH se resuelve a su N°
+  //    legible antes de mostrarlo — nunca un id crudo en pantalla.
   if (emitN >= 2) {
-    const conteo = {};
+    const porClave = {};
     filas.filter(r => r.entrega_doc === 'EMITIDO' && r.nro_factura_doc)
-         .forEach(r => { conteo[r.nro_factura_doc] = (conteo[r.nro_factura_doc] || 0) + 1; });
-    const dups = Object.entries(conteo).filter(([, c]) => c > 1).map(([n]) => n);
-    if (dups.length) {
+         .forEach(r => {
+           const k = `${r.tipo_doc || ''}|${r.nro_factura_doc}`;
+           (porClave[k] = porClave[k] || []).push(r);
+         });
+    const gruposRepetidos = Object.entries(porClave).filter(([, rs]) => rs.length > 1);
+    if (gruposRepetidos.length) {
+      const idsRH = gruposRepetidos.filter(([k]) => k.startsWith('RH|')).map(([k]) => k.split('|')[1]);
+      let nombresRH = {};
+      if (idsRH.length) {
+        const { data: rhRows } = await _supabase.from('rh_registros').select('id,numero_rh').in('id', idsRH);
+        (rhRows || []).forEach(r => { nombresRH[r.id] = r.numero_rh || r.id.slice(0, 8); });
+      }
+      const etiquetas = gruposRepetidos.map(([k]) => {
+        const [tipo, nDoc] = k.split('|');
+        return tipo === 'RH' ? escapar(nombresRH[nDoc] || nDoc.slice(0, 8)) : escapar(nDoc);
+      });
       chips.push({ solid: '#7c3aed',
-        msg: `❌ Duplicados: ${dups.slice(0, 3).join(', ')}${dups.length > 3 ? '…' : ''}` });
+        msg: `⚠ ${etiquetas.length} comprobante(s) con varios movimientos: ${etiquetas.slice(0, 3).join(', ')}${etiquetas.length > 3 ? '…' : ''} — revisar en ⚖️ Descuadres de vínculo` });
     }
   }
 

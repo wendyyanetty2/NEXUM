@@ -106,12 +106,20 @@ function _conAlertaBloqueo(mensaje) {
   });
 }
 
+// ── Tolerancia de coincidencia para candidatos POSIBLE (Wendy, regla de
+//    negocio 2026-09-17): lo ideal es monto exacto (o suma exacta, N:M);
+//    si se permite aproximado, la diferencia máxima es ±S/3 fijo — NO un
+//    porcentaje del total. Un solo valor para toda la búsqueda de
+//    candidatos (🔗/POSIBLE), tanto en Compras/Ventas como en el ícono 🔗.
+const _CON_MARGEN_POSIBLE = 3;
+
 // ── Modelo de 5 estados visibles en Compras/Ventas (Wendy, 2026-09-17):
 //    PENDIENTE, POSIBLE, PARCIAL, EXCESIVO, APLICADO — mismo criterio de
 //    color/palabra en toda la UI (compartido entre con-compras.js y
-//    con-ventas.js). "POSIBLE" usa el MISMO margen (5%/S/5 mínimo) que ya
-//    usa el ícono 🔗 al buscar candidatos — no es un mecanismo nuevo, es
-//    "hay al menos un movimiento bancario sin vincular que calza".
+//    con-ventas.js). "POSIBLE" usa el margen fijo de ±S/3 (_CON_MARGEN_
+//    POSIBLE) que también usa el ícono 🔗 al buscar candidatos — no es un
+//    mecanismo nuevo, es "hay al menos un movimiento bancario sin vincular
+//    que calza".
 const _CON_ESTADO5_COLOR = { PENDIENTE: '#C53030', POSIBLE: '#D69E2E', PARCIAL: '#DD6B20', EXCESIVO: '#9B2C2C', APLICADO: '#2F855A' };
 const _CON_ESTADO5_ICONO = { PENDIENTE: '🔴', POSIBLE: '🟡', PARCIAL: '🔶', EXCESIVO: '🔺', APLICADO: '✅' };
 function _conEstado5(cov, esPosible) {
@@ -132,15 +140,16 @@ function _conCoincideFiltroEstado(estado5, filtro) {
 }
 
 // ── Busca movimientos SIN vincular (entrega_doc != EMITIDO) cuyo monto cae
-//    dentro del margen normal (5%/S/5 mínimo) del total de un comprobante —
-//    usado por el ícono 🔗. Corrige un bug real: en tesoreria_mbd los CARGOS
-//    (compras/egresos) se guardan con monto NEGATIVO (ver tes-importar.js:267
-//    y el filtro de naturaleza en tes-movimientos.js:221), así que comparar
-//    el monto crudo contra un rango [total-margen, total+margen] siempre
-//    positivo nunca encontraba compras reales — solo por casualidad podía
-//    matchear ventas (abonos, positivos). Se compara por valor absoluto.
+//    dentro del margen ±S/3 (_CON_MARGEN_POSIBLE) del total de un
+//    comprobante — usado por el ícono 🔗. Corrige un bug real: en
+//    tesoreria_mbd los CARGOS (compras/egresos) se guardan con monto
+//    NEGATIVO (ver tes-importar.js:267 y el filtro de naturaleza en
+//    tes-movimientos.js:221), así que comparar el monto crudo contra un
+//    rango [total-margen, total+margen] siempre positivo nunca encontraba
+//    compras reales — solo por casualidad podía matchear ventas (abonos,
+//    positivos). Se compara por valor absoluto.
 async function _conBuscarCandidatosPorMonto(empresaId, total, limite = 30) {
-  const margen = Math.max((Number(total)||0) * 0.05, 5);
+  const margen = _CON_MARGEN_POSIBLE;
   const { data } = await _supabase.from('tesoreria_mbd').select('*')
     .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO')
     .order('fecha_deposito', { ascending: false }).limit(500);
@@ -163,7 +172,7 @@ async function _conCandidatosMontoDisponibles(empresaId) {
   return (data || []).map(m => Math.abs(Number(m.monto) || 0));
 }
 function _conHayCandidato(montos, total) {
-  const margen = Math.max((Number(total)||0) * 0.05, 5);
+  const margen = _CON_MARGEN_POSIBLE;
   return montos.some(m => m >= total - margen && m <= total + margen);
 }
 

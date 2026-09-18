@@ -290,9 +290,11 @@ function _renderRHRTabla() {
     `;
   }
 
-  // Filtrar por estado si aplica (sobre lo ya filtrado por búsqueda)
+  // Filtrar por estado si aplica (sobre lo ya filtrado por búsqueda).
+  // PENDIENTE incluye POSIBLE (auditoría 2026-09-17, regla 3.3 — confirmado
+  // por Wendy que aplica igual en RH que en Compras/Ventas).
   const filasFiltradas = filtroEstado
-    ? filasBuscadas.filter(r => estadosMap[r.id]?.estado === filtroEstado)
+    ? filasBuscadas.filter(r => _conCoincideFiltroEstado(estadosMap[r.id]?.estado, filtroEstado))
     : filasBuscadas;
 
   const totalBruto  = filasFiltradas.reduce((s,r) => s + Number(r.monto_bruto||0), 0);
