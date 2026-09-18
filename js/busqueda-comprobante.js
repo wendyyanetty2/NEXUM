@@ -737,6 +737,9 @@ async function _bmDesvincularmovLink(movId, nDoc, docTipo) {
   if (typeof cargarCompras     === 'function') cargarCompras();
   if (typeof cargarVentas      === 'function') cargarVentas();
   if (typeof _concCargarDatos  === 'function') _concCargarDatos();
+  // Tesorería > Movimientos también muestra este comprobante (columna N° Factura/DOC)
+  // — sin este refresco quedaba mostrando el valor viejo hasta cerrar y reabrir el módulo.
+  if (typeof cargarMovimientos === 'function') cargarMovimientos(true);
 }
 
 // ── Helpers de fecha ──────────────────────────────────────────────
