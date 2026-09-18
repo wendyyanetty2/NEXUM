@@ -285,9 +285,15 @@ function _dupRenderReporte(grupos, tituloTipo, nombreFnAbrir, criterioTxt) {
    siempre es porque un movimiento de OTRO comprobante quedó
    enganchado por error (mismo N° tecleado o elegido por error en la
    búsqueda manual). La clave es el N° de comprobante + tipo_doc —
-   NO el proveedor, porque el nombre puede venir escrito distinto
+   NO el nombre del proveedor, porque puede venir escrito distinto
    entre el banco y el comprobante (Wendy: "la clave está en el
-   número de comprobante"). Cubre Compras, Ventas y RH.
+   número de comprobante"). SÍ se usa el RUC como desempate (Wendy,
+   2026-09-18): dos proveedores distintos pueden compartir serie-número
+   (ej. dos Compras "E001-40" de RUCs distintos) — si ambos lados
+   (comprobante y movimiento bancario) tienen RUC y son distintos, ese
+   movimiento no se cuenta para ese comprobante. Si falta el RUC en
+   cualquiera de los dos lados, nunca bloquea — el banco no siempre
+   trae RUC. Cubre Compras, Ventas y RH.
    Solo lectura — no modifica ni desvincula nada automáticamente.
    ============================================================ */
 function _dupClaveDoc(r) { return [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-'); }
@@ -297,12 +303,26 @@ async function _dupDescuadresVinculacion() {
   const empId = empresa_activa.id;
 
   const [{ data: compras }, { data: ventas }, { data: rh }, { data: movs }] = await Promise.all([
-    _supabase.from('contabilidad_compras').select('id,serie_cdp,nro_cp_inicial,proveedor,total_cp').eq('empresa_id', empId),
-    _supabase.from('contabilidad_ventas').select('id,serie_cdp,nro_cp_inicial,cliente,total_cp').eq('empresa_id', empId),
+    _supabase.from('contabilidad_compras').select('id,serie_cdp,nro_cp_inicial,proveedor,nro_doc_identidad,total_cp').eq('empresa_id', empId),
+    _supabase.from('contabilidad_ventas').select('id,serie_cdp,nro_cp_inicial,cliente,nro_doc_identidad,total_cp').eq('empresa_id', empId),
     _supabase.from('rh_registros').select('id,numero_rh,monto_neto,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId),
-    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,tipo_doc,nro_factura_doc,proveedor_empresa_personal,entrega_doc')
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,tipo_doc,nro_factura_doc,proveedor_empresa_personal,ruc_dni,entrega_doc')
       .eq('empresa_id', empId).not('nro_factura_doc', 'is', null).in('tipo_doc', ['COMPRA', 'VENTA', 'RH']),
   ]);
+
+  // RUC normalizado (solo dígitos) para descartar cruces falsos: dos proveedores
+  // distintos pueden emitir la misma serie-número (ej. dos Compras "E001-40" de
+  // RUCs distintos) — el tipo_doc ya separa RH de Factura, esto separa además por
+  // emisor. Si falta el RUC en cualquiera de los dos lados NO se descarta el match
+  // (el banco no siempre trae RUC) — solo se descarta cuando AMBOS lo tienen y son
+  // distintos (pedido de Wendy, 2026-09-18, confirmado: RUC nunca bloquea, solo
+  // desempata cuando hay dato en ambos lados).
+  const _rucNorm = v => (v || '').toString().replace(/\D/g, '');
+  const _rucCompatible = (a, b) => {
+    const na = _rucNorm(a), nb = _rucNorm(b);
+    if (!na || !nb) return true;
+    return na === nb;
+  };
 
   const movsPorClave = new Map(); // _conClaveDoc(tipo_doc, nro_factura_doc) → [movs]
   (movs || []).forEach(m => {
@@ -318,11 +338,13 @@ async function _dupDescuadresVinculacion() {
   // mostrarFn: qué N° mostrar en el reporte — puede ser distinto de claveFn (que sirve
   // solo para EMPAREJAR contra tesoreria_mbd). Nunca se muestra un UUID crudo en pantalla
   // (fix 2026-09-18: RH mostraba el UUID interno en vez de "E001-23" en este reporte).
-  const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn, mostrarFn) => {
+  const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn, mostrarFn, rucFn) => {
     (comprobantes || []).forEach(c => {
       const clave = claveFn(c);
       if (!clave) return;
-      const lista = movsPorClave.get(_conClaveDoc(tipoDoc, clave)) || [];
+      const rucDoc = rucFn ? rucFn(c) : '';
+      const lista = (movsPorClave.get(_conClaveDoc(tipoDoc, clave)) || [])
+        .filter(m => _rucCompatible(rucDoc, m.ruc_dni));
       if (!lista.length) return;
       const total = totalFn(c);
       if (!total) return;
@@ -333,15 +355,16 @@ async function _dupDescuadresVinculacion() {
     });
   };
 
-  evaluar(compras, 'COMPRA', _dupClaveDoc, c => c.proveedor || '—', c => Number(c.total_cp) || 0);
-  evaluar(ventas,  'VENTA',  _dupClaveDoc, c => c.cliente   || '—', c => Number(c.total_cp) || 0);
+  evaluar(compras, 'COMPRA', _dupClaveDoc, c => c.proveedor || '—', c => Number(c.total_cp) || 0, null, c => c.nro_doc_identidad);
+  evaluar(ventas,  'VENTA',  _dupClaveDoc, c => c.cliente   || '—', c => Number(c.total_cp) || 0, null, c => c.nro_doc_identidad);
   // RH: nro_factura_doc puede ser el UUID (vínculo manual 🔍/📂) o el N° de RH legible
   // (carga por Excel/Importar MBD) — se evalúan ambas claves, igual criterio que _bmCargarLinks.
   // En pantalla SIEMPRE se muestra el N° de RH legible (nunca el UUID), igual que en el
   // resto del sistema (tes-movimientos.js, historico.js, con-conciliar.js).
   const _rhMostrar = c => c.numero_rh || `RH sin N° · ${(c.id || '').slice(0, 8)}`;
-  evaluar(rh, 'RH', c => c.id,        c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar);
-  evaluar(rh, 'RH', c => c.numero_rh, c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar);
+  const _rhRuc = c => c.prestadores_servicios?.dni;
+  evaluar(rh, 'RH', c => c.id,        c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar, _rhRuc);
+  evaluar(rh, 'RH', c => c.numero_rh, c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar, _rhRuc);
 
   // Un mismo RH puede calzar por las dos claves a la vez — no listarlo dos veces.
   const vistos = new Set();
