@@ -179,9 +179,9 @@ function _conCoincideFiltroEstado(estado5, filtro) {
   return estado5 === filtro;
 }
 
-// ── Busca movimientos SIN vincular (entrega_doc != EMITIDO) cuyo monto cae
+// ── Busca movimientos SIN vincular (nro_factura_doc vacío) cuyo monto cae
 //    dentro del margen ±S/3 (_CON_MARGEN_POSIBLE) del total de un
-//    comprobante — usado por el ícono 🔗. Corrige DOS bugs reales:
+//    comprobante — usado por el ícono 🔗. Corrige TRES bugs reales:
 //    (1) en tesoreria_mbd los CARGOS (compras/egresos) se guardan con
 //    monto NEGATIVO (ver tes-importar.js:267 y el filtro de naturaleza en
 //    tes-movimientos.js:221), así que comparar el monto crudo contra un
@@ -193,12 +193,20 @@ function _conCoincideFiltroEstado(estado5, filtro) {
 //    resultados" mientras el badge POSIBLE (que sí revisa hasta 5000)
 //    decía que había uno — corregido filtrando el monto EN LA BASE DE
 //    DATOS (ambos signos), sin depender de qué tan reciente sea la fecha.
+//    (3) reporte de Wendy 2026-09-18: "ya están aplicadas pero aparecen
+//    como posible" — un movimiento OBSERVADO SIEMPRE tiene nro_factura_doc
+//    (ver _conEvalCompletitud14: sin N° Factura el estado es PENDIENTE, no
+//    OBSERVADO), o sea que ya está vinculado a ALGÚN comprobante. Filtrar
+//    solo por entrega_doc != EMITIDO lo ofrecía igual como "candidato
+//    disponible" para CUALQUIER otro comprobante con monto parecido —
+//    tanto en el ícono 🔗 como en el badge POSIBLE. Ahora se exige además
+//    nro_factura_doc vacío (el único caso realmente "sin vincular").
 async function _conBuscarCandidatosPorMonto(empresaId, total, limite = 30) {
   const margen = _CON_MARGEN_POSIBLE;
   const t = Number(total) || 0;
   const lo = t - margen, hi = t + margen;
   const { data } = await _supabase.from('tesoreria_mbd').select('*')
-    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO')
+    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO').is('nro_factura_doc', null)
     .or(`and(monto.gte.${lo},monto.lte.${hi}),and(monto.gte.${-hi},monto.lte.${-lo})`)
     .order('fecha_deposito', { ascending: false }).limit(200);
 
@@ -207,15 +215,18 @@ async function _conBuscarCandidatosPorMonto(empresaId, total, limite = 30) {
     .slice(0, limite);
 }
 
-// ── Trae los montos de movimientos SIN vincular (entrega_doc != EMITIDO) de
+// ── Trae los montos de movimientos SIN vincular (nro_factura_doc vacío) de
 //    la empresa, para marcar como POSIBLE cualquier PENDIENTE que tenga al
 //    menos un candidato dentro del margen — reutilizado por Compras y Ventas.
 //    Sin límite artificial (antes 3000): con la corrección de arriba, este
 //    y _conBuscarCandidatosPorMonto deben ver exactamente el mismo universo
 //    de movimientos, para que POSIBLE y el modal 🔗 nunca se contradigan.
+//    nro_factura_doc vacío (no solo entrega_doc != EMITIDO) — ver comentario
+//    en _conBuscarCandidatosPorMonto: un OBSERVADO ya está vinculado a algún
+//    comprobante y no es un candidato real para otro.
 async function _conCandidatosMontoDisponibles(empresaId) {
   const { data } = await _supabase.from('tesoreria_mbd').select('monto')
-    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO');
+    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO').is('nro_factura_doc', null);
   return (data || []).map(m => Math.abs(Number(m.monto) || 0));
 }
 function _conHayCandidato(montos, total) {

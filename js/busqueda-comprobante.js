@@ -486,12 +486,21 @@ async function _bmEjecutarBusquedaMov(overlay, docTipo, docId, nDoc, proveedor =
 
   resEl.innerHTML = '<div style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div></div>';
 
-  // Buscar en tesoreria_mbd (tabla principal de movimientos banco)
+  // Buscar en tesoreria_mbd (tabla principal de movimientos banco) — SOLO
+  // movimientos realmente libres (nro_factura_doc vacío). Antes filtraba por
+  // entrega_doc IN (PENDIENTE, OBSERVADO), pero OBSERVADO SIEMPRE significa
+  // que el movimiento ya tiene un comprobante vinculado (ver
+  // _conEvalCompletitud14 en consolidacion-estados.js: sin N° Factura el
+  // estado es PENDIENTE, nunca OBSERVADO) — por eso un movimiento ya
+  // vinculado a ESTE mismo comprobante (visible arriba en "ya vinculadas")
+  // volvía a aparecer aquí abajo como "pendiente" y se podía re-vincular a
+  // otro comprobante distinto, robándoselo al primero (reporte de Wendy
+  // 2026-09-18: estados que decían POSIBLE estando ya aplicados).
   let q = _supabase
     .from('tesoreria_mbd')
     .select('id,nro_operacion_bancaria,fecha_deposito,descripcion,proveedor_empresa_personal,monto,moneda,entrega_doc')
     .eq('empresa_id', empresa_activa.id)
-    .in('entrega_doc', ['PENDIENTE', 'OBSERVADO'])
+    .is('nro_factura_doc', null)
     .order('fecha_deposito', { ascending: false });
 
   if (desde) q = q.gte('fecha_deposito', desde);

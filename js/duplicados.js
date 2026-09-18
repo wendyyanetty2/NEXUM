@@ -439,6 +439,129 @@ function _dupRenderDescuadres(descuadres) {
 }
 
 /* ============================================================
+   N° de comprobante compartido entre EMISORES distintos
+   (pedido por Wendy, 2026-09-18): "muchos de los comprobantes que
+   son facturas y RH pueden ser el mismo dígito pero en realidad son
+   diferentes emisores y proveedores". Eso es NORMAL — cada emisor
+   numera su propia serie — y el sistema ya lo distingue al vincular
+   (_conFiltrarPorEmisor / _rucCompatible arriba: RUC como desempate,
+   nunca bloqueante, y si falta en algún lado no descarta nada). Pero
+   si falta el RUC en Compras/Ventas/RH Y en el movimiento bancario a
+   la vez, el emparejamiento automático no tiene con qué desempatar.
+   Este reporte de SOLO LECTURA lista esos N° repetidos entre emisores
+   distintos para que Wendy los revise manualmente — no vincula, no
+   desvincula, no corrige nada por sí solo.
+   ============================================================ */
+async function _dupNumerosCompartidosEntreEmisores() {
+  mostrarToast('Buscando N° de comprobante compartidos entre emisores distintos…', 'atencion');
+  const empId = empresa_activa.id;
+
+  const [{ data: compras }, { data: ventas }, { data: rh }] = await Promise.all([
+    _supabase.from('contabilidad_compras').select('id,serie_cdp,nro_cp_inicial,proveedor,nro_doc_identidad,total_cp,periodo').eq('empresa_id', empId),
+    _supabase.from('contabilidad_ventas').select('id,serie_cdp,nro_cp_inicial,cliente,nro_doc_identidad,total_cp,periodo').eq('empresa_id', empId),
+    _supabase.from('rh_registros').select('id,numero_rh,monto_neto,periodo,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId),
+  ]);
+
+  const _rucNorm = v => (v || '').toString().replace(/\D/g, '');
+
+  // Agrupa filas por N° de comprobante y, dentro de cada N°, por emisor
+  // (RUC normalizado si existe; si no, nombre normalizado vía _tercNombreNorm,
+  // la misma función que usa el resto del sistema para comparar proveedores).
+  const agrupar = (filas, tipoDoc, claveFn, nombreFn, rucFn, totalFn, periodoFn) => {
+    const porClave = new Map();
+    (filas || []).forEach(r => {
+      const clave = claveFn(r);
+      if (!clave) return;
+      if (!porClave.has(clave)) porClave.set(clave, []);
+      porClave.get(clave).push(r);
+    });
+    const resultado = [];
+    porClave.forEach((filasClave, clave) => {
+      if (filasClave.length < 2) return; // sin repetición, nada que reportar
+      const porEmisor = new Map();
+      filasClave.forEach(r => {
+        const nombre = (nombreFn(r) || '').trim();
+        const ruc    = (rucFn(r) || '').trim();
+        const key    = _rucNorm(ruc) || (typeof _tercNombreNorm === 'function' ? _tercNombreNorm(nombre) : nombre.toUpperCase());
+        if (!key) return;
+        if (!porEmisor.has(key)) porEmisor.set(key, { nombre, ruc, filas: [] });
+        porEmisor.get(key).filas.push(r);
+      });
+      // Solo interesa cuando hay 2+ emisores DISTINTOS compartiendo el N° —
+      // si todo cayó bajo la misma clave de emisor, es el mismo proveedor repetido.
+      if (porEmisor.size > 1) {
+        resultado.push({
+          tipoDoc, clave,
+          emisores: [...porEmisor.values()].map(e => ({
+            nombre: e.nombre, ruc: e.ruc,
+            total: e.filas.reduce((s, r) => s + (totalFn(r) || 0), 0),
+            periodos: [...new Set(e.filas.map(periodoFn).filter(Boolean))],
+          })),
+        });
+      }
+    });
+    return resultado;
+  };
+
+  const dupCompras = agrupar(compras, 'COMPRA', c => _dupClaveDoc(c), c => c.proveedor, c => c.nro_doc_identidad, c => Number(c.total_cp) || 0, c => c.periodo);
+  const dupVentas  = agrupar(ventas,  'VENTA',  c => _dupClaveDoc(c), c => c.cliente,   c => c.nro_doc_identidad, c => Number(c.total_cp) || 0, c => c.periodo);
+  const dupRH      = agrupar(rh,      'RH',     c => c.numero_rh,    c => c.prestadores_servicios?.nombre, c => c.prestadores_servicios?.dni, c => Number(c.monto_neto) || 0, c => c.periodo);
+
+  _dupRenderNumerosCompartidos([...dupCompras, ...dupVentas, ...dupRH]);
+}
+
+function _dupRenderNumerosCompartidos(casos) {
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+  const tipoLabel = { COMPRA: '🛒 Compra', VENTA: '📄 Venta', RH: '🧾 RH' };
+
+  if (!casos.length) {
+    mc.innerHTML = `
+      <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+        <div class="modal" style="max-width:460px;width:95%;padding:28px;text-align:center">
+          <div style="font-size:36px;margin-bottom:10px">✅</div>
+          <p style="color:var(--color-texto)">No se encontraron N° de comprobante compartidos por emisores o proveedores distintos.</p>
+          <button class="btn btn-secundario" style="margin-top:16px" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:720px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+        <div class="modal-header">
+          <h3>🔀 N° de comprobante compartidos entre emisores — ${casos.length} caso(s)</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:14px">
+            Solo lectura — nada se modifica automáticamente. El mismo N° de comprobante/RH aparece en más de un proveedor o prestador
+            distinto (cada uno numera su propia serie — es normal). El sistema ya distingue por RUC/nombre al vincular movimientos
+            bancarios, pero si falta el RUC en algún lado el emparejamiento automático no tiene con qué desempatar — revisa estos
+            casos con más cuidado.
+          </p>
+          ${casos.map(d => `
+            <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+              <div style="font-weight:700;margin-bottom:8px">${tipoLabel[d.tipoDoc]||d.tipoDoc} — <span style="color:var(--color-secundario)">${escapar(d.clave)}</span></div>
+              ${d.emisores.map(e => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--color-borde);font-size:12px">
+                  <span>${escapar(e.nombre||'—')}
+                    ${e.ruc ? `<span style="font-family:monospace;color:var(--color-texto-suave);margin-left:6px">${escapar(e.ruc)}</span>` : `<span style="color:#D69E2E;margin-left:6px">⚠️ sin RUC/DNI</span>`}
+                    ${e.periodos.length ? `<span style="color:var(--color-texto-suave);margin-left:6px">${e.periodos.join(', ')}</span>` : ''}
+                  </span>
+                  <strong>${formatearMoneda(e.total)}</strong>
+                </div>`).join('')}
+            </div>`).join('')}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ============================================================
    Motor de coincidencia MBD ↔ EECC (punto 6, acordado con Wendy)
 
    Al importar por "Importar MBD" (últimos 20 movimientos) o por
