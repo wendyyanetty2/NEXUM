@@ -17,13 +17,11 @@
 function _conCobertura(movsVinculados, totalComprobante) {
   const suma  = (movsVinculados || []).reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
   const total = Number(totalComprobante) || 0;
-  // Margen de referencia configurable por empresa (Wendy, 2026-09-18: S/3 por
-  // defecto, editable solo por el administrador en Administración > Empresas).
-  // Diferencias dentro de este margen — de más o de menos — se consideran
-  // cubiertas; por encima, se bloquea el vínculo (ver _conValidarAntesDeVincular,
-  // misma regla, un solo lugar — auditoría 2026-09-18).
-  const TOL   = (typeof empresa_activa !== 'undefined' && empresa_activa?.margen_conciliacion != null && empresa_activa.margen_conciliacion >= 0)
-    ? Number(empresa_activa.margen_conciliacion) : 3;
+  // TOL fijo de redondeo (NO el margen de referencia de S/3 — ese solo decide
+  // si SE BLOQUEA el vínculo o se pregunta, ver _conValidarAntesDeVincular; el
+  // badge EXCESIVO/PARCIAL debe seguir siendo exacto, corregido tras reporte de
+  // Wendy 2026-09-18: "ahí debería decir EXCESIVO porque pasó del monto exacto").
+  const TOL   = 0.01;
   const round = n => Math.round(n * 100) / 100;
 
   if (!movsVinculados?.length || suma <= TOL) {
@@ -45,20 +43,25 @@ function _conCobertura(movsVinculados, totalComprobante) {
   };
 }
 
-// ── Validación de duplicados/descuadres ANTES de vincular — bloqueante
+// ── Validación de duplicados/descuadres ANTES de vincular
 //    (Wendy, 2026-09-17; corregido en auditoría 2026-09-17 sección 6).
 //    La clave de un comprobante es su N° (nro_factura_doc) + tipo_doc —
 //    NO el nombre del proveedor, porque puede venir escrito distinto
 //    entre el banco y el comprobante. Antes de grabar un nuevo vínculo
 //    se recalcula cuánto suman TODOS los movimientos que ya apuntan a
-//    ese mismo N° de comprobante y se reutiliza _conCobertura (mismo
-//    margen configurable por empresa, ver empresa_activa.margen_conciliacion,
-//    que ya decide el badge EXCESIVO) para decidir si hay exceso — UNA
-//    sola regla para la misma decisión, no dos. Antes esta función usaba
-//    su propio margen (5%/S/5), lo que abría una ventana donde el badge
-//    ya decía EXCESIVO pero el sistema todavía dejaba vincular más —
-//    corregido tras la auditoría del documento
-//    "NEXUM_Auditoria_y_Mejora_Conciliacion".
+//    ese mismo N° de comprobante y se reutiliza _conCobertura (el
+//    badge EXCESIVO/PARCIAL sigue siendo exacto, TOL=0.01 — el exceso
+//    real (cov.excede) es lo que se compara contra el margen de
+//    referencia configurable por empresa (empresa_activa.margen_conciliacion,
+//    S/3 por defecto, editable solo por el administrador):
+//      - exceso > margen  → BLOQUEA (aviso de un solo botón, no se puede seguir).
+//      - exceso ≤ margen  → NO bloquea, pero pregunta (Wendy decide si procede
+//        cada vez — "está en mí como administrador si procedo o no", 2026-09-18).
+//      - sin exceso       → sigue igual que siempre, sin preguntar nada.
+//    Antes esta función usaba su propio margen (5%/S/5) para la decisión de
+//    bloqueo, lo que abría una ventana donde el badge ya decía EXCESIVO pero
+//    el sistema todavía dejaba vincular más — corregido tras la auditoría del
+//    documento "NEXUM_Auditoria_y_Mejora_Conciliacion".
 async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, totalComprobante, movIdExcluir, montoNuevo) {
   const total = Number(totalComprobante) || 0;
   if (!nroFacturaDoc || !total) return { ok: true };
@@ -76,18 +79,33 @@ async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, tot
   const cov      = _conCobertura([...lista, { monto: montoAbs, entrega_doc: 'OBSERVADO' }], total);
 
   if (cov.estado === 'PARCIAL' && cov.excede) {
+    const margen = (typeof empresa_activa !== 'undefined' && empresa_activa?.margen_conciliacion != null && empresa_activa.margen_conciliacion >= 0)
+      ? Number(empresa_activa.margen_conciliacion) : 3;
     const sumaPrevia = cov.suma - montoAbs;
     const detalle = lista.map(m =>
       `• Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.proveedor_empresa_personal || '—')}`
     ).join('\n');
-    return {
-      ok: false, lista, sumaPrevia, sumaNueva: cov.suma, total, excede: cov.excede,
-      mensaje: `⛔ No se puede vincular.\n\n`
-        + `El comprobante "${escapar(nroFacturaDoc)}" ya tiene ${lista.length} movimiento(s) bancario(s) vinculado(s) que suman ${formatearMoneda(sumaPrevia)}.\n`
-        + `Agregar este movimiento (${formatearMoneda(montoAbs)}) llevaría el total vinculado a ${formatearMoneda(cov.suma)}, que excede el total del comprobante (${formatearMoneda(total)}) por ${formatearMoneda(cov.excede)}.\n`
-        + (detalle ? `\nMovimiento(s) ya vinculado(s) a este comprobante:\n${detalle}\n` : '')
-        + `\nSi este movimiento en realidad pertenece a otro comprobante, revisa el N° antes de continuar. Si el vínculo anterior está mal, desvincúlalo primero.`,
-    };
+
+    if (cov.excede > margen) {
+      return {
+        ok: false, lista, sumaPrevia, sumaNueva: cov.suma, total, excede: cov.excede,
+        mensaje: `⛔ No se puede vincular.\n\n`
+          + `El comprobante "${escapar(nroFacturaDoc)}" ya tiene ${lista.length} movimiento(s) bancario(s) vinculado(s) que suman ${formatearMoneda(sumaPrevia)}.\n`
+          + `Agregar este movimiento (${formatearMoneda(montoAbs)}) llevaría el total vinculado a ${formatearMoneda(cov.suma)}, que excede el total del comprobante (${formatearMoneda(total)}) por ${formatearMoneda(cov.excede)} — más del margen de referencia (${formatearMoneda(margen)}).\n`
+          + (detalle ? `\nMovimiento(s) ya vinculado(s) a este comprobante:\n${detalle}\n` : '')
+          + `\nSi este movimiento en realidad pertenece a otro comprobante, revisa el N° antes de continuar. Si el vínculo anterior está mal, desvincúlalo primero.`,
+      };
+    }
+
+    // Dentro del margen de referencia: no bloquea — pero tampoco pasa en
+    // silencio. El administrador decide cada vez si procede.
+    const procede = await confirmar(
+      `⚠️ Este comprobante quedará marcado EXCESIVO por ${formatearMoneda(cov.excede)} (dentro del margen de referencia de ${formatearMoneda(margen)}).\n\n`
+      + `El comprobante "${escapar(nroFacturaDoc)}" ya tiene ${lista.length} movimiento(s) que suman ${formatearMoneda(sumaPrevia)}. Agregar este movimiento (${formatearMoneda(montoAbs)}) llevaría el total a ${formatearMoneda(cov.suma)}, sobre el total del comprobante (${formatearMoneda(total)}).\n\n`
+      + `¿Deseas vincularlo de todas formas?`,
+      { btnOk: 'Sí, vincular de todas formas', btnColor: '#DD6B20' }
+    );
+    return { ok: procede };
   }
   return { ok: true };
 }
