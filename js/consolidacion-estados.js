@@ -151,34 +151,41 @@ function _conCoincideFiltroEstado(estado5, filtro) {
 
 // ── Busca movimientos SIN vincular (entrega_doc != EMITIDO) cuyo monto cae
 //    dentro del margen ±S/3 (_CON_MARGEN_POSIBLE) del total de un
-//    comprobante — usado por el ícono 🔗. Corrige un bug real: en
-//    tesoreria_mbd los CARGOS (compras/egresos) se guardan con monto
-//    NEGATIVO (ver tes-importar.js:267 y el filtro de naturaleza en
+//    comprobante — usado por el ícono 🔗. Corrige DOS bugs reales:
+//    (1) en tesoreria_mbd los CARGOS (compras/egresos) se guardan con
+//    monto NEGATIVO (ver tes-importar.js:267 y el filtro de naturaleza en
 //    tes-movimientos.js:221), así que comparar el monto crudo contra un
-//    rango [total-margen, total+margen] siempre positivo nunca encontraba
-//    compras reales — solo por casualidad podía matchear ventas (abonos,
-//    positivos). Se compara por valor absoluto.
+//    rango siempre positivo nunca encontraba compras reales — se compara
+//    por valor absoluto. (2) el filtro de monto se aplicaba EN EL CLIENTE
+//    después de traer solo los 500 movimientos más recientes — en una
+//    empresa con mucho historial, el candidato real podía no estar entre
+//    esos 500 aunque sí calzara en monto, y el modal decía "sin
+//    resultados" mientras el badge POSIBLE (que sí revisa hasta 5000)
+//    decía que había uno — corregido filtrando el monto EN LA BASE DE
+//    DATOS (ambos signos), sin depender de qué tan reciente sea la fecha.
 async function _conBuscarCandidatosPorMonto(empresaId, total, limite = 30) {
   const margen = _CON_MARGEN_POSIBLE;
+  const t = Number(total) || 0;
+  const lo = t - margen, hi = t + margen;
   const { data } = await _supabase.from('tesoreria_mbd').select('*')
     .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO')
-    .order('fecha_deposito', { ascending: false }).limit(500);
+    .or(`and(monto.gte.${lo},monto.lte.${hi}),and(monto.gte.${-hi},monto.lte.${-lo})`)
+    .order('fecha_deposito', { ascending: false }).limit(200);
 
   return (data || [])
-    .filter(m => {
-      const abs = Math.abs(Number(m.monto) || 0);
-      return abs >= total - margen && abs <= total + margen;
-    })
-    .sort((a, b) => Math.abs(Math.abs(Number(a.monto)) - total) - Math.abs(Math.abs(Number(b.monto)) - total))
+    .sort((a, b) => Math.abs(Math.abs(Number(a.monto)) - t) - Math.abs(Math.abs(Number(b.monto)) - t))
     .slice(0, limite);
 }
 
 // ── Trae los montos de movimientos SIN vincular (entrega_doc != EMITIDO) de
 //    la empresa, para marcar como POSIBLE cualquier PENDIENTE que tenga al
 //    menos un candidato dentro del margen — reutilizado por Compras y Ventas.
+//    Sin límite artificial (antes 3000): con la corrección de arriba, este
+//    y _conBuscarCandidatosPorMonto deben ver exactamente el mismo universo
+//    de movimientos, para que POSIBLE y el modal 🔗 nunca se contradigan.
 async function _conCandidatosMontoDisponibles(empresaId) {
   const { data } = await _supabase.from('tesoreria_mbd').select('monto')
-    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO').limit(3000);
+    .eq('empresa_id', empresaId).neq('entrega_doc', 'EMITIDO');
   return (data || []).map(m => Math.abs(Number(m.monto) || 0));
 }
 function _conHayCandidato(montos, total) {

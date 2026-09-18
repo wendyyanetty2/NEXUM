@@ -248,16 +248,18 @@ async function _renderComprasFiltradas() {
         ${filasVista.map(({ r, cov, estado5 }) => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
           const conciliarArgs = `'${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}'`;
-          const onclickBanco = estado5 === 'APLICADO'
-            ? `_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')`
-            : `_conciliarCompraIndividual(${conciliarArgs})`;
-          const tituloBanco = estado5 === 'APLICADO' ? 'Click para ver con qué movimiento(s) bancario(s) está vinculado'
-            : estado5 === 'EXCESIVO'  ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Click para revisar y desvincular el que sobra.`
-            : estado5 === 'PARCIAL'   ? `Parcial: ${formatearMoneda(cov.suma)} de ${formatearMoneda(cov.total)} vinculado, falta ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`
-            : estado5 === 'POSIBLE'   ? 'Hay un movimiento bancario sin vincular con un monto parecido — click para revisar y confirmar.'
-            : 'Click para conciliar con banco';
-          const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap"
-               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
+          // Wendy, 2026-09-18: el badge y el ícono 🔗 de Acc. hacían lo mismo —
+          // solo APLICADO conserva su clic (ver vínculo), el resto de estados
+          // es una etiqueta fija; 🔗 en Acciones es el único disparador de
+          // "conciliar con banco" para evitar el botón duplicado.
+          const esAplicado = estado5 === 'APLICADO';
+          const tituloBanco = esAplicado ? 'Click para ver con qué movimiento(s) bancario(s) está vinculado'
+            : estado5 === 'EXCESIVO'  ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Usa 🔗 para revisar y desvincular el que sobra.`
+            : estado5 === 'PARCIAL'   ? `Parcial: ${formatearMoneda(cov.suma)} de ${formatearMoneda(cov.total)} vinculado, falta ${formatearMoneda(cov.falta)}. Usa 🔗 para vincular más movimientos.`
+            : estado5 === 'POSIBLE'   ? 'Hay un movimiento bancario sin vincular con un monto parecido — usa 🔗 para revisar y confirmar.'
+            : 'Usa 🔗 para conciliar con banco';
+          const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap${esAplicado?';cursor:pointer':''}"
+               title="${escapar(tituloBanco)}"${esAplicado ? ` onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')"` : ''}>${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -276,7 +278,7 @@ async function _renderComprasFiltradas() {
             <td style="text-align:center;white-space:nowrap">
               <button class="btn-tabla-accion" onclick="verDetalleCompra('${r.id}')" title="Ver detalle completo" style="background:rgba(74,85,104,.1);color:var(--color-texto-suave)">👁️</button>
               <button class="btn-tabla-accion" onclick="abrirModalCompra('${r.id}')" title="Editar" style="background:rgba(44,82,130,.1);color:var(--color-secundario)">✏️</button>
-              <button class="btn-tabla-accion" onclick="_conciliarCompraIndividual('${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Conciliar con movimiento bancario" style="background:rgba(113,71,224,.1);color:#7147e0">🔗</button>
+              <button class="btn-tabla-accion" onclick="_conciliarCompraIndividual(${conciliarArgs})" title="Conciliar con movimiento bancario" style="background:rgba(113,71,224,.1);color:#7147e0">🔗</button>
               <button class="btn-tabla-accion" onclick="_bmBuscarMov('COMPRA','${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}')" title="Buscar movimiento bancario manualmente" style="background:rgba(85,60,154,.1);color:#553C9A">🔍</button>
               <button class="btn-tabla-accion" onclick="eliminarCompra('${r.id}')" title="Eliminar" style="background:rgba(197,48,48,.1);color:#C53030">🗑️</button>
             </td>

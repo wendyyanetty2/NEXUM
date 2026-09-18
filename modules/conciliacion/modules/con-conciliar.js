@@ -373,6 +373,13 @@ async function _ejecutarConciliacion(periodo) {
   // Sacar de sin_match los que fueron asignados a multi-transfer
   sin_match.splice(0, sin_match.length, ...sin_match.filter(i => !usadosSinMatch.has(i.mov.id)));
 
+  // NOTA (Wendy, 2026-09-18): _buscarComboDocsPorMonto() ya existe (dirección
+  // inversa — 1 movimiento paga varios comprobantes) pero TODAVÍA no está
+  // conectada aquí. Toda la pestaña "Posibles" (render, aprobar, rechazar,
+  // exportar) asume que cada sugerencia tiene UN solo comprobante (item.doc);
+  // conectar esto requiere además una vista/aprobación para "item.docs"
+  // (varios) antes de mostrarlo, para no romper esas pantallas.
+
   // Ordenar: score DESC, fecha ASC
   const byScoreFecha = (a, b) =>
     b.score !== a.score ? b.score - a.score
@@ -492,6 +499,49 @@ function _buscarComboNTransfer(doc, movsList) {
       // Sin límite fijo de diferencia: siempre presentar como POSIBLE MATCH
       if (diff / target < 0.5) {
         return { movs: idxs.map(i => candidatos[i]), suma: sumaAcum, diferencia: sumaAcum - target };
+      }
+      return null;
+    }
+    for (let i = inicio; i <= candidatos.length - n; i++) {
+      const res = combinar(i + 1, n - 1, sumaAcum + montos[i], [...idxs, i]);
+      if (res) return res;
+    }
+    return null;
+  }
+
+  for (let n = 2; n <= MAX_N; n++) {
+    const res = combinar(0, n, 0, []);
+    if (res) return res;
+  }
+  return null;
+}
+
+// ── Wendy, 2026-09-18: dirección inversa de _buscarComboNTransfer — un
+//    movimiento bancario grande puede ser el pago conjunto de VARIOS
+//    comprobantes (Compras/Ventas/RH mezclados), ej. una transferencia que
+//    paga a 3 prestadores de servicio en un solo abono. Busca combinaciones
+//    de 2..6 documentos sin usar cuya suma se acerque al monto del movimiento.
+function _buscarComboDocsPorMonto(mov, docsList) {
+  const target = Math.abs(parseFloat(mov.monto) || 0);
+  if (target <= 0 || docsList.length < 2) return null;
+
+  const conSim = docsList
+    .map(d => ({ d, sim: _simNombre(d._proveedor || '', mov.proveedor_empresa_personal || mov.descripcion || '') }))
+    .sort((a, b) => b.sim - a.sim);
+  const candidatos = conSim.filter(c => c.sim > 0.15).length >= 2
+    ? conSim.filter(c => c.sim > 0.15).slice(0, 15).map(c => c.d)
+    : docsList.slice(0, 15);
+
+  if (candidatos.length < 2) return null;
+
+  const montos = candidatos.map(d => Math.abs(d._total || 0));
+  const MAX_N  = Math.min(candidatos.length, 6);
+
+  function combinar(inicio, n, sumaAcum, idxs) {
+    if (n === 0) {
+      const diff = Math.abs(sumaAcum - target);
+      if (diff / target < 0.5) {
+        return { docs: idxs.map(i => candidatos[i]), suma: sumaAcum, diferencia: sumaAcum - target };
       }
       return null;
     }
