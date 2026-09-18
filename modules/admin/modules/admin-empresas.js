@@ -100,6 +100,11 @@ async function renderTabEmpresas(area) {
                 <option value="false">Inactiva</option>
               </select>
             </div>
+            <div class="campo">
+              <label>Margen aceptado al conciliar (S/)</label>
+              <input type="number" id="emp-margen-conciliacion" step="0.01" min="0" placeholder="3.00">
+              <small style="color:var(--color-texto-suave)">Diferencia (de más o de menos) entre lo vinculado y el total del comprobante que se acepta como referencia antes de bloquear el vínculo. Solo lo edita el administrador.</small>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -237,6 +242,7 @@ function abrirModalEmpresa(id) {
     document.getElementById('emp-color').value        = e.color_primario || '#2C5282';
     document.getElementById('emp-color-texto').value  = e.color_primario || '#2C5282';
     document.getElementById('emp-activa').value       = String(e.activa);
+    document.getElementById('emp-margen-conciliacion').value = e.margen_conciliacion ?? 3;
   } else {
     document.getElementById('modal-empresa-titulo').textContent = 'Nueva empresa operadora';
     ['emp-nombre','emp-nombre-corto','emp-ruc','emp-telefono','emp-email','emp-direccion']
@@ -244,6 +250,7 @@ function abrirModalEmpresa(id) {
     document.getElementById('emp-color').value       = '#2C5282';
     document.getElementById('emp-color-texto').value = '#2C5282';
     document.getElementById('emp-activa').value      = 'true';
+    document.getElementById('emp-margen-conciliacion').value = 3;
   }
   modal.style.display = 'flex';
 }
@@ -271,13 +278,15 @@ async function guardarEmpresa() {
     email:         document.getElementById('emp-email').value.trim() || null,
     direccion:     document.getElementById('emp-direccion').value.trim() || null,
     color_primario:document.getElementById('emp-color').value,
-    activa:        document.getElementById('emp-activa').value === 'true'
+    activa:        document.getElementById('emp-activa').value === 'true',
+    margen_conciliacion: Number(document.getElementById('emp-margen-conciliacion').value) || 0,
   };
 
   // Validaciones
   if (!datos.nombre)       { alerta.textContent = 'El nombre es obligatorio.'; alerta.classList.add('visible'); return; }
   if (!datos.nombre_corto) { alerta.textContent = 'El nombre corto es obligatorio.'; alerta.classList.add('visible'); return; }
   if (!validarRUC(datos.ruc)) { alerta.textContent = 'El RUC debe tener 11 dígitos.'; alerta.classList.add('visible'); return; }
+  if (datos.margen_conciliacion < 0) { alerta.textContent = 'El margen de conciliación no puede ser negativo.'; alerta.classList.add('visible'); return; }
 
   const btn = document.getElementById('btn-guardar-empresa');
   btn.disabled = true; btn.textContent = 'Guardando…';

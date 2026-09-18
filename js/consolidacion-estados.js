@@ -17,7 +17,13 @@
 function _conCobertura(movsVinculados, totalComprobante) {
   const suma  = (movsVinculados || []).reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
   const total = Number(totalComprobante) || 0;
-  const TOL   = 0.01;
+  // Margen de referencia configurable por empresa (Wendy, 2026-09-18: S/3 por
+  // defecto, editable solo por el administrador en Administración > Empresas).
+  // Diferencias dentro de este margen — de más o de menos — se consideran
+  // cubiertas; por encima, se bloquea el vínculo (ver _conValidarAntesDeVincular,
+  // misma regla, un solo lugar — auditoría 2026-09-18).
+  const TOL   = (typeof empresa_activa !== 'undefined' && empresa_activa?.margen_conciliacion != null && empresa_activa.margen_conciliacion >= 0)
+    ? Number(empresa_activa.margen_conciliacion) : 3;
   const round = n => Math.round(n * 100) / 100;
 
   if (!movsVinculados?.length || suma <= TOL) {
@@ -45,12 +51,13 @@ function _conCobertura(movsVinculados, totalComprobante) {
 //    NO el nombre del proveedor, porque puede venir escrito distinto
 //    entre el banco y el comprobante. Antes de grabar un nuevo vínculo
 //    se recalcula cuánto suman TODOS los movimientos que ya apuntan a
-//    ese mismo N° de comprobante y se reutiliza _conCobertura (misma
-//    tolerancia 0.01 que ya decide el badge EXCESIVO) para decidir si
-//    hay exceso — UNA sola regla para la misma decisión, no dos. Antes
-//    esta función usaba su propio margen (5%/S/5), lo que abría una
-//    ventana donde el badge ya decía EXCESIVO pero el sistema todavía
-//    dejaba vincular más — corregido tras la auditoría del documento
+//    ese mismo N° de comprobante y se reutiliza _conCobertura (mismo
+//    margen configurable por empresa, ver empresa_activa.margen_conciliacion,
+//    que ya decide el badge EXCESIVO) para decidir si hay exceso — UNA
+//    sola regla para la misma decisión, no dos. Antes esta función usaba
+//    su propio margen (5%/S/5), lo que abría una ventana donde el badge
+//    ya decía EXCESIVO pero el sistema todavía dejaba vincular más —
+//    corregido tras la auditoría del documento
 //    "NEXUM_Auditoria_y_Mejora_Conciliacion".
 async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, totalComprobante, movIdExcluir, montoNuevo) {
   const total = Number(totalComprobante) || 0;
