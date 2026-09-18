@@ -128,6 +128,16 @@ function _conEstado5(cov, esPosible) {
   return 'APLICADO'; // COMPLETO_EMITIDO / COMPLETO_OBSERVADO
 }
 
+// ── Clave normalizada tipo_doc+nro_factura_doc para agrupar movimientos
+//    del mismo comprobante (auditoría 2026-09-18): un espacio de más, o
+//    mayúscula/minúscula distinta importado de un Excel, puede hacer que
+//    dos movimientos del MISMO comprobante caigan en grupos distintos y
+//    reaparezca el bug de comparar uno solo contra el total completo —
+//    normalizar (trim + mayúsculas) es la defensa contra ese caso.
+function _conClaveDoc(tipoDoc, nroFacturaDoc) {
+  return `${(tipoDoc || '').trim().toUpperCase()}|${(nroFacturaDoc || '').toString().trim().toUpperCase()}`;
+}
+
 // ── Filtro PENDIENTE = PENDIENTE + POSIBLE (auditoría 2026-09-17, regla
 //    3.3): POSIBLE sigue siendo una conciliación sin resolver, así que al
 //    hacer clic en el badge PENDIENTE debe aparecer también lo POSIBLE —
@@ -395,10 +405,10 @@ async function consolidarEstadosRetroactivo() {
     // mismo comprobante (pago dividido). Sumar por clave ANTES de comparar montos
     // evita el mismo falso positivo de detectarDiscrepanciasMontos — y aquí es más
     // grave, porque antes bloqueaba la reparación real de entrega_doc de esos movs.
-    const sumaPorClave = new Map(); // `${tipo_doc}|${nro_factura_doc}` → suma abs(monto)
+    const sumaPorClave = new Map(); // _conClaveDoc(tipo_doc, nro_factura_doc) → suma abs(monto)
     movs.forEach(m => {
       if (m.tipo_doc !== 'COMPRA' && m.tipo_doc !== 'VENTA') return;
-      const k = `${m.tipo_doc}|${m.nro_factura_doc}`;
+      const k = _conClaveDoc(m.tipo_doc, m.nro_factura_doc);
       sumaPorClave.set(k, (sumaPorClave.get(k) || 0) + Math.abs(Number(m.monto) || 0));
     });
     const discrepanciasVistas = new Set(); // no contar el mismo comprobante 2 veces
@@ -419,7 +429,7 @@ async function consolidarEstadosRetroactivo() {
           _conPeriodoCercano(periodoMov, c.periodo)
         );
         const claveValida = !candidatos.length || matchNombrePeriodo.length > 0;
-        const sumaGrupo   = sumaPorClave.get(`${mov.tipo_doc}|${mov.nro_factura_doc}`) ?? Math.abs(Number(mov.monto) || 0);
+        const sumaGrupo   = sumaPorClave.get(_conClaveDoc(mov.tipo_doc, mov.nro_factura_doc)) ?? Math.abs(Number(mov.monto) || 0);
 
         // Reforzado (1.2): además verificar que la SUMA de movimientos vinculados a
         // este comprobante (regla N:M) coincida razonablemente con su total — si no
@@ -427,7 +437,7 @@ async function consolidarEstadosRetroactivo() {
         const montoOk = !matchNombrePeriodo.length || matchNombrePeriodo.some(c =>
           Math.abs(sumaGrupo - c.total) < Math.max(c.total * 0.02, 1)
         );
-        const claveGrupo = `${mov.tipo_doc}|${mov.nro_factura_doc}`;
+        const claveGrupo = _conClaveDoc(mov.tipo_doc, mov.nro_factura_doc);
         if (claveValida && matchNombrePeriodo.length && !montoOk && !discrepanciasVistas.has(claveGrupo)) {
           discrepanciasVistas.add(claveGrupo);
           const mejorCandidato = matchNombrePeriodo.reduce((a, b) =>
@@ -573,9 +583,9 @@ async function detectarDiscrepanciasMontos() {
   // por separado contra el total daba falsos positivos (Wendy, 2026-09-17):
   // 2 movimientos de S/4.80 vinculados al mismo comprobante de S/9.60 — cada
   // uno "no coincidía" solo, pero sumados cuadran exacto.
-  const gruposPorClave = new Map(); // `${tipo_doc}|${nro_factura_doc}` → [movs]
+  const gruposPorClave = new Map(); // _conClaveDoc(tipo_doc, nro_factura_doc) → [movs]
   movs.forEach(m => {
-    const k = `${m.tipo_doc}|${m.nro_factura_doc}`;
+    const k = _conClaveDoc(m.tipo_doc, m.nro_factura_doc);
     if (!gruposPorClave.has(k)) gruposPorClave.set(k, []);
     gruposPorClave.get(k).push(m);
   });

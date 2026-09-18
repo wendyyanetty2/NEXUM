@@ -304,27 +304,28 @@ async function _dupDescuadresVinculacion() {
       .eq('empresa_id', empId).not('nro_factura_doc', 'is', null).in('tipo_doc', ['COMPRA', 'VENTA', 'RH']),
   ]);
 
-  const movsPorClave = new Map(); // `${tipo_doc}|${nro_factura_doc}` → [movs]
+  const movsPorClave = new Map(); // _conClaveDoc(tipo_doc, nro_factura_doc) → [movs]
   (movs || []).forEach(m => {
     if (_esComprobantePlaceholder(m.nro_factura_doc)) return;
-    const k = `${m.tipo_doc}|${m.nro_factura_doc}`;
+    const k = _conClaveDoc(m.tipo_doc, m.nro_factura_doc);
     if (!movsPorClave.has(k)) movsPorClave.set(k, []);
     movsPorClave.get(k).push(m);
   });
 
   const descuadres = [];
+  // Misma tolerancia que el badge EXCESIVO y el bloqueo al vincular (_conCobertura,
+  // 0.01) — no una tercera regla distinta para "¿esto es un exceso?" (auditoría 2026-09-18).
   const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn) => {
     (comprobantes || []).forEach(c => {
       const clave = claveFn(c);
       if (!clave) return;
-      const lista = movsPorClave.get(`${tipoDoc}|${clave}`) || [];
+      const lista = movsPorClave.get(_conClaveDoc(tipoDoc, clave)) || [];
       if (!lista.length) return;
-      const total  = totalFn(c);
+      const total = totalFn(c);
       if (!total) return;
-      const suma   = lista.reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
-      const margen = Math.max(total * 0.05, 5);
-      if (suma > total + margen) {
-        descuadres.push({ tipoDoc, nDoc: clave, label: labelFn(c), total, suma, exceso: suma - total, movs: lista });
+      const cov = _conCobertura(lista, total);
+      if (cov.estado === 'PARCIAL' && cov.excede) {
+        descuadres.push({ tipoDoc, nDoc: clave, label: labelFn(c), total, suma: cov.suma, exceso: cov.excede, movs: lista });
       }
     });
   };
