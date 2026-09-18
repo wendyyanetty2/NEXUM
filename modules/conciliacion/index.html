@@ -60,7 +60,7 @@
 .tab-btn.activo { color:var(--color-secundario); border-bottom-color:var(--color-secundario); }
 </style>
 
-<script src="../../modules/conciliacion/modules/con-conciliar.js?v=13&t=20260918c"></script>
+<script src="../../modules/conciliacion/modules/con-conciliar.js?v=14&t=20260918d"></script>
 <script src="../../modules/conciliacion/modules/con-historial.js?v=2&t=20260909b"></script>
 
 <script>
@@ -74,6 +74,16 @@ let empresa_activa = null;
   empresa_activa = r.empresa;
   setBreadcrumb('Conciliación');
   activarTab('conciliar');
+
+  // Fase A.2 (Wendy, 2026-09-18): llegar desde el badge de una fila de
+  // Compras/Ventas/RH con ?buscar=<id>&tipo=<COMPRA|VENTA|RH> abre directo
+  // la búsqueda de ese comprobante puntual, sin pasar por "Iniciar conciliación".
+  const params  = new URLSearchParams(window.location.search);
+  const buscarId  = params.get('buscar');
+  const buscarTipo = params.get('tipo');
+  if (buscarId && buscarTipo && typeof abrirBusquedaComprobante === 'function') {
+    abrirBusquedaComprobante(buscarTipo, buscarId);
+  }
 })();
 
 function activarTab(tab) {

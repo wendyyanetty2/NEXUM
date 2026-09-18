@@ -373,12 +373,27 @@ async function _ejecutarConciliacion(periodo) {
   // Sacar de sin_match los que fueron asignados a multi-transfer
   sin_match.splice(0, sin_match.length, ...sin_match.filter(i => !usadosSinMatch.has(i.mov.id)));
 
-  // NOTA (Wendy, 2026-09-18): _buscarComboDocsPorMonto() ya existe (dirección
-  // inversa — 1 movimiento paga varios comprobantes) pero TODAVÍA no está
-  // conectada aquí. Toda la pestaña "Posibles" (render, aprobar, rechazar,
-  // exportar) asume que cada sugerencia tiene UN solo comprobante (item.doc);
-  // conectar esto requiere además una vista/aprobación para "item.docs"
-  // (varios) antes de mostrarlo, para no romper esas pantallas.
+  // Fase A.5 (Wendy, 2026-09-18): dirección inversa — 1 movimiento grande
+  // puede ser el pago conjunto de VARIOS comprobantes (Compras/Ventas/RH).
+  // Ya tiene su propia vista/aprobación/rechazo (item.docs, esMultiDoc).
+  const usadosSinMatchDoc = new Set();
+  for (const item of [...sin_match]) {
+    if (usadosSinMatchDoc.has(item.mov.id)) continue;
+    const docsLibres = documentos.filter(d => !usadosDoc.has(d.id));
+    const combo = _buscarComboDocsPorMonto(item.mov, docsLibres);
+    if (!combo) continue;
+    usadosSinMatchDoc.add(item.mov.id);
+    combo.docs.forEach(d => usadosDoc.add(d.id));
+    posibles.push({
+      mov:        item.mov,
+      docs:       combo.docs,
+      score:      75,
+      diferencia: combo.diferencia,
+      sumaDocs:   combo.suma,
+      esMultiDoc: true,
+    });
+  }
+  sin_match.splice(0, sin_match.length, ...sin_match.filter(i => !usadosSinMatchDoc.has(i.mov.id)));
 
   // Ordenar: score DESC, fecha ASC
   const byScoreFecha = (a, b) =>
@@ -559,6 +574,249 @@ function _buscarComboDocsPorMonto(mov, docsList) {
   return null;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// BÚSQUEDA POR UN SOLO COMPROBANTE (Fase A.1, Wendy 2026-09-18)
+// Reemplaza lo que hacían el 🔗 y la 🔍 por fila de Compras/Ventas/RH:
+// dado un comprobante puntual, busca candidatos (±S/3) + permite búsqueda
+// manual libre + vincula — todo centralizado en este módulo.
+// ═══════════════════════════════════════════════════════════════
+
+// Código FA/BO/RH — copia local liviana de _mbdCodigoTipoComprobante
+// (busqueda-comprobante.js) para no depender de ese archivo aquí.
+function _conCodigoTipoComprobante(docTipo, nDoc) {
+  if (docTipo === 'RH') return 'RH';
+  const serie = String(nDoc || '').trim().toUpperCase();
+  return serie.startsWith('B') ? 'BO' : 'FA';
+}
+
+async function _conCargarComprobante(docTipo, docId) {
+  const empId = empresa_activa.id;
+  if (docTipo === 'COMPRA') {
+    const { data: d } = await _supabase.from('contabilidad_compras').select('*').eq('id', docId).eq('empresa_id', empId).single();
+    if (!d) return null;
+    return { id: d.id, tipo: 'COMPRA', nDoc: [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-'), proveedor: d.proveedor || '', ruc: d.nro_doc_identidad || '', total: Math.abs(parseFloat(d.total_cp) || 0), fecha: d.fecha_emision };
+  }
+  if (docTipo === 'VENTA') {
+    const { data: d } = await _supabase.from('contabilidad_ventas').select('*').eq('id', docId).eq('empresa_id', empId).single();
+    if (!d) return null;
+    return { id: d.id, tipo: 'VENTA', nDoc: [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-'), proveedor: d.cliente || '', ruc: d.nro_doc_identidad || '', total: Math.abs(parseFloat(d.total_cp) || 0), fecha: d.fecha_emision };
+  }
+  if (docTipo === 'RH') {
+    const { data: d } = await _supabase.from('rh_registros').select('*, prestadores_servicios(nombre,dni)').eq('id', docId).eq('empresa_operadora_id', empId).single();
+    if (!d) return null;
+    return { id: d.id, tipo: 'RH', nDoc: d.numero_rh || d.id.slice(0, 8), proveedor: d.prestadores_servicios?.nombre || '', ruc: d.prestadores_servicios?.dni || '', total: Math.abs(parseFloat(d.monto_neto) || 0), fecha: d.fecha_emision };
+  }
+  return null;
+}
+
+// Fase A.3 — respaldo en la tabla vieja `movimientos` (extracto crudo de
+// "Importar EECC"): un movimiento puede existir ahí sin haberse copiado
+// todavía a tesoreria_mbd, y hasta ahora solo el motor viejo de RH lo veía.
+// Se muestra como candidato adicional de SOLO LECTURA — vincular directo
+// desde aquí requeriría escribir en tesoreria_mbd un registro que no
+// existe todavía, así que se le pide a la persona que primero lo agregue
+// a Tesorería (Importar EECC o manual) y luego lo busque normal.
+async function _conBuscarEnMovimientosCrudos(doc) {
+  const margen = _CON_MARGEN_POSIBLE;
+  const { data } = await _supabase.from('movimientos')
+    .select('id,fecha,importe,descripcion,numero_operacion,naturaleza')
+    .eq('empresa_operadora_id', empresa_activa.id)
+    .eq('naturaleza', 'CARGO')
+    .gte('importe', doc.total - margen).lte('importe', doc.total + margen)
+    .order('fecha', { ascending: false }).limit(20);
+  return data || [];
+}
+
+async function abrirBusquedaComprobante(docTipo, docId) {
+  const doc = await _conCargarComprobante(docTipo, docId);
+  if (!doc) { mostrarToast('No se pudo cargar el comprobante', 'error'); return; }
+
+  const [candidatos, yaVinculadosRes, crudos] = await Promise.all([
+    _conBuscarCandidatosPorMonto(empresa_activa.id, doc.total),
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
+      .eq('empresa_id', empresa_activa.id).eq('tipo_doc', doc.tipo).eq('nro_factura_doc', doc.nDoc)
+      .order('fecha_deposito', { ascending: false }),
+    doc.tipo === 'RH' ? _conBuscarEnMovimientosCrudos(doc) : Promise.resolve([]),
+  ]);
+
+  _conRenderBusquedaComprobante(doc, candidatos, yaVinculadosRes.data || [], crudos);
+}
+
+function _conRenderBusquedaComprobante(doc, candidatos, yaVinculados, crudos) {
+  const mc = document.getElementById('modal-container');
+  if (!mc) return;
+
+  const linksHtml = yaVinculados.length
+    ? yaVinculados.map(m => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;font-size:12px">
+          <span><span style="font-family:monospace;font-weight:600;color:var(--color-secundario)">${escapar(m.nro_operacion_bancaria || '—')}</span>
+            · ${formatearFecha(m.fecha_deposito)} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <strong>${formatearMoneda(m.monto)}</strong>
+            <span style="font-size:9px;padding:1px 6px;border-radius:8px;${m.entrega_doc === 'EMITIDO' ? 'background:#2F855A;color:#fff' : 'background:#718096;color:#fff'}">${escapar(m.entrega_doc || '')}</span>
+          </span>
+        </div>`).join('')
+    : '<span style="font-style:italic;font-size:12px;color:var(--color-texto-suave)">Sin operaciones vinculadas aún.</span>';
+
+  const candHtml = candidatos.length
+    ? candidatos.slice(0, 15).map(m => {
+        const diff = Math.abs(Math.abs(Number(m.monto)) - doc.total);
+        const pct = doc.total > 0 ? Math.round(diff / doc.total * 100) : 0;
+        return `
+          <div style="border:1px solid var(--color-borde);border-radius:8px;padding:12px;margin-bottom:8px;background:var(--color-bg-card)">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+              <div>
+                <div style="font-family:monospace;font-size:12px;font-weight:600;color:var(--color-secundario)">${escapar(m.nro_operacion_bancaria || '—')}</div>
+                <div style="font-size:11px;color:var(--color-texto-suave)">${formatearFecha(m.fecha_deposito)}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-weight:700;color:var(--color-exito)">${formatearMoneda(Math.abs(Number(m.monto)))}</div>
+                ${diff > 0 ? `<div style="font-size:10px;color:${pct > 5 ? '#ef4444' : '#f59e0b'}">Dif: ${formatearMoneda(diff)} (${pct}%)</div>` : '<div style="font-size:10px;color:#22c55e">✓ Monto exacto</div>'}
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--color-texto);margin-bottom:2px">${escapar(truncar(m.descripcion || '—', 60))}</div>
+            ${m.proveedor_empresa_personal ? `<div style="font-size:11px;color:var(--color-texto-suave)">${escapar(m.proveedor_empresa_personal)}</div>` : ''}
+            <div style="margin-top:8px;text-align:right">
+              <span style="font-size:10px;padding:2px 6px;border-radius:4px;${m.entrega_doc === 'EMITIDO' ? 'background:#2F855A;color:#fff' : 'background:#C53030;color:#fff'}">${escapar(m.entrega_doc || 'PENDIENTE')}</span>
+              <button onclick="_conVincularComprobante(${JSON.stringify(doc).replace(/"/g, '&quot;')},'${m.id}')"
+                style="margin-left:8px;padding:4px 12px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-family:var(--font)">
+                🔗 Vincular
+              </button>
+            </div>
+          </div>`;
+      }).join('')
+    : '<div style="padding:24px;text-align:center;color:var(--color-texto-suave)">Sin movimientos bancarios con monto similar (±S/3). Prueba la búsqueda manual.</div>';
+
+  const crudosHtml = crudos.length ? `
+    <div style="margin-top:14px;padding:10px 14px;background:rgba(214,158,46,.08);border:1px solid rgba(214,158,46,.3);border-radius:8px">
+      <div style="font-size:11px;font-weight:700;color:#D69E2E;text-transform:uppercase;margin-bottom:6px">⚠️ Encontrados en el extracto bancario, aún no en Tesorería</div>
+      ${crudos.map(c => `
+        <div style="font-size:12px;padding:4px 0;border-top:1px solid rgba(214,158,46,.2)">
+          Op. ${escapar(c.numero_operacion || '—')} · ${formatearFecha(c.fecha)} · ${escapar(truncar(c.descripcion || '—', 40))} · <strong>${formatearMoneda(c.importe)}</strong>
+        </div>`).join('')}
+      <div style="font-size:11px;color:var(--color-texto-suave);margin-top:6px">Agrégalo primero en Tesorería → Movimientos (Importar EECC o manual) y luego búscalo aquí.</div>
+    </div>` : '';
+
+  mc.innerHTML = `
+    <div class="modal-overlay" style="display:flex" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+      <div class="modal" style="max-width:620px;width:95%;max-height:90vh;display:flex;flex-direction:column">
+        <div class="modal-header" style="flex-shrink:0">
+          <h3>🔗 Conciliar con Banco — ${escapar(doc.nDoc)}</h3>
+          <button class="modal-cerrar" onclick="this.closest('.modal-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto">
+          <div style="padding:10px 14px;background:rgba(44,82,130,.07);border-radius:8px;margin-bottom:14px;font-size:12px">
+            <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+              <div><strong>Comprobante:</strong> ${escapar(doc.nDoc)} (${escapar(doc.tipo)})</div>
+              <div><strong>Total:</strong> ${formatearMoneda(doc.total)}</div>
+            </div>
+            <div style="margin-top:4px"><strong>Proveedor/Trabajador:</strong> ${escapar(truncar(doc.proveedor || '—', 40))}</div>
+            <div><strong>Fecha:</strong> ${formatearFecha(doc.fecha)}</div>
+          </div>
+          <div style="padding:10px 14px;background:rgba(44,82,130,.06);border:1px solid rgba(44,82,130,.2);border-radius:8px;margin-bottom:14px">
+            <div style="font-size:11px;font-weight:700;color:var(--color-texto-suave);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">
+              Operaciones bancarias ya vinculadas — <span style="color:var(--color-secundario)">${yaVinculados.length} operación(es)</span>
+            </div>
+            ${linksHtml}
+          </div>
+          <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:10px">
+            ${candidatos.length} movimiento(s) bancario(s) dentro de ±S/3 encontrado(s):
+          </p>
+          ${candHtml}
+          ${crudosHtml}
+          <div style="margin-top:14px;border-top:1px solid var(--color-borde);padding-top:12px">
+            <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:8px">¿No encuentras el movimiento? Búsqueda manual (sin límite de monto — último recurso):</p>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="con-buscar-doc-manual" autocomplete="off" placeholder="N° operación o proveedor"
+                style="flex:1;padding:7px 10px;border:1px solid var(--color-borde);border-radius:6px;background:var(--color-bg-card);color:var(--color-texto);font-size:12px;font-family:var(--font)">
+              <button onclick="_conBuscarComprobanteManual(${JSON.stringify(doc).replace(/"/g, '&quot;')})"
+                class="btn btn-primario" style="font-size:12px;white-space:nowrap">🔍 Buscar</button>
+            </div>
+            <div id="con-buscar-doc-manual-res" style="margin-top:10px"></div>
+          </div>
+        </div>
+        <div class="modal-footer" style="flex-shrink:0">
+          <button class="btn btn-secundario" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function _conBuscarComprobanteManual(doc) {
+  const q = (document.getElementById('con-buscar-doc-manual')?.value || '').trim().toLowerCase();
+  const res = document.getElementById('con-buscar-doc-manual-res');
+  if (!q || !res) return;
+  res.innerHTML = '<div class="spinner" style="margin:8px auto"></div>';
+
+  const { data: movs } = await _supabase.from('tesoreria_mbd')
+    .select('id,fecha_deposito,monto,descripcion,nro_operacion_bancaria,proveedor_empresa_personal,entrega_doc')
+    .eq('empresa_id', empresa_activa.id)
+    .or(`nro_operacion_bancaria.ilike.%${q}%,proveedor_empresa_personal.ilike.%${q}%,descripcion.ilike.%${q}%`)
+    .limit(10);
+
+  if (!movs?.length) { res.innerHTML = '<p style="font-size:12px;color:var(--color-texto-suave)">Sin resultados</p>'; return; }
+  res.innerHTML = movs.map(m => `
+    <div style="border:1px solid var(--color-borde);border-radius:6px;padding:10px;margin-bottom:6px;font-size:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div>
+          <div style="font-family:monospace;font-weight:600;color:var(--color-secundario)">${escapar(m.nro_operacion_bancaria || '—')}</div>
+          <div style="color:var(--color-texto-suave);font-size:11px">${formatearFecha(m.fecha_deposito)} · ${escapar(truncar(m.descripcion || '—', 40))}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:700">${formatearMoneda(Math.abs(Number(m.monto)))}</div>
+          <button onclick="_conVincularComprobante(${JSON.stringify(doc).replace(/"/g, '&quot;')},'${m.id}')"
+            style="padding:3px 10px;background:#2C5282;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font)">
+            🔗 Vincular
+          </button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+async function _conVincularComprobante(doc, movId) {
+  const { data: mov } = await _supabase.from('tesoreria_mbd')
+    .select('nro_operacion_bancaria,fecha_deposito,descripcion,moneda,monto,proveedor_empresa_personal,ruc_dni,cotizacion,oc,proyecto,concepto,empresa,autorizacion,entrega_doc')
+    .eq('id', movId).single();
+  if (!mov) { mostrarToast('No se pudo cargar el movimiento', 'error'); return; }
+
+  const val = await _conValidarAntesDeVincular(empresa_activa.id, doc.tipo, doc.nDoc, doc.total, movId, mov.monto);
+  if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
+
+  const mensajeConfirm = mov.entrega_doc === 'EMITIDO'
+    ? `⚠️ Este movimiento bancario ya fue registrado por completo (EMITIDO).\n¿Está segura de vincularlo con "${escapar(doc.nDoc)}"?`
+    : `¿Está segura de vincular "${escapar(doc.nDoc)}" con este movimiento bancario?`;
+  if (!await confirmar(mensajeConfirm, { btnOk: 'Sí, vincular', btnColor: mov.entrega_doc === 'EMITIDO' ? '#C53030' : '#2C5282' })) return;
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const entregaDoc = typeof _conEvalCompletitud14 === 'function'
+    ? _conEvalCompletitud14({ ...mov, proveedor_empresa_personal: doc.proveedor || mov.proveedor_empresa_personal, ruc_dni: doc.ruc || mov.ruc_dni, nro_factura_doc: doc.nDoc, tipo_doc: doc.tipo })
+    : 'OBSERVADO';
+
+  const patch = {
+    entrega_doc: entregaDoc,
+    estado_conciliacion: 'conciliado',
+    nro_factura_doc: doc.nDoc,
+    tipo_doc: doc.tipo,
+    tipo_comprobante: _conCodigoTipoComprobante(doc.tipo, doc.nDoc),
+    fecha_actualizacion: hoy,
+  };
+  if (doc.proveedor) patch.proveedor_empresa_personal = doc.proveedor;
+  if (doc.ruc) patch.ruc_dni = doc.ruc;
+
+  const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
+  if (error) { mostrarToast('Error al vincular: ' + error.message, 'error'); return; }
+
+  await _supabase.from('conciliaciones').insert({
+    empresa_operadora_id: empresa_activa.id, movimiento_id: movId, doc_tipo: doc.tipo, doc_id: doc.id,
+    score: 0, tipo_match: 'MANUAL', estado: 'APROBADO', usuario_id: perfil_usuario?.id || null,
+  });
+
+  if (typeof consolidarMovimientoVinculado === 'function') await consolidarMovimientoVinculado(movId);
+
+  mostrarToast(`✓ Vinculado: ${doc.nDoc}`, 'exito');
+  document.querySelector('.modal-overlay')?.remove();
+}
+
 // ── Helpers visuales ─────────────────────────────────────────────
 function _scoreChip(score) {
   let bg, color, icon;
@@ -682,8 +940,8 @@ function _filtrarItems(lista, tab) {
           va = a.esMulti ? (a.movs[0]?.fecha_deposito||'') : (a.mov?.fecha_deposito||'');
           vb = b.esMulti ? (b.movs[0]?.fecha_deposito||'') : (b.mov?.fecha_deposito||''); break;
         case 'monto':
-          va = a.esMulti ? (a.sumaMovs||0) : Math.abs(parseFloat(a.mov?.monto)||0);
-          vb = b.esMulti ? (b.sumaMovs||0) : Math.abs(parseFloat(b.mov?.monto)||0); break;
+          va = a.esMulti ? (a.sumaMovs||0) : a.esMultiDoc ? (a.sumaDocs||0) : Math.abs(parseFloat(a.mov?.monto)||0);
+          vb = b.esMulti ? (b.sumaMovs||0) : b.esMultiDoc ? (b.sumaDocs||0) : Math.abs(parseFloat(b.mov?.monto)||0); break;
         case 'proveedor':
           va = a.esMulti ? (a.movs[0]?.proveedor_empresa_personal||'') : (a.mov?.proveedor_empresa_personal||'');
           vb = b.esMulti ? (b.movs[0]?.proveedor_empresa_personal||'') : (b.mov?.proveedor_empresa_personal||''); break;
@@ -769,7 +1027,9 @@ function _renderTablaPosibles(wrap) {
           ${items.length ? items.map((item, idx) =>
               item.esMulti
                 ? _rowMultiMatchHtml(item, idx, _TD)
-                : _rowMatchHtml(item, idx, 'pos', _TD)
+                : item.esMultiDoc
+                  ? _rowMultiComprobanteHtml(item, idx, _TD)
+                  : _rowMatchHtml(item, idx, 'pos', _TD)
             ).join('') :
             `<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--color-texto-suave)">Sin resultados para este filtro</td></tr>`}
         </tbody>
@@ -880,6 +1140,119 @@ function _rowMultiMatchHtml(item, idx, _TD) {
       </td>` : ''}
     </tr>`;
   }).join('');
+}
+
+// ── Row multi-comprobante (1 movimiento → varios comprobantes) ───
+// Fase A.5 (Wendy, 2026-09-18): dirección inversa a la de arriba — un solo
+// movimiento grande puede ser el pago conjunto de varios comprobantes.
+function _rowMultiComprobanteHtml(item, idx, _TD) {
+  const m = item.mov;
+  const key = `pos_${idx}`;
+  _conItemCache[key] = item;
+  const rowspan = item.docs.length;
+  const multiBg = 'rgba(124,58,237,.05)';
+
+  return item.docs.map((d, di) => {
+    const isFirst = di === 0;
+    const tipoBg = d._tipo === 'RH' ? '#744210' : d._tipo === 'VENTA' ? '#276749' : '#2C5282';
+    return `<tr id="${isFirst ? `con-row-pos-${idx}` : `con-row-pos-${idx}-${di}`}"
+      style="background:${multiBg}"
+      onmouseover="this.style.background='var(--color-hover)'"
+      onmouseout="this.style.background='${multiBg}'">
+      ${isFirst ? `<td style="${_TD};font-family:monospace;font-size:11px;white-space:nowrap" rowspan="${rowspan}">${escapar(m.nro_operacion_bancaria||'—')}</td>` : ''}
+      ${isFirst ? `<td style="${_TD};white-space:nowrap" rowspan="${rowspan}">${formatearFecha(m.fecha_deposito)}</td>` : ''}
+      ${isFirst ? `<td style="${_TD};max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" rowspan="${rowspan}" title="${escapar(m.descripcion||'')}">${escapar(m.descripcion||'—')}</td>` : ''}
+      ${isFirst ? `<td style="${_TD};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" rowspan="${rowspan}">
+        <strong style="font-size:11px">${escapar((m.proveedor_empresa_personal||'—').slice(0,30))}</strong>
+        <div style="font-size:10px;color:#7c3aed;margin-top:2px">🔗 1 movimiento → ${rowspan} comprobantes</div>
+      </td>` : ''}
+      ${isFirst ? `<td style="${_TD};text-align:right;white-space:nowrap;font-weight:700;color:${Number(m.monto)<0?'var(--color-critico)':'var(--color-exito)'}" rowspan="${rowspan}">
+        ${formatearMoneda(m.monto, m.moneda==='USD'?'USD':'PEN')}
+        <div style="font-size:9px;color:var(--color-texto-suave);font-weight:400">Σ docs ${formatearMoneda(item.sumaDocs)}</div>
+      </td>` : ''}
+      ${isFirst ? `<td style="${_TD};text-align:center" rowspan="${rowspan}">${_scoreChip(item.score)}</td>` : ''}
+      <td style="${_TD};max-width:160px;white-space:nowrap">
+        <div style="font-size:11px;font-weight:600;color:var(--color-secundario)">${escapar(d._ndoc||'—')}</div>
+        <div style="font-size:10px;color:var(--color-texto-suave)">${escapar((d._proveedor||'—').slice(0,25))}</div>
+      </td>
+      <td style="${_TD};text-align:center">
+        <span style="background:${tipoBg};color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escapar(d._tipo||'—')}</span>
+        <div style="font-size:9px;color:var(--color-texto-suave);margin-top:2px">${formatearMoneda(d._total)}</div>
+      </td>
+      ${isFirst ? `<td style="${_TD}" rowspan="${rowspan}">${_tdEstado('PENDIENTE')}</td>` : ''}
+      ${isFirst ? `<td style="${_TD}" rowspan="${rowspan}">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <button class="btn btn-sm btn-primario" style="font-size:11px;padding:4px 9px"
+            onclick="_aprobarMatchMultiComprobante('${key}',${idx})" title="Divide el movimiento en ${rowspan} filas, una por comprobante">✓ Aprobar</button>
+          <button title="Rechazar sugerencia" style="padding:4px 8px;background:rgba(197,48,48,.1);color:#C53030;border:none;border-radius:4px;cursor:pointer;font-size:11px"
+            onclick="_rechazarMatchMultiComprobante(${idx})">✕ Rechazar</button>
+        </div>
+      </td>` : ''}
+    </tr>`;
+  }).join('');
+}
+
+// ── Aprobar multi-comprobante: divide el movimiento en N filas, una por
+//    comprobante, cada una con el monto exacto de ese comprobante. ──────
+async function _aprobarMatchMultiComprobante(key, idx) {
+  const item = _conItemCache[key];
+  if (!item || !item.esMultiDoc) return;
+  if (!await confirmar(`Se dividirá el movimiento ${escapar(item.mov.nro_operacion_bancaria||'')} en ${item.docs.length} comprobantes distintos. ¿Está segura de continuar?`, { btnOk: 'Sí, dividir y vincular', btnColor: '#2C5282' })) return;
+
+  const { data: base } = await _supabase.from('tesoreria_mbd').select('*').eq('id', item.mov.id).single();
+  if (!base) { mostrarToast('No se pudo cargar el movimiento', 'error'); return; }
+  const signo = Number(base.monto) < 0 ? -1 : 1;
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  let ok = 0, errores = 0;
+  for (const d of item.docs) {
+    const { data: ins, error: errIns } = await _supabase.from('tesoreria_mbd').insert({
+      empresa_id: base.empresa_id, nro_operacion_bancaria: base.nro_operacion_bancaria,
+      fecha_deposito: base.fecha_deposito, moneda: base.moneda, monto: signo * Math.abs(d._total || 0),
+      descripcion: (base.descripcion || '') + ` (${d._ndoc})`,
+      proveedor_empresa_personal: d._proveedor || base.proveedor_empresa_personal || null,
+      ruc_dni: d._ruc || base.ruc_dni || null,
+      tipo_doc: d._tipo, nro_factura_doc: d._ndoc,
+      tipo_comprobante: _conCodigoTipoComprobante(d._tipo, d._ndoc),
+      estado_conciliacion: 'conciliado', entrega_doc: 'OBSERVADO', fecha_actualizacion: hoy,
+      concepto: base.concepto, empresa: base.empresa, proyecto: base.proyecto,
+      autorizacion: base.autorizacion, cotizacion: base.cotizacion, oc: base.oc,
+      observaciones: base.observaciones, detalles_compra_servicio: base.detalles_compra_servicio,
+      observaciones_2: base.observaciones_2,
+    }).select('id').single();
+
+    if (errIns || !ins) { errores++; continue; }
+
+    await _supabase.from('conciliaciones').insert({
+      empresa_operadora_id: empresa_activa.id, movimiento_id: ins.id,
+      doc_tipo: d._tipo, doc_id: d.id, score: item.score, tipo_match: 'MULTI_COMPROBANTE',
+      estado: 'APROBADO', usuario_id: perfil_usuario?.id || null,
+    });
+    if (typeof consolidarMovimientoVinculado === 'function') await consolidarMovimientoVinculado(ins.id);
+    ok++;
+  }
+
+  if (ok > 0) {
+    const { error: errDel } = await _supabase.from('tesoreria_mbd').delete().eq('id', item.mov.id);
+    if (errDel) mostrarToast('Dividido, pero hubo un error al eliminar la fila original. Revisa duplicados en Tesorería.', 'atencion');
+  }
+
+  const fila = document.getElementById(`con-row-pos-${idx}`);
+  if (fila) { fila.style.opacity = '0.35'; fila.querySelectorAll('button').forEach(b => b.disabled = true); }
+  _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
+  document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
+  _conRefrescarPanel();
+  mostrarToast(`✅ Movimiento dividido en ${ok} comprobante(s)${errores ? ` · ${errores} con error` : ''}`, ok ? 'exito' : 'error');
+}
+
+function _rechazarMatchMultiComprobante(idx) {
+  const item = _con_resultados.posibles[idx];
+  if (!item || !item.esMultiDoc) return;
+  _con_resultados.sin_match.push({ mov: item.mov, score: 0 });
+  _con_resultados.posibles = _con_resultados.posibles.filter((_, i) => i !== idx);
+  document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
+  document.getElementById('con-cnt-sinmatch').textContent = _con_resultados.sin_match.length;
+  _conActivarSubtab('posibles');
 }
 
 // ── Vista completa del comprobante sugerido (👁️) ─────────────────

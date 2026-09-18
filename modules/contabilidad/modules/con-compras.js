@@ -112,12 +112,37 @@ async function cargarCompras() {
   await _renderComprasFiltradas();
 }
 
+// ── Fase A.6 (Wendy, 2026-09-18): detecta pares factura/Nota de Crédito
+//    (mismo RUC + monto exacto en signo opuesto, sin importar fecha) entre
+//    las filas ya cargadas — solo aviso visual, no toca estados ni totales.
+//    Best-effort: si la NC cayó en un período no cargado en pantalla, no
+//    se detecta aquí.
+function _cDetectarParesNC(filas) {
+  const porClave = new Map();
+  filas.forEach(r => {
+    const key = `${r.nro_doc_identidad || ''}|${Math.abs(Number(r.total_cp) || 0).toFixed(2)}`;
+    if (!porClave.has(key)) porClave.set(key, []);
+    porClave.get(key).push(r);
+  });
+  const pares = new Map(); // id → nDoc del comprobante opuesto
+  porClave.forEach(grupo => {
+    const positivos = grupo.filter(r => Number(r.total_cp) > 0);
+    const negativos = grupo.filter(r => Number(r.total_cp) < 0);
+    if (!positivos.length || !negativos.length) return;
+    const nDoc = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-') || r.id.slice(0, 8);
+    positivos.forEach(r => pares.set(r.id, nDoc(negativos[0])));
+    negativos.forEach(r => pares.set(r.id, nDoc(positivos[0])));
+  });
+  return pares;
+}
+
 async function _renderComprasFiltradas() {
   const wrap   = document.getElementById('c-tabla-wrap');
   if (!wrap) return;
   const buscar = document.getElementById('c-buscar')?.value.trim().toLowerCase();
 
   let filas = _filtrarComprasBuscar(_comprasRawData, buscar);
+  const paresNC = _cDetectarParesNC(_comprasRawData);
 
   const totalBI  = filas.reduce((s,r) => s + Number(r.bi_gravado_dg||0), 0);
   const totalIGV = filas.reduce((s,r) => s + Number(r.igv_ipm_dg||0), 0);
@@ -248,18 +273,21 @@ async function _renderComprasFiltradas() {
         ${filasVista.map(({ r, cov, estado5 }) => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
           const conciliarArgs = `'${r.id}','${escapar(nDoc)}','${escapar(r.proveedor||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}'`;
-          // Wendy, 2026-09-18: el badge y el ícono 🔗 de Acc. hacían lo mismo —
-          // solo APLICADO conserva su clic (ver vínculo), el resto de estados
-          // es una etiqueta fija; 🔗 en Acciones es el único disparador de
-          // "conciliar con banco" para evitar el botón duplicado.
+          // Fase A (Wendy, 2026-09-18): el badge ahora navega a la búsqueda
+          // unificada dentro del módulo Conciliación — mismo destino que
+          // tendrá el único botón que quede tras la Fase B (quitar 🔗/🔍
+          // de Acciones). Mientras tanto conviven ambos caminos.
           const esAplicado = estado5 === 'APLICADO';
           const tituloBanco = esAplicado ? 'Click para ver con qué movimiento(s) bancario(s) está vinculado'
-            : estado5 === 'EXCESIVO'  ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Usa 🔗 para revisar y desvincular el que sobra.`
-            : estado5 === 'PARCIAL'   ? `Parcial: ${formatearMoneda(cov.suma)} de ${formatearMoneda(cov.total)} vinculado, falta ${formatearMoneda(cov.falta)}. Usa 🔗 para vincular más movimientos.`
-            : estado5 === 'POSIBLE'   ? 'Hay un movimiento bancario sin vincular con un monto parecido — usa 🔗 para revisar y confirmar.'
-            : 'Usa 🔗 para conciliar con banco';
-          const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap${esAplicado?';cursor:pointer':''}"
-               title="${escapar(tituloBanco)}"${esAplicado ? ` onclick="_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')"` : ''}>${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
+            : estado5 === 'EXCESIVO'  ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Click para revisar y desvincular el que sobra.`
+            : estado5 === 'PARCIAL'   ? `Parcial: ${formatearMoneda(cov.suma)} de ${formatearMoneda(cov.total)} vinculado, falta ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`
+            : estado5 === 'POSIBLE'   ? 'Hay un movimiento bancario sin vincular con un monto parecido — click para revisar y confirmar.'
+            : 'Click para conciliar con banco';
+          const onclickBanco = esAplicado
+            ? `_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')`
+            : `window.location.href='/modules/conciliacion/index.html?buscar=${encodeURIComponent(r.id)}&tipo=COMPRA'`;
+          const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;cursor:pointer"
+               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -272,7 +300,10 @@ async function _renderComprasFiltradas() {
             <td class="celda-truncar" style="--w:190px" title="${escapar(r.proveedor||'')}">${escapar(r.proveedor||'—')}</td>
             <td class="celda-monto">${formatearMoneda(r.bi_gravado_dg, r.moneda==='USD'?'USD':'PEN')}</td>
             <td class="celda-monto">${formatearMoneda(r.igv_ipm_dg, r.moneda==='USD'?'USD':'PEN')}</td>
-            <td class="celda-monto" style="font-weight:600">${formatearMoneda(r.total_cp, r.moneda==='USD'?'USD':'PEN')}</td>
+            <td class="celda-monto" style="font-weight:600">
+              ${formatearMoneda(r.total_cp, r.moneda==='USD'?'USD':'PEN')}
+              ${paresNC.has(r.id) ? `<div style="font-size:9px;color:#D69E2E;font-weight:400" title="Mismo RUC, monto exacto en signo opuesto">🔗 ${Number(r.total_cp)<0?'Anula a':'Anulada por'} ${escapar(paresNC.get(r.id))}</div>` : ''}
+            </td>
             <td>${escapar(r.moneda)}</td>
             <td style="text-align:center">${bancoHtml}</td>
             <td style="text-align:center;white-space:nowrap">

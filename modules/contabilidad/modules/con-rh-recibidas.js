@@ -371,7 +371,9 @@ function _renderRHRTabla() {
             <td class="celda-monto" style="color:var(--color-critico)">${formatearMoneda(r.monto_retencion, mon)}</td>
             <td class="celda-monto" style="font-weight:600;color:var(--color-exito)">${formatearMoneda(r.monto_neto, mon)}</td>
             <td>
-              <span class="badge-estado" style="background:${estInfo.color}">${estInfo.etiqueta}</span>
+              <span class="badge-estado" style="background:${estInfo.color};cursor:pointer"
+                title="${tieneLinks ? 'Click para ver con qué movimiento(s) está vinculado' : 'Click para conciliar con banco'}"
+                onclick="${tieneLinks ? `rhVerLinks('${r.id}','${escapar(nombre)}')` : `window.location.href='/modules/conciliacion/index.html?buscar=${encodeURIComponent(r.id)}&tipo=RH'`}">${estInfo.etiqueta}</span>
             </td>
             <td style="text-align:center;white-space:nowrap">
               <button class="btn-tabla-accion" onclick="rhVerDetalle('${r.id}')" title="Ver detalle completo" style="background:rgba(74,85,104,.1);color:var(--color-texto-suave);margin-right:2px">👁️</button>
