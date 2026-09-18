@@ -420,11 +420,41 @@ async function consolidarEstadosRetroactivo() {
     const uid   = typeof perfil_usuario !== 'undefined' ? (perfil_usuario?.id || null) : null;
     let actualizados = 0;
     let concCreadas  = 0;
+    let proveedorSincronizados = 0;
+    let tipoDocSanados = 0;
+
+    // ── Paso 0: Sanar tipo_doc dañado (bug 2026-09-18 corregido en
+    //    guardarMBD: el desplegable "Tipo DOC" del modal de Movimientos
+    //    escribía por error en tipo_doc — COMPRA/VENTA/RH/PM, la categoría
+    //    interna que usa TODO el sistema para saber a qué comprobante
+    //    pertenece un movimiento — en vez de tipo_comprobante (FA/BO/RH/
+    //    PM/OT). Cada guardado de un movimiento ya vinculado lo corrompía
+    //    en silencio y lo hacía desaparecer del cálculo de su comprobante.
+    //    Aquí se detectan los que quedaron con nro_factura_doc pero
+    //    tipo_doc fuera de las categorías válidas, y se re-detecta
+    //    buscando en Compras/Ventas/RH — igual que hace guardarMBD ahora.
+    const { data: movsRotos } = await _supabase
+      .from('tesoreria_mbd')
+      .select('id,nro_factura_doc,tipo_doc')
+      .eq('empresa_id', empId)
+      .not('nro_factura_doc', 'is', null)
+      .or('tipo_doc.is.null,tipo_doc.not.in.(COMPRA,VENTA,RH,PM)');
+    if (movsRotos?.length && typeof _migBuscarComprobante === 'function') {
+      for (const m of movsRotos) {
+        const comprobante = await _migBuscarComprobante(m.nro_factura_doc, null);
+        if (comprobante?.tipoDoc) {
+          await _supabase.from('tesoreria_mbd')
+            .update({ tipo_doc: comprobante.tipoDoc, fecha_actualizacion: hoy })
+            .eq('id', m.id);
+          tipoDocSanados++;
+        }
+      }
+    }
 
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
     const { data: movsCrudos, error: errMovs } = await _supabase
       .from('tesoreria_mbd')
-      .select('id,proveedor_empresa_personal,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,entrega_doc,fecha_deposito,monto,nro_operacion_bancaria')
+      .select('id,proveedor_empresa_personal,ruc_dni,titular_comprobante,cotizacion,oc,proyecto,concepto,empresa,nro_factura_doc,tipo_doc,entrega_doc,fecha_deposito,monto,nro_operacion_bancaria')
       .eq('empresa_id', empId)
       .not('nro_factura_doc', 'is', null)
       .in('tipo_doc', ['COMPRA', 'VENTA', 'RH', 'PM']);
@@ -447,13 +477,13 @@ async function consolidarEstadosRetroactivo() {
     if (hayCompras) {
       const { data: compras } = await _supabase
         .from('contabilidad_compras')
-        .select('serie_cdp,nro_cp_inicial,proveedor,periodo,total_cp')
+        .select('serie_cdp,nro_cp_inicial,proveedor,nro_doc_identidad,periodo,total_cp')
         .eq('empresa_id', empId);
       (compras || []).forEach(c => {
         const k = [c.serie_cdp, c.nro_cp_inicial].filter(Boolean).join('-');
         if (k) {
           if (!comprasMap.has(k)) comprasMap.set(k, []);
-          comprasMap.get(k).push({ proveedor: c.proveedor || '', periodo: c.periodo || '', total: Number(c.total_cp) || 0 });
+          comprasMap.get(k).push({ proveedor: c.proveedor || '', ruc: c.nro_doc_identidad || '', periodo: c.periodo || '', total: Number(c.total_cp) || 0 });
         }
       });
     }
@@ -464,13 +494,13 @@ async function consolidarEstadosRetroactivo() {
     if (hayVentas) {
       const { data: ventas } = await _supabase
         .from('contabilidad_ventas')
-        .select('serie_cdp,nro_cp_inicial,cliente,periodo,total_cp')
+        .select('serie_cdp,nro_cp_inicial,cliente,nro_doc_identidad,periodo,total_cp')
         .eq('empresa_id', empId);
       (ventas || []).forEach(v => {
         const k = [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-');
         if (k) {
           if (!ventasMap.has(k)) ventasMap.set(k, []);
-          ventasMap.get(k).push({ proveedor: v.cliente || '', periodo: v.periodo || '', total: Number(v.total_cp) || 0 });
+          ventasMap.get(k).push({ proveedor: v.cliente || '', ruc: v.nro_doc_identidad || '', periodo: v.periodo || '', total: Number(v.total_cp) || 0 });
         }
       });
     }
@@ -534,6 +564,39 @@ async function consolidarEstadosRetroactivo() {
             montoMov: sumaGrupo, montoComprobante: mejorCandidato.total,
             proveedor: mejorCandidato.proveedor,
           });
+        }
+
+        // Sincronizar Proveedor/RUC/titular_comprobante (Wendy, 2026-09-18):
+        // vínculos hechos ANTES del fix de dirección se quedaron con el
+        // nombre de quien recibió el depósito en Proveedor/Empresa/Personal
+        // en vez del emisor del comprobante — por eso NO se filtra por
+        // matchNombrePeriodo aquí (el nombre actual es justo lo que puede
+        // estar mal). Se elige el candidato más cercano en período/monto.
+        let candidatoProveedor = null;
+        if (candidatos.length === 1) {
+          candidatoProveedor = candidatos[0];
+        } else if (candidatos.length > 1) {
+          const porPeriodo = candidatos.filter(c => _conPeriodoCercano(periodoMov, c.periodo));
+          const pool = porPeriodo.length ? porPeriodo : candidatos;
+          candidatoProveedor = pool.reduce((a, b) =>
+            Math.abs(sumaGrupo - a.total) <= Math.abs(sumaGrupo - b.total) ? a : b);
+        }
+        if (candidatoProveedor && typeof _resolverProveedorTitular === 'function') {
+          const rt = _resolverProveedorTitular(
+            mov.proveedor_empresa_personal, candidatoProveedor.proveedor,
+            mov.ruc_dni, candidatoProveedor.ruc
+          );
+          const cambiosProv = {};
+          if (rt.proveedor !== (mov.proveedor_empresa_personal || null)) cambiosProv.proveedor_empresa_personal = rt.proveedor;
+          if (rt.ruc !== (mov.ruc_dni || null)) cambiosProv.ruc_dni = rt.ruc;
+          if (rt.titular !== (mov.titular_comprobante || null)) cambiosProv.titular_comprobante = rt.titular;
+          if (Object.keys(cambiosProv).length) {
+            cambiosProv.fecha_actualizacion = hoy;
+            await _supabase.from('tesoreria_mbd').update(cambiosProv).eq('id', mov.id);
+            mov.proveedor_empresa_personal = rt.proveedor;
+            mov.ruc_dni = rt.ruc;
+            proveedorSincronizados++;
+          }
         }
 
         if (claveValida && montoOk) {
@@ -601,11 +664,13 @@ async function consolidarEstadosRetroactivo() {
     // avisa dónde revisarlas, en vez de abrir el reporte aquí mismo.
     const discrepancias = discrepanciasDetalle.length;
     const parts = [`${movs.length} mov. revisados`];
+    if (tipoDocSanados) parts.push(`${tipoDocSanados} tipo_doc dañado(s) sanado(s)`);
     if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
+    if (proveedorSincronizados) parts.push(`${proveedorSincronizados} proveedor/RUC resincronizado(s) con el comprobante`);
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
     if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
     if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revísalas en Conciliación → Verificar montos`);
-    if (!actualizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
+    if (!tipoDocSanados && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
     mostrarToast((discrepancias ? '⚠️ ' : '✅ ') + parts.join(' · '), discrepancias ? 'atencion' : 'exito');
 
     // ── Refrescar módulos abiertos ───────────────────────────────

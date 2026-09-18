@@ -1265,7 +1265,7 @@ async function abrirModalMBD(id = null) {
               <label>Tipo DOC</label>
               <select id="mbd-tipo-doc">
                 <option value="">— Seleccionar —</option>
-                ${TIPOS_DOC_MBD.map(t=>`<option value="${t.val}" ${item?.tipo_doc===t.val?'selected':''}>${t.lab}</option>`).join('')}
+                ${TIPOS_DOC_MBD.map(t=>`<option value="${t.val}" ${item?.tipo_comprobante===t.val?'selected':''}>${t.lab}</option>`).join('')}
               </select>
             </div>
             <div class="campo">
@@ -1377,7 +1377,7 @@ async function guardarMBD(id) {
     ruc_dni:                  document.getElementById('mbd-ruc-dni').value.trim()||null,
     concepto:                 document.getElementById('mbd-concepto').value||null,
     empresa:                  document.getElementById('mbd-empresa').value||null,
-    tipo_doc:                 document.getElementById('mbd-tipo-doc').value||null,
+    tipo_comprobante:         document.getElementById('mbd-tipo-doc').value||null,
     entrega_doc:              document.getElementById('mbd-entrega-doc').value,
     nro_factura_doc:          document.getElementById('mbd-nro-factura').value.trim()||null,
     autorizacion:             document.getElementById('mbd-autorizacion').value||null,
@@ -1397,9 +1397,19 @@ async function guardarMBD(id) {
   // Migración 2.4 — si el N° Factura/DOC coincide con un comprobante ya
   // registrado en Contabilidad, autocompletar lo que falte y fusionar
   // lo que ya esté escrito distinto (nunca sobrescribir en silencio).
-  if (payload.nro_factura_doc && payload.tipo_doc && typeof _migBuscarComprobante === 'function') {
-    const comprobante = await _migBuscarComprobante(payload.nro_factura_doc, payload.tipo_doc);
+  // tipo_doc (COMPRA/VENTA/RH/PM, la categoría interna de vinculación) ya
+  // NO se escribe desde el desplegable "Tipo DOC" de este modal (eso es
+  // tipo_comprobante: FA/BO/RH/PM/OT — bug corregido 2026-09-18: antes
+  // pisaba tipo_doc y rompía en silencio el vínculo de movimientos ya
+  // conciliados en cada guardado). Se detecta sola buscando en Compras/
+  // Ventas/RH, y solo se guarda si de verdad hubo match — nunca se adivina.
+  if (payload.nro_factura_doc && typeof _migBuscarComprobante === 'function') {
+    const comprobante = await _migBuscarComprobante(payload.nro_factura_doc, null);
     if (comprobante) {
+      payload.tipo_doc = comprobante.tipoDoc;
+      if (!payload.tipo_comprobante && typeof _mbdCodigoTipoComprobante === 'function') {
+        payload.tipo_comprobante = _mbdCodigoTipoComprobante(comprobante.tipoDoc, payload.nro_factura_doc);
+      }
       const { autocompletar, conflictos, tercero } = _migCompararCampos(
         { proveedor: payload.proveedor_empresa_personal, ruc: payload.ruc_dni, monto: payload.monto },
         comprobante

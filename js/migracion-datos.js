@@ -12,9 +12,22 @@
    ============================================================ */
 
 // ── Busca un comprobante existente en Contabilidad que coincida con
-//    el N° Factura/DOC + tipo escritos en Tesorería. Solo lectura. ──
+//    el N° Factura/DOC + tipo escritos en Tesorería. Solo lectura.
+//    Si no se sabe la categoría (tipoDoc vacío — ej. al tipear el N°
+//    Factura/DOC a mano sin haber vinculado todavía por 🔗/🔍), se
+//    prueba COMPRA → VENTA → RH en orden y se devuelve `tipoDoc` con la
+//    categoría que sí tuvo match, para que el llamador la guarde junto
+//    con el resto (nunca se adivina ni se deja tipo_doc a medias). ────
 async function _migBuscarComprobante(nroFacturaDoc, tipoDoc) {
-  if (!nroFacturaDoc || !tipoDoc || typeof empresa_activa === 'undefined' || !empresa_activa?.id) return null;
+  if (!nroFacturaDoc || typeof empresa_activa === 'undefined' || !empresa_activa?.id) return null;
+
+  if (!tipoDoc) {
+    for (const candidato of ['COMPRA', 'VENTA', 'RH']) {
+      const encontrado = await _migBuscarComprobante(nroFacturaDoc, candidato);
+      if (encontrado) return { ...encontrado, tipoDoc: candidato };
+    }
+    return null;
+  }
 
   if (tipoDoc === 'COMPRA' || tipoDoc === 'VENTA') {
     const [serie, ...resto] = nroFacturaDoc.split('-');
