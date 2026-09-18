@@ -32,15 +32,26 @@ function actualizarIconoTema() {
 document.addEventListener('DOMContentLoaded', actualizarIconoTema);
 
 /**
- * Zoom visual NEXUM — botón 🔍 en el header. Aplica un zoom real de
- * pantalla (CSS zoom) a un % elegido libremente por el usuario, guardado
- * en sessionStorage: cada pestaña/ventana mantiene su propio nivel, sin
+ * Zoom visual NEXUM — botón 🔍 en el header. Aplica un zoom real (CSS
+ * zoom) a un % elegido libremente por el usuario, guardado en
+ * sessionStorage: cada pestaña/ventana mantiene su propio nivel, sin
  * afectar a otras pestañas del mismo link ni a otros usuarios.
+ * Se aplica SOLO a .contenido-principal (encabezado + área de datos),
+ * nunca a <html>/<body>: el sidebar usa position:fixed + 100vh, y hacer
+ * zoom del documento completo desalinea los elementos fijos (overlays,
+ * pie del sidebar duplicado visualmente) — bug reportado por Wendy,
+ * 2026-09-18.
  */
-(function () {
+function _nexumAplicarZoom(pct) {
+  const el = document.querySelector('.contenido-principal');
+  if (!el) return;
+  el.style.zoom = pct === 100 ? '' : pct + '%';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
   const pct = parseInt(sessionStorage.getItem('nexum_zoom'), 10) || 100;
-  if (pct !== 100) document.documentElement.style.zoom = pct + '%';
-})();
+  if (pct !== 100) _nexumAplicarZoom(pct);
+});
 
 function alternarDensidad() {
   const actual = parseInt(sessionStorage.getItem('nexum_zoom'), 10) || 100;
@@ -49,8 +60,7 @@ function alternarDensidad() {
   let pct = parseInt(input, 10);
   if (isNaN(pct)) return;
   pct = Math.min(200, Math.max(50, pct));
-  if (pct === 100) document.documentElement.style.zoom = '';
-  else document.documentElement.style.zoom = pct + '%';
+  _nexumAplicarZoom(pct);
   sessionStorage.setItem('nexum_zoom', String(pct));
   actualizarIconoDensidad();
 }
