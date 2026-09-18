@@ -315,7 +315,10 @@ async function _dupDescuadresVinculacion() {
   const descuadres = [];
   // Misma tolerancia que el badge EXCESIVO y el bloqueo al vincular (_conCobertura,
   // 0.01) — no una tercera regla distinta para "¿esto es un exceso?" (auditoría 2026-09-18).
-  const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn) => {
+  // mostrarFn: qué N° mostrar en el reporte — puede ser distinto de claveFn (que sirve
+  // solo para EMPAREJAR contra tesoreria_mbd). Nunca se muestra un UUID crudo en pantalla
+  // (fix 2026-09-18: RH mostraba el UUID interno en vez de "E001-23" en este reporte).
+  const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn, mostrarFn) => {
     (comprobantes || []).forEach(c => {
       const clave = claveFn(c);
       if (!clave) return;
@@ -325,7 +328,7 @@ async function _dupDescuadresVinculacion() {
       if (!total) return;
       const cov = _conCobertura(lista, total);
       if (cov.estado === 'PARCIAL' && cov.excede) {
-        descuadres.push({ tipoDoc, nDoc: clave, label: labelFn(c), total, suma: cov.suma, exceso: cov.excede, movs: lista });
+        descuadres.push({ tipoDoc, nDoc: (mostrarFn ? mostrarFn(c) : clave), label: labelFn(c), total, suma: cov.suma, exceso: cov.excede, movs: lista });
       }
     });
   };
@@ -334,8 +337,11 @@ async function _dupDescuadresVinculacion() {
   evaluar(ventas,  'VENTA',  _dupClaveDoc, c => c.cliente   || '—', c => Number(c.total_cp) || 0);
   // RH: nro_factura_doc puede ser el UUID (vínculo manual 🔍/📂) o el N° de RH legible
   // (carga por Excel/Importar MBD) — se evalúan ambas claves, igual criterio que _bmCargarLinks.
-  evaluar(rh, 'RH', c => c.id,        c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0);
-  evaluar(rh, 'RH', c => c.numero_rh, c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0);
+  // En pantalla SIEMPRE se muestra el N° de RH legible (nunca el UUID), igual que en el
+  // resto del sistema (tes-movimientos.js, historico.js, con-conciliar.js).
+  const _rhMostrar = c => c.numero_rh || `RH sin N° · ${(c.id || '').slice(0, 8)}`;
+  evaluar(rh, 'RH', c => c.id,        c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar);
+  evaluar(rh, 'RH', c => c.numero_rh, c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar);
 
   // Un mismo RH puede calzar por las dos claves a la vez — no listarlo dos veces.
   const vistos = new Set();
