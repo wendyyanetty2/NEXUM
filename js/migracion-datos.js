@@ -40,18 +40,46 @@ async function _migBuscarComprobante(nroFacturaDoc, tipoDoc) {
   return null;
 }
 
+// ── Compara dos nombres tolerando orden distinto de palabras y acentos
+//    (Wendy, 2026-09-18: el RH puede tener "ORTEGA GUTIERREZ ASLY MEYLIN
+//    INGRID" y el banco "Asly Meylin Ingrid Ortega Gutierrez" — es la
+//    misma persona, no debe marcarse como pago a tercero). ────────────
+function _migNombreNormalizado(v) {
+  return (v || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toUpperCase().replace(/[^A-Z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+}
+function _migNombresEquivalentes(a, b) {
+  return _migNombreNormalizado(a) === _migNombreNormalizado(b);
+}
+
 // ── Compara los valores del formulario de Tesorería contra el
 //    comprobante encontrado y arma la lista de campos a autocompletar
 //    vs los que están en conflicto (ambos con valor, distintos). ────
+// El Proveedor/Empresa/Personal es un caso aparte (pedido de Wendy,
+// 2026-09-18, punto "Pagos a terceros"): en Tesorería ese campo es a
+// quién se le DEPOSITÓ el dinero (dato del banco) y puede legítimamente
+// no coincidir con el emisor del comprobante (representante legal,
+// tercero autorizado, otra razón social de cobro) — eso NO es un error
+// a corregir eligiendo un valor, así que nunca entra al modal de fusión.
+// Si de verdad son nombres distintos (no solo el mismo nombre en otro
+// orden), se devuelve en `tercero` para que el llamador lo anote solo,
+// sin bloquear el guardado ni forzar una decisión.
 function _migCompararCampos(formVals, comprobante) {
-  const campos = [
-    { key: 'proveedor', label: 'Proveedor / Empresa / Personal', formVal: formVals.proveedor },
-    { key: 'ruc',       label: 'RUC / DNI',                       formVal: formVals.ruc },
-    { key: 'monto',     label: 'Monto',                           formVal: formVals.monto },
-  ];
   const autocompletar = {};
   const conflictos = [];
-  campos.forEach(c => {
+  let tercero = null;
+
+  const vacioProveedor = !(formVals.proveedor || '').trim();
+  if (comprobante.proveedor) {
+    if (vacioProveedor) autocompletar.proveedor = comprobante.proveedor;
+    else if (!_migNombresEquivalentes(formVals.proveedor, comprobante.proveedor)) tercero = comprobante.proveedor;
+  }
+
+  const camposConflicto = [
+    { key: 'ruc',   label: 'RUC / DNI', formVal: formVals.ruc },
+    { key: 'monto', label: 'Monto',     formVal: formVals.monto },
+  ];
+  camposConflicto.forEach(c => {
     const valComp = comprobante[c.key];
     const vacioForm = c.key === 'monto' ? !formVals.monto : !(formVals[c.key] || '').trim();
     if (!valComp && valComp !== 0) return;
@@ -67,7 +95,7 @@ function _migCompararCampos(formVals, comprobante) {
       if (!igual) conflictos.push({ ...c, valComp });
     }
   });
-  return { autocompletar, conflictos };
+  return { autocompletar, conflictos, tercero };
 }
 
 // ── Modal de fusión: por cada campo en conflicto, Wendy elige cuál

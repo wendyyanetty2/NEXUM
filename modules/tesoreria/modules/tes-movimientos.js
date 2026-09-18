@@ -1390,7 +1390,7 @@ async function guardarMBD(id) {
   if (payload.nro_factura_doc && payload.tipo_doc && typeof _migBuscarComprobante === 'function') {
     const comprobante = await _migBuscarComprobante(payload.nro_factura_doc, payload.tipo_doc);
     if (comprobante) {
-      const { autocompletar, conflictos } = _migCompararCampos(
+      const { autocompletar, conflictos, tercero } = _migCompararCampos(
         { proveedor: payload.proveedor_empresa_personal, ruc: payload.ruc_dni, monto: payload.monto },
         comprobante
       );
@@ -1403,9 +1403,20 @@ async function guardarMBD(id) {
           proveedor: payload.proveedor_empresa_personal, ruc: payload.ruc_dni, monto: payload.monto,
         });
         if (!elegido) return; // canceló — no se guarda nada
-        if (elegido.proveedor != null) payload.proveedor_empresa_personal = elegido.proveedor;
-        if (elegido.ruc != null)       payload.ruc_dni = elegido.ruc;
-        if (elegido.monto != null)     payload.monto = elegido.monto;
+        if (elegido.ruc != null)   payload.ruc_dni = elegido.ruc;
+        if (elegido.monto != null) payload.monto = elegido.monto;
+      }
+
+      // Pago a tercero (Wendy, 2026-09-18): el depositario del banco no es el
+      // emisor del comprobante (representante legal, tercero autorizado, etc.).
+      // Se conserva el nombre del banco en Proveedor/Empresa/Personal (nunca se
+      // sobrescribe con esto) y se anota solo el nombre del comprobante en
+      // Observaciones 2, reemplazando una anotación previa si ya existía —
+      // reemplaza el paso manual que hacía Wendy antes.
+      if (tercero) {
+        const tag = `🔖 Comprobante a nombre de: ${tercero}`;
+        const sinTagPrevio = (payload.observaciones_2 || '').replace(/🔖 Comprobante a nombre de:[^|]*\|?\s*/, '').trim();
+        payload.observaciones_2 = [tag, sinTagPrevio].filter(Boolean).join(' | ');
       }
     }
   }
