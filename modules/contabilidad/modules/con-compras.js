@@ -160,7 +160,7 @@ async function _renderComprasFiltradas() {
   const numeros = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicados } = numeros.length
     ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc, ruc_dni, proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
+        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const aplicadosMap = new Map(); // nDoc → [movs...] (sin filtrar por emisor todavía)
   (mbdAplicados || []).forEach(r => {
@@ -666,7 +666,7 @@ async function exportarInfoTrabajadaCompras() {
   const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbd } = numeros.length
     ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
+        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const mapa = new Map();
   (mbd || []).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
@@ -955,7 +955,7 @@ async function _conciliarLoteCompras() {
 
   const numeros = compras.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: yaAplic } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
     : { data: [] };
   const aplicadosSet = new Set((yaAplic || []).map(r => r.nro_factura_doc));
 
@@ -1299,6 +1299,7 @@ async function _verMovBancarioLink(nDoc, tipo, ruc = '', nombre = '') {
     .from('tesoreria_mbd')
     .select('*')
     .eq('empresa_id', empresa_activa.id)
+    .eq('tipo_doc', tipo)
     .eq('nro_factura_doc', nDoc)
     .limit(20);
 

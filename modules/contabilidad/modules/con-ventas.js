@@ -154,7 +154,7 @@ async function _renderVentasFiltradas() {
   const numerosV = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicadosV } = numerosV.length
     ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc, ruc_dni, proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numerosV)
+        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numerosV)
     : { data: [] };
   const aplicadosMapV = new Map(); // nDoc → [movs...] (sin filtrar por emisor todavía)
   (mbdAplicadosV || []).forEach(r => {
@@ -652,7 +652,7 @@ async function exportarInfoTrabajadaVentas() {
   const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbd } = numeros.length
     ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
+        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
     : { data: [] };
   const mapa = new Map();
   (mbd || []).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
@@ -939,7 +939,7 @@ async function _conciliarLoteVentas() {
 
   const numeros = ventas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: yaAplic } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
     : { data: [] };
   const aplicadosSet = new Set((yaAplic || []).map(r => r.nro_factura_doc));
   const pendientes   = ventas.filter(r => {
