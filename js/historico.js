@@ -73,7 +73,7 @@ function _histEtiquetaCobertura(cov) {
 const CAB_MBD = ['N° de operación','Fecha de Deposito','Descripcion','Moneda','Monto',
   'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
   'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.','Tipo de DOC','Autorización',
-  'Observaciones','Detalles Compra / Servicio','Observaciones 2',
+  'Observaciones','Detalles Compra / Servicio','Observaciones 2','A quién se depositó (si difiere)',
   'Estado Conciliación EECC','Tipo Comprobante','Última Actualización'];
 
 // ── Vinculación manual de RH vía 🔍 lupa guarda el UUID del RH en
@@ -101,7 +101,7 @@ function _filasMBD(data, rhNumeroPorId) {
       _histFmtFecha(r.fecha_deposito), r.descripcion||'', r.moneda||'S/', r.monto,
       r.proveedor_empresa_personal||'', r.ruc_dni||'', r.cotizacion||'', r.oc||'', r.proyecto||'',
       r.concepto||'', r.empresa||'', r.entrega_doc||'PENDIENTE', nDoc, r.tipo_doc||'', r.autorizacion||'',
-      r.observaciones||'', r.detalles_compra_servicio||'', r.observaciones_2||'',
+      r.observaciones||'', r.detalles_compra_servicio||'', r.observaciones_2||'', r.titular_comprobante||'',
       r.estado_conciliacion === 'conciliado' ? 'CONCILIADO' : 'PENDIENTE',
       r.tipo_comprobante||'', _histFmtFecha(r.fecha_actualizacion),
     ];

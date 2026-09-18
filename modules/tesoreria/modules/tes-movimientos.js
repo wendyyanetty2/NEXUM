@@ -310,7 +310,7 @@ function renderTablaMovimientos() {
         <td style="${_TD}max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.descripcion||'')}">${escapar(r.descripcion||'—')}</td>
         <td style="${_TD}text-align:center">${escapar(r.moneda||'S/')}</td>
         <td style="${_TD}text-align:right;font-weight:700;color:${Number(r.monto)>=0?'var(--color-exito)':'var(--color-critico)'};white-space:nowrap">${formatearMoneda(r.monto,r.moneda==='USD'?'USD':'PEN')}</td>
-        <td style="${_TD}max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}${r.titular_comprobante ? ' — Comprobante a nombre de: '+escapar(r.titular_comprobante) : ''}">${escapar(r.proveedor_empresa_personal||'—')}${r.titular_comprobante ? ' ⚠️' : ''}</td>
+        <td style="${_TD}max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}${r.titular_comprobante ? ' — Depositado a: '+escapar(r.titular_comprobante) : ''}">${escapar(r.proveedor_empresa_personal||'—')}${r.titular_comprobante ? ' ⚠️' : ''}</td>
         <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.ruc_dni||'—')}</td>
         <td style="${_TD}font-size:11px">${escapar(r.cotizacion||'—')}</td>
         <td style="${_TD}font-size:11px">${escapar(r.oc||'—')}</td>
@@ -440,7 +440,8 @@ async function exportarMovimientosExcel() {
     'Proveedores / Empresa / Personal','RUC / DNI','COTIZACIÓN','OC','Proyecto',
     'Concepto','Empresa','Entrega de FA / DOC / RRHH','Nª Factura o DOC.',
     'Tipo de DOC','Autorización','Observaciones','Detalles Compra / Servicio',
-    'Observaciones 2','Estado Conciliación EECC','Tipo Comprobante','Última Actualización',
+    'Observaciones 2','A quién se depositó (si difiere)','Estado Conciliación EECC',
+    'Tipo Comprobante','Última Actualización',
   ];
 
   const _fmtF = iso => {
@@ -469,6 +470,7 @@ async function exportarMovimientosExcel() {
     r.observaciones || null,
     r.detalles_compra_servicio || null,
     r.observaciones_2 || null,
+    r.titular_comprobante || null,
     r.estado_conciliacion === 'conciliado' ? 'CONCILIADO' : 'PENDIENTE',
     r.tipo_comprobante || null,
     _fmtF(r.fecha_actualizacion) || null,
@@ -1328,10 +1330,11 @@ async function abrirModalMBD(id = null) {
               <input type="text" id="mbd-obs4" value="${escapar(item?.observaciones_4||'')}">
             </div>
             <div class="campo" style="grid-column:span 3">
-              <label>⚠️ Comprobante a nombre de (si difiere del banco)</label>
-              <input type="text" value="${escapar(item?.titular_comprobante||'—')}" disabled
-                title="Se calcula solo al guardar, comparando con el emisor del comprobante vinculado — no se edita aquí"
-                style="opacity:.7">
+              <label>⚠️ A quién se depositó (si difiere del proveedor)</label>
+              <input type="text" id="mbd-titular-comprobante" value="${escapar(item?.titular_comprobante||'')}"
+                placeholder="Se completa solo si el banco pagó a alguien distinto — también editable"
+                title="Proveedor/Empresa/Personal siempre lleva el nombre del comprobante; aquí va quién recibió el depósito si es otra persona/empresa">
+
             </div>
           </div>
         </div>
@@ -1386,6 +1389,7 @@ async function guardarMBD(id) {
     observaciones_2:          document.getElementById('mbd-obs2').value.trim()||null,
     observaciones_3:          document.getElementById('mbd-medio-pago').value||null,
     observaciones_4:          document.getElementById('mbd-obs4').value.trim()||null,
+    titular_comprobante:      document.getElementById('mbd-titular-comprobante').value.trim()||null,
     creado_por:               perfil_usuario.id,
     fecha_actualizacion:      new Date().toISOString(),
   };
@@ -1413,14 +1417,13 @@ async function guardarMBD(id) {
         if (elegido.monto != null) payload.monto = elegido.monto;
       }
 
-      // Pago a tercero (Wendy, 2026-09-18): el depositario del banco no es el
-      // emisor del comprobante (representante legal, tercero autorizado, etc.).
-      // Se conserva el nombre del banco en Proveedor/Empresa/Personal (nunca se
-      // sobrescribe con esto) y el nombre del comprobante se guarda en su propio
-      // campo (titular_comprobante) — nunca mezclado con Observaciones/Obs.2/
-      // Obs.4, que Wendy usa a mano para otras cosas. Se limpia si ya no aplica
-      // (ej. se corrigió el proveedor y ahora coincide).
-      payload.titular_comprobante = tercero || null;
+      // Pago a tercero (Wendy, 2026-09-18): Proveedor/Empresa/Personal siempre
+      // migra al nombre del comprobante (autocompletar.proveedor, arriba). Si
+      // lo que ya estaba escrito era otro nombre (a quién se depositó de
+      // verdad), se guarda en su propio campo (titular_comprobante) — nunca
+      // mezclado con Observaciones/Obs.2/Obs.4. Ese campo también es
+      // editable a mano: si Wendy ya escribió algo ahí, no se pisa.
+      if (!payload.titular_comprobante && tercero) payload.titular_comprobante = tercero;
     }
   }
 

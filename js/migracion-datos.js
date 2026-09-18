@@ -55,15 +55,16 @@ function _migNombresEquivalentes(a, b) {
 // ── Compara los valores del formulario de Tesorería contra el
 //    comprobante encontrado y arma la lista de campos a autocompletar
 //    vs los que están en conflicto (ambos con valor, distintos). ────
-// El Proveedor/Empresa/Personal es un caso aparte (pedido de Wendy,
-// 2026-09-18, punto "Pagos a terceros"): en Tesorería ese campo es a
-// quién se le DEPOSITÓ el dinero (dato del banco) y puede legítimamente
-// no coincidir con el emisor del comprobante (representante legal,
-// tercero autorizado, otra razón social de cobro) — eso NO es un error
-// a corregir eligiendo un valor, así que nunca entra al modal de fusión.
-// Si de verdad son nombres distintos (no solo el mismo nombre en otro
-// orden), se devuelve en `tercero` para que el llamador lo anote solo,
-// sin bloquear el guardado ni forzar una decisión.
+// El Proveedor/Empresa/Personal SIEMPRE migra al nombre oficial del
+// comprobante (Compras/Ventas/RH) — es el dato contable, la fuente de
+// verdad, así que nunca entra al modal de fusión para este campo. Si lo
+// que ya estaba escrito era otro nombre (pedido de Wendy, 2026-09-18,
+// punto "Pagos a terceros": a quién se le DEPOSITÓ el dinero, dato del
+// banco, puede legítimamente no coincidir con el emisor — representante
+// legal, tercero autorizado, otra razón social de cobro), ese nombre se
+// devuelve en `tercero` para que el llamador lo guarde en su propio
+// campo (titular_comprobante), sin bloquear el guardado ni forzar una
+// decisión.
 function _migCompararCampos(formVals, comprobante) {
   const autocompletar = {};
   const conflictos = [];
@@ -71,8 +72,12 @@ function _migCompararCampos(formVals, comprobante) {
 
   const vacioProveedor = !(formVals.proveedor || '').trim();
   if (comprobante.proveedor) {
-    if (vacioProveedor) autocompletar.proveedor = comprobante.proveedor;
-    else if (!_migNombresEquivalentes(formVals.proveedor, comprobante.proveedor)) tercero = comprobante.proveedor;
+    if (vacioProveedor) {
+      autocompletar.proveedor = comprobante.proveedor;
+    } else if (!_migNombresEquivalentes(formVals.proveedor, comprobante.proveedor)) {
+      tercero = formVals.proveedor;
+      autocompletar.proveedor = comprobante.proveedor;
+    }
   }
 
   const camposConflicto = [

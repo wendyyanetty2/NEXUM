@@ -325,21 +325,21 @@ function _conPeriodoCercano(periodoMov, periodoComp) {
   return Math.abs(ym - yc) <= 2;
 }
 
-// ── Pago a terceros (Wendy, 2026-09-18): decide qué va en
-//    proveedor_empresa_personal (a quién se le depositó, dato del banco —
-//    NUNCA se sobrescribe si ya tiene un nombre distinto) y qué va en
-//    titular_comprobante (el emisor del comprobante, solo cuando difiere
-//    de verdad — no solo el mismo nombre en otro orden). Se usa en TODOS
+// ── Pago a terceros (Wendy, 2026-09-18, dirección corregida el mismo día):
+//    proveedor_empresa_personal SIEMPRE migra el nombre oficial del
+//    comprobante (Compras/Ventas/RH) — es el dato contable, la fuente de
+//    verdad. titular_comprobante guarda a quién se le depositó de verdad
+//    el dinero (dato del banco), SOLO cuando es distinto del emisor del
+//    comprobante — nunca el mismo nombre en otro orden. Se usa en TODOS
 //    los caminos que escriben proveedor_empresa_personal al vincular un
-//    comprobante (antes cada uno tenía su propia regla suelta, y algunos
-//    — ej. dividir un movimiento en varios comprobantes — sobrescribían
-//    el nombre del banco sin avisar ni guardar el original en ningún lado).
+//    comprobante, para que la migración de datos (RUC, nombre, serie-
+//    número) sea consistente en todos, no una regla suelta por archivo.
 function _tercNombreNorm(v) {
   return (v || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toUpperCase().replace(/[^A-Z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
 }
 // rucActual/rucComprobante son opcionales — si no se pasan, ruc queda
-// como antes (rucComprobante || rucActual || null) sin protección especial.
+// como antes (rucComprobante || rucActual || null).
 function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucActual, rucComprobante) {
   const actual = (proveedorActual || '').toString().trim();
   const comp   = (proveedorComprobante || '').toString().trim();
@@ -348,13 +348,13 @@ function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucAct
 
   if (!comp)   return { proveedor: actual || null, titular: null, ruc: rucAct };
   if (!actual) return { proveedor: comp, titular: null, ruc: rucComp || rucAct };
-  if (_tercNombreNorm(actual) === _tercNombreNorm(comp)) return { proveedor: actual, titular: null, ruc: rucComp || rucAct };
-  // Pago a tercero: el RUC del comprobante NO corresponde al nombre que ya
-  // estaba (sería mezclar el nombre de uno con el RUC de otro, como el caso
-  // reportado por Wendy: "Valencia Nanez..." con el RUC de "TIENDAS DEL
-  // MEJORAMIENTO..."). Se conserva el RUC que ya tenía el movimiento, igual
-  // que el nombre.
-  return { proveedor: actual, titular: comp, ruc: rucAct };
+  if (_tercNombreNorm(actual) === _tercNombreNorm(comp)) return { proveedor: comp, titular: null, ruc: rucComp || rucAct };
+  // Pago a tercero: el nombre que ya estaba en el movimiento (quien
+  // realmente recibió el depósito, ej. "Valencia Nanez...") no es el
+  // emisor del comprobante (ej. "TIENDAS DEL MEJORAMIENTO...") — el campo
+  // Proveedor/Empresa/Personal migra igual al emisor del comprobante (dato
+  // contable correcto) y el nombre del depositario se guarda aparte.
+  return { proveedor: comp, titular: actual, ruc: rucComp || rucAct };
 }
 
 // ── Refresca las vistas cuyo estado se calcula en vivo desde tesoreria_mbd
