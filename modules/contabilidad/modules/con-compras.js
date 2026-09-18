@@ -1178,7 +1178,7 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = 
 async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = '', ruc = '', total = 0) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto,proveedor_empresa_personal').eq('id', movId).maybeSingle();
+  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto,proveedor_empresa_personal,ruc_dni').eq('id', movId).maybeSingle();
 
   if (typeof _conValidarAntesDeVincular === 'function') {
     const val = await _conValidarAntesDeVincular(empresa_activa.id, tipoDoc, nDoc, total, movId, movPrevio?.monto);
@@ -1201,13 +1201,14 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
   // tercero), se conserva y el del comprobante se guarda aparte en
   // titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
   if (typeof _resolverProveedorTitular === 'function') {
-    const rt = _resolverProveedorTitular(movPrevio?.proveedor_empresa_personal, proveedor);
+    const rt = _resolverProveedorTitular(movPrevio?.proveedor_empresa_personal, proveedor, movPrevio?.ruc_dni, ruc);
     patch.proveedor_empresa_personal = rt.proveedor;
     patch.titular_comprobante = rt.titular;
-  } else if (proveedor) {
-    patch.proveedor_empresa_personal = proveedor;
+    patch.ruc_dni = rt.ruc;
+  } else {
+    if (proveedor) patch.proveedor_empresa_personal = proveedor;
+    if (ruc) patch.ruc_dni = ruc;
   }
-  if (ruc) patch.ruc_dni = ruc;
 
   const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
 
@@ -1254,10 +1255,10 @@ async function _cAplicarLoteConciliacion(items) {
       if (!val.ok) { bloqueados.push(item.nDoc); continue; }
     }
 
-    let rt = { proveedor: item.proveedor || undefined, titular: null };
+    let rt = { proveedor: item.proveedor || undefined, titular: null, ruc: item.ruc || undefined };
     if (typeof _resolverProveedorTitular === 'function') {
-      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal').eq('id', item.movId).maybeSingle();
-      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.proveedor);
+      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni').eq('id', item.movId).maybeSingle();
+      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.proveedor, movActual?.ruc_dni, item.ruc);
     }
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
@@ -1267,7 +1268,7 @@ async function _cAplicarLoteConciliacion(items) {
       estado_conciliacion:  'conciliado',
       proveedor_empresa_personal: rt.proveedor,
       titular_comprobante: rt.titular,
-      ruc_dni:              item.ruc || undefined,
+      ruc_dni:              rt.ruc,
       fecha_actualizacion:  hoy,
     }).eq('id', item.movId);
 

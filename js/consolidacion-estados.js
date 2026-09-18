@@ -338,13 +338,23 @@ function _tercNombreNorm(v) {
   return (v || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toUpperCase().replace(/[^A-Z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
 }
-function _resolverProveedorTitular(proveedorActual, proveedorComprobante) {
+// rucActual/rucComprobante son opcionales — si no se pasan, ruc queda
+// como antes (rucComprobante || rucActual || null) sin protección especial.
+function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucActual, rucComprobante) {
   const actual = (proveedorActual || '').toString().trim();
   const comp   = (proveedorComprobante || '').toString().trim();
-  if (!comp)   return { proveedor: actual || null, titular: null };
-  if (!actual) return { proveedor: comp, titular: null };
-  if (_tercNombreNorm(actual) === _tercNombreNorm(comp)) return { proveedor: actual, titular: null };
-  return { proveedor: actual, titular: comp };
+  const rucAct = (rucActual || '').toString().trim() || null;
+  const rucComp = (rucComprobante || '').toString().trim() || null;
+
+  if (!comp)   return { proveedor: actual || null, titular: null, ruc: rucAct };
+  if (!actual) return { proveedor: comp, titular: null, ruc: rucComp || rucAct };
+  if (_tercNombreNorm(actual) === _tercNombreNorm(comp)) return { proveedor: actual, titular: null, ruc: rucComp || rucAct };
+  // Pago a tercero: el RUC del comprobante NO corresponde al nombre que ya
+  // estaba (sería mezclar el nombre de uno con el RUC de otro, como el caso
+  // reportado por Wendy: "Valencia Nanez..." con el RUC de "TIENDAS DEL
+  // MEJORAMIENTO..."). Se conserva el RUC que ya tenía el movimiento, igual
+  // que el nombre.
+  return { proveedor: actual, titular: comp, ruc: rucAct };
 }
 
 // ── Refresca las vistas cuyo estado se calcula en vivo desde tesoreria_mbd

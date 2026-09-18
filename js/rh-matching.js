@@ -223,13 +223,14 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
       // tercero), se conserva y el del RH se guarda aparte en titular_comprobante
       // — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
       if (typeof _resolverProveedorTitular === 'function') {
-        const rt = _resolverProveedorTitular(mbd.proveedor_empresa_personal, rh?.nombre_emisor);
+        const rt = _resolverProveedorTitular(mbd.proveedor_empresa_personal, rh?.nombre_emisor, mbd.ruc_dni, rh?.nro_doc_emisor);
         patch.proveedor_empresa_personal = rt.proveedor;
         patch.titular_comprobante = rt.titular;
-      } else if (rh?.nombre_emisor) {
-        patch.proveedor_empresa_personal = rh.nombre_emisor;
+        patch.ruc_dni = rt.ruc;
+      } else {
+        if (rh?.nombre_emisor)  patch.proveedor_empresa_personal = rh.nombre_emisor;
+        if (rh?.nro_doc_emisor) patch.ruc_dni = rh.nro_doc_emisor;
       }
-      if (rh?.nro_doc_emisor) patch.ruc_dni = rh.nro_doc_emisor;
 
       // EMITIDO solo si TODOS los campos clave están completos
       const proveedor = (patch.proveedor_empresa_personal || mbd.proveedor_empresa_personal || '').trim();

@@ -801,13 +801,14 @@ async function _conVincularComprobante(doc, movId) {
     fecha_actualizacion: hoy,
   };
   if (typeof _resolverProveedorTitular === 'function') {
-    const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor);
+    const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor, mov.ruc_dni, doc.ruc);
     patch.proveedor_empresa_personal = rt.proveedor;
     patch.titular_comprobante = rt.titular;
-  } else if (doc.proveedor) {
-    patch.proveedor_empresa_personal = doc.proveedor;
+    patch.ruc_dni = rt.ruc;
+  } else {
+    if (doc.proveedor) patch.proveedor_empresa_personal = doc.proveedor;
+    if (doc.ruc) patch.ruc_dni = doc.ruc;
   }
-  if (doc.ruc) patch.ruc_dni = doc.ruc;
 
   const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
   if (error) { mostrarToast('Error al vincular: ' + error.message, 'error'); return; }
@@ -1214,15 +1215,15 @@ async function _aprobarMatchMultiComprobante(key, idx) {
   let ok = 0, errores = 0;
   for (const d of item.docs) {
     const rt = typeof _resolverProveedorTitular === 'function'
-      ? _resolverProveedorTitular(base.proveedor_empresa_personal, d._proveedor)
-      : { proveedor: d._proveedor || base.proveedor_empresa_personal || null, titular: null };
+      ? _resolverProveedorTitular(base.proveedor_empresa_personal, d._proveedor, base.ruc_dni, d._ruc)
+      : { proveedor: d._proveedor || base.proveedor_empresa_personal || null, titular: null, ruc: d._ruc || base.ruc_dni || null };
     const { data: ins, error: errIns } = await _supabase.from('tesoreria_mbd').insert({
       empresa_id: base.empresa_id, nro_operacion_bancaria: base.nro_operacion_bancaria,
       fecha_deposito: base.fecha_deposito, moneda: base.moneda, monto: signo * Math.abs(d._total || 0),
       descripcion: (base.descripcion || '') + ` (${d._ndoc})`,
       proveedor_empresa_personal: rt.proveedor,
       titular_comprobante: rt.titular,
-      ruc_dni: d._ruc || base.ruc_dni || null,
+      ruc_dni: rt.ruc,
       tipo_doc: d._tipo, nro_factura_doc: d._ndoc,
       tipo_comprobante: _conCodigoTipoComprobante(d._tipo, d._ndoc),
       estado_conciliacion: 'conciliado', entrega_doc: 'OBSERVADO', fecha_actualizacion: hoy,
@@ -1703,14 +1704,16 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
     fecha_actualizacion:  hoy,
   };
   if (typeof _resolverProveedorTitular === 'function') {
-    const rt = _resolverProveedorTitular(itemLocal?.mov?.proveedor_empresa_personal, itemLocal?.doc?._proveedor);
+    const rt = _resolverProveedorTitular(itemLocal?.mov?.proveedor_empresa_personal, itemLocal?.doc?._proveedor, itemLocal?.mov?.ruc_dni, itemLocal?.doc?._ruc);
     updateMov.proveedor_empresa_personal = rt.proveedor;
     updateMov.titular_comprobante = rt.titular;
-  } else if (itemLocal?.doc?._proveedor && !itemLocal?.mov?.proveedor_empresa_personal) {
-    updateMov.proveedor_empresa_personal = itemLocal.doc._proveedor;
+    updateMov.ruc_dni = rt.ruc;
+  } else {
+    if (itemLocal?.doc?._proveedor && !itemLocal?.mov?.proveedor_empresa_personal)
+      updateMov.proveedor_empresa_personal = itemLocal.doc._proveedor;
+    if (itemLocal?.doc?._ruc && !itemLocal?.mov?.ruc_dni)
+      updateMov.ruc_dni = itemLocal.doc._ruc;
   }
-  if (itemLocal?.doc?._ruc && !itemLocal?.mov?.ruc_dni)
-    updateMov.ruc_dni = itemLocal.doc._ruc;
 
   const { error: errMov } = await _supabase
     .from('tesoreria_mbd')
@@ -1798,14 +1801,14 @@ async function _aprobarMatchMulti(key, idx) {
       fecha_actualizacion:  hoy,
     };
     if (typeof _resolverProveedorTitular === 'function') {
-      const rt = _resolverProveedorTitular(m.proveedor_empresa_personal, d._proveedor);
+      const rt = _resolverProveedorTitular(m.proveedor_empresa_personal, d._proveedor, m.ruc_dni, d._ruc);
       updateMov.proveedor_empresa_personal = rt.proveedor;
       updateMov.titular_comprobante = rt.titular;
-    } else if (d._proveedor && !m.proveedor_empresa_personal) {
-      updateMov.proveedor_empresa_personal = d._proveedor;
+      updateMov.ruc_dni = rt.ruc;
+    } else {
+      if (d._proveedor && !m.proveedor_empresa_personal) updateMov.proveedor_empresa_personal = d._proveedor;
+      if (d._ruc && !m.ruc_dni) updateMov.ruc_dni = d._ruc;
     }
-    if (d._ruc && !m.ruc_dni)
-      updateMov.ruc_dni = d._ruc;
 
     const { error: errMov } = await _supabase.from('tesoreria_mbd').update(updateMov).eq('id', m.id);
     if (errMov) { errores++; continue; }
@@ -1871,14 +1874,14 @@ async function _aprobarEnLote() {
       fecha_actualizacion:  hoy,
     };
     if (typeof _resolverProveedorTitular === 'function') {
-      const rt = _resolverProveedorTitular(item.mov.proveedor_empresa_personal, item.doc._proveedor);
+      const rt = _resolverProveedorTitular(item.mov.proveedor_empresa_personal, item.doc._proveedor, item.mov.ruc_dni, item.doc._ruc);
       updLote.proveedor_empresa_personal = rt.proveedor;
       updLote.titular_comprobante = rt.titular;
-    } else if (item.doc._proveedor && !item.mov.proveedor_empresa_personal) {
-      updLote.proveedor_empresa_personal = item.doc._proveedor;
+      updLote.ruc_dni = rt.ruc;
+    } else {
+      if (item.doc._proveedor && !item.mov.proveedor_empresa_personal) updLote.proveedor_empresa_personal = item.doc._proveedor;
+      if (item.doc._ruc && !item.mov.ruc_dni) updLote.ruc_dni = item.doc._ruc;
     }
-    if (item.doc._ruc && !item.mov.ruc_dni)
-      updLote.ruc_dni = item.doc._ruc;
     const { error: e1 } = await _supabase.from('tesoreria_mbd')
       .update(updLote).eq('id', item.mov.id);
 

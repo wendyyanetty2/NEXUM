@@ -1050,10 +1050,10 @@ async function _vAplicarLoteConciliacion(items) {
       if (!val.ok) { bloqueados.push(item.nDoc); continue; }
     }
 
-    let rt = { proveedor: item.cliente || undefined, titular: null };
+    let rt = { proveedor: item.cliente || undefined, titular: null, ruc: item.ruc || undefined };
     if (typeof _resolverProveedorTitular === 'function') {
-      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal').eq('id', item.movId).maybeSingle();
-      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.cliente);
+      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni').eq('id', item.movId).maybeSingle();
+      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.cliente, movActual?.ruc_dni, item.ruc);
     }
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
@@ -1063,7 +1063,7 @@ async function _vAplicarLoteConciliacion(items) {
       estado_conciliacion:  'conciliado',
       proveedor_empresa_personal: rt.proveedor,
       titular_comprobante: rt.titular,
-      ruc_dni:              item.ruc || undefined,
+      ruc_dni:              rt.ruc,
       fecha_actualizacion:  hoy,
     }).eq('id', item.movId);
 

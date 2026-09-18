@@ -310,13 +310,14 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
   // (pago a tercero), se conserva y el del comprobante se guarda aparte en
   // titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
   if (tabla === 'tesoreria_mbd' && typeof _resolverProveedorTitular === 'function') {
-    const rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, extra.proveedor);
+    const rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, extra.proveedor, movActual?.ruc_dni, extra.ruc);
     updatePayload.proveedor_empresa_personal = rt.proveedor;
     updatePayload.titular_comprobante = rt.titular;
-  } else if (extra.proveedor) {
-    updatePayload.proveedor_empresa_personal = extra.proveedor;
+    updatePayload.ruc_dni = rt.ruc;
+  } else {
+    if (extra.proveedor) updatePayload.proveedor_empresa_personal = extra.proveedor;
+    if (extra.ruc) updatePayload.ruc_dni = extra.ruc;
   }
-  if (extra.ruc) updatePayload.ruc_dni = extra.ruc;
 
   const { error: errMov } = await _supabase.from(tabla).update(updatePayload).eq('id', movBancoId);
   if (errMov) { mostrarToast('Error al vincular: ' + errMov.message, 'error'); return; }
@@ -798,8 +799,8 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
   // del comprobante (pago a tercero), se conserva y el del comprobante se guarda
   // aparte en titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
   const rtDiv = typeof _resolverProveedorTitular === 'function'
-    ? _resolverProveedorTitular(r.proveedor_empresa_personal, proveedor)
-    : { proveedor: proveedor || r.proveedor_empresa_personal || null, titular: null };
+    ? _resolverProveedorTitular(r.proveedor_empresa_personal, proveedor, r.ruc_dni, ruc)
+    : { proveedor: proveedor || r.proveedor_empresa_personal || null, titular: null, ruc: ruc || r.ruc_dni || null };
   const nuevasFilas = [
     {
       empresa_id: r.empresa_id, nro_operacion_bancaria: r.nro_operacion_bancaria,
@@ -807,7 +808,7 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
       descripcion: (r.descripcion || '') + ' (1/2)',
       proveedor_empresa_personal: rtDiv.proveedor,
       titular_comprobante: rtDiv.titular,
-      ruc_dni: ruc || r.ruc_dni || null,
+      ruc_dni: rtDiv.ruc,
       tipo_doc: docTipo, nro_factura_doc: nDoc,
       tipo_comprobante: _mbdCodigoTipoComprobante(docTipo, nDoc),
       estado_conciliacion: 'conciliado',
