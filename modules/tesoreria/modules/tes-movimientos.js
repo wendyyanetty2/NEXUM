@@ -310,7 +310,7 @@ function renderTablaMovimientos() {
         <td style="${_TD}max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.descripcion||'')}">${escapar(r.descripcion||'—')}</td>
         <td style="${_TD}text-align:center">${escapar(r.moneda||'S/')}</td>
         <td style="${_TD}text-align:right;font-weight:700;color:${Number(r.monto)>=0?'var(--color-exito)':'var(--color-critico)'};white-space:nowrap">${formatearMoneda(r.monto,r.moneda==='USD'?'USD':'PEN')}</td>
-        <td style="${_TD}max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}">${escapar(r.proveedor_empresa_personal||'—')}</td>
+        <td style="${_TD}max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}${r.titular_comprobante ? ' — Comprobante a nombre de: '+escapar(r.titular_comprobante) : ''}">${escapar(r.proveedor_empresa_personal||'—')}${r.titular_comprobante ? ' ⚠️' : ''}</td>
         <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.ruc_dni||'—')}</td>
         <td style="${_TD}font-size:11px">${escapar(r.cotizacion||'—')}</td>
         <td style="${_TD}font-size:11px">${escapar(r.oc||'—')}</td>
@@ -1327,6 +1327,12 @@ async function abrirModalMBD(id = null) {
               <label>Obs. 4</label>
               <input type="text" id="mbd-obs4" value="${escapar(item?.observaciones_4||'')}">
             </div>
+            <div class="campo" style="grid-column:span 3">
+              <label>⚠️ Comprobante a nombre de (si difiere del banco)</label>
+              <input type="text" value="${escapar(item?.titular_comprobante||'—')}" disabled
+                title="Se calcula solo al guardar, comparando con el emisor del comprobante vinculado — no se edita aquí"
+                style="opacity:.7">
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -1410,14 +1416,11 @@ async function guardarMBD(id) {
       // Pago a tercero (Wendy, 2026-09-18): el depositario del banco no es el
       // emisor del comprobante (representante legal, tercero autorizado, etc.).
       // Se conserva el nombre del banco en Proveedor/Empresa/Personal (nunca se
-      // sobrescribe con esto) y se anota solo el nombre del comprobante en
-      // Observaciones 2, reemplazando una anotación previa si ya existía —
-      // reemplaza el paso manual que hacía Wendy antes.
-      if (tercero) {
-        const tag = `🔖 Comprobante a nombre de: ${tercero}`;
-        const sinTagPrevio = (payload.observaciones_2 || '').replace(/🔖 Comprobante a nombre de:[^|]*\|?\s*/, '').trim();
-        payload.observaciones_2 = [tag, sinTagPrevio].filter(Boolean).join(' | ');
-      }
+      // sobrescribe con esto) y el nombre del comprobante se guarda en su propio
+      // campo (titular_comprobante) — nunca mezclado con Observaciones/Obs.2/
+      // Obs.4, que Wendy usa a mano para otras cosas. Se limpia si ya no aplica
+      // (ej. se corrigió el proveedor y ahora coincide).
+      payload.titular_comprobante = tercero || null;
     }
   }
 
