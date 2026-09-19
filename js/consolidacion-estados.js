@@ -293,6 +293,30 @@ function _conEvalCompletitud14(mov) {
   return todosCompletos ? 'EMITIDO' : 'OBSERVADO';
 }
 
+// ── Qué datos le faltan a un movimiento para ser EMITIDO (mismos 14 campos que
+//    _conEvalCompletitud14, en el mismo orden). Solo informa: no cambia estados.
+//    Sirve para explicar por qué quedó OBSERVADO (o PENDIENTE) — p. ej. al
+//    dividir una transferencia (Wendy, 2026-09-19). Devuelve [] si está completo.
+function _conCamposFaltantes14(mov) {
+  const ok = v => !!(v && String(v).trim());
+  const faltan = [];
+  if (!ok(mov.nro_factura_doc)) faltan.push('N° Factura/DOC');
+  if (!ok(mov.nro_operacion_bancaria)) faltan.push('N° operación');
+  if (!ok(mov.fecha_deposito)) faltan.push('Fecha');
+  if (!ok(mov.descripcion)) faltan.push('Descripción');
+  if (!ok(mov.moneda)) faltan.push('Moneda');
+  if (!((mov.monto || mov.monto === 0) && mov.monto !== '')) faltan.push('Monto');
+  if (!ok(mov.proveedor_empresa_personal)) faltan.push('Proveedor');
+  if (!ok(mov.ruc_dni)) faltan.push('RUC/DNI');
+  if (!(ok(mov.cotizacion) || ok(mov.oc))) faltan.push('Cotización u OC');
+  if (!ok(mov.proyecto)) faltan.push('Proyecto');
+  if (!ok(mov.concepto)) faltan.push('Concepto');
+  if (!ok(mov.empresa)) faltan.push('Empresa');
+  if (!(ok(mov.tipo_doc) || ok(mov.tipo_comprobante))) faltan.push('Tipo DOC');
+  if (!ok(mov.autorizacion)) faltan.push('Autorización');
+  return faltan;
+}
+
 // ── Extrae período YYYYMM de una fecha YYYY-MM-DD ───────────────
 function _conPeriodoFromFecha(fecha) {
   if (!fecha) return '';

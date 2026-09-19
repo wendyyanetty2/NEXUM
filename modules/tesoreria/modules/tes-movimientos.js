@@ -1403,6 +1403,7 @@ async function guardarMBD(id) {
   // pisaba tipo_doc y rompía en silencio el vínculo de movimientos ya
   // conciliados en cada guardado). Se detecta sola buscando en Compras/
   // Ventas/RH, y solo se guarda si de verdad hubo match — nunca se adivina.
+  let vinculo = null; // comprobante de Contabilidad al que quedó afiliado este movimiento
   if (payload.nro_factura_doc && typeof _migBuscarComprobante === 'function') {
     // Si el N° lo comparten varios comprobantes (ej. factura y RH, o el mismo RH de dos
     // emisores) se abre un aviso para elegir cuál vincular — no se adivina (2026-09-19).
@@ -1412,7 +1413,12 @@ async function guardarMBD(id) {
     });
     if (comprobante?.cancelado) return; // canceló el aviso — no se guarda nada
     if (comprobante) {
+      vinculo = comprobante;
       payload.tipo_doc = comprobante.tipoDoc;
+      // Igual que todos los caminos de vinculación del sistema: los RH se guardan con su
+      // UUID (el N° de RH puede repetirse entre emisores) y Compras/Ventas con el N° tal
+      // como está en el comprobante (Contabilidad los busca por igualdad exacta).
+      payload.nro_factura_doc = comprobante.tipoDoc === 'RH' ? comprobante.id : (comprobante.nro || payload.nro_factura_doc);
       if (!payload.tipo_comprobante && typeof _mbdCodigoTipoComprobante === 'function') {
         payload.tipo_comprobante = _mbdCodigoTipoComprobante(comprobante.tipoDoc, payload.nro_factura_doc);
       }
@@ -1440,6 +1446,25 @@ async function guardarMBD(id) {
       // mezclado con Observaciones/Obs.2/Obs.4. Ese campo también es
       // editable a mano: si Wendy ya escribió algo ahí, no se pisa.
       if (!payload.titular_comprobante && tercero) payload.titular_comprobante = tercero;
+    }
+  }
+
+  // Regla del sistema al vincular (la misma que aplican Compras/Ventas/RH/Conciliación): lo
+  // vinculado a un comprobante no puede pasarse de su total — bloquea o pregunta según el
+  // margen. Solo si el movimiento es nuevo o si cambió el comprobante: guardar otros datos de
+  // un movimiento ya vinculado no debe volver a disparar el aviso.
+  if (vinculo && typeof _conValidarAntesDeVincular === 'function') {
+    let nroPrevio = null;
+    if (id) {
+      const { data: previo } = await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('id', id).maybeSingle();
+      nroPrevio = previo?.nro_factura_doc || null;
+    }
+    if (!id || nroPrevio !== payload.nro_factura_doc) {
+      const val = await _conValidarAntesDeVincular(
+        empresa_activa.id, vinculo.tipoDoc, payload.nro_factura_doc, vinculo.monto, id || null, payload.monto,
+        { ruc: vinculo.ruc, nombre: vinculo.proveedor }
+      );
+      if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
     }
   }
 
@@ -1711,9 +1736,38 @@ async function _confirmarDividirMBD() {
     comprobantes.push(comp);
   }
 
+  // Regla del sistema al vincular (igual que Compras/Ventas/RH/Conciliación): lo vinculado a
+  // un comprobante no puede pasarse de su total — bloquea o pregunta según el margen. Varias
+  // filas de esta misma división pueden ir al MISMO comprobante (pago dividido): se validan
+  // juntas por su suma. La fila original (que se elimina al final) se excluye del cálculo.
+  if (typeof _conValidarAntesDeVincular === 'function') {
+    const grupos = new Map();
+    comprobantes.forEach((comp, i) => {
+      if (!comp) return;
+      const nroKey = comp.tipoDoc === 'RH' ? comp.id : (comp.nro || _dividirFilas[i].nrodoc);
+      const k = `${comp.tipoDoc}|${comp.id}`;
+      if (!grupos.has(k)) grupos.set(k, { comp, nroKey, monto: 0 });
+      grupos.get(k).monto += Math.abs(parseFloat(_dividirFilas[i].monto) || 0);
+    });
+    for (const g of grupos.values()) {
+      const val = await _conValidarAntesDeVincular(
+        empresa_activa.id, g.comp.tipoDoc, g.nroKey, g.comp.monto, r.id, g.monto,
+        { ruc: g.comp.ruc, nombre: g.comp.proveedor }
+      );
+      if (!val.ok) {
+        await _conAlertaBloqueo(val.mensaje);
+        if (btn) { btn.disabled = false; btn.textContent = `✂️ Confirmar división (${n} comprobantes)`; }
+        return;
+      }
+    }
+  }
+
   // Construir las N filas hijas
   const nuevasFilas = _dividirFilas.map((f, i) => {
     const comp = comprobantes[i];
+    // N° a guardar: igual que al vincular en el resto del sistema — RH con su UUID (el N° de
+    // RH puede repetirse entre emisores), Compras/Ventas con el N° exacto del comprobante.
+    const nroGuardar = comp ? (comp.tipoDoc === 'RH' ? comp.id : (comp.nro || f.nrodoc)) : (f.nrodoc || null);
     // Proveedor/RUC/titular con la regla central de pago a terceros (igual que al vincular).
     const rt = comp && typeof _resolverProveedorTitular === 'function'
       ? _resolverProveedorTitular(f.proveedor || r.proveedor_empresa_personal, comp.proveedor, f.ruc, comp.ruc)
@@ -1735,7 +1789,7 @@ async function _confirmarDividirMBD() {
           descripcion, moneda: r.moneda, monto: f.monto,
           proveedor_empresa_personal: proveedor, ruc_dni: rucFila,
           cotizacion, oc, proyecto, concepto, empresa,
-          nro_factura_doc: f.nrodoc, tipo_doc: comp?.tipoDoc || null, tipo_comprobante: tipoComprobante, autorizacion: r.autorizacion,
+          nro_factura_doc: nroGuardar, tipo_doc: comp?.tipoDoc || null, tipo_comprobante: tipoComprobante, autorizacion: r.autorizacion,
         })
       : 'PENDIENTE';
     return {
@@ -1752,7 +1806,7 @@ async function _confirmarDividirMBD() {
       tipo_doc:                   comp?.tipoDoc || null,
       tipo_comprobante:           tipoComprobante,
       titular_comprobante:        rt?.titular || null,
-      nro_factura_doc:            f.nrodoc || null,
+      nro_factura_doc:            nroGuardar,
       entrega_doc:                estadoDoc,
       concepto,
       empresa,
@@ -1784,7 +1838,24 @@ async function _confirmarDividirMBD() {
     return;
   }
 
-  mostrarToast(`✅ Transferencia dividida en ${n} comprobantes. Estado asignado según completitud de campos.`, 'exito');
+  // Resumen: el estado de cada fila sale de la regla de los 14 campos (igual que al vincular
+  // en el resto del sistema) y es el que Contabilidad refleja en sus comprobantes. Se explica
+  // qué le falta a las que no quedaron EMITIDO.
+  const porEstado = {};
+  nuevasFilas.forEach(fila => { porEstado[fila.entrega_doc] = (porEstado[fila.entrega_doc] || 0) + 1; });
+  const conteo = ['EMITIDO', 'OBSERVADO', 'PENDIENTE'].filter(e => porEstado[e]).map(e => `${porEstado[e]} ${e}`).join(' · ');
+  // OBSERVADO = tiene N° de comprobante pero le faltan datos; PENDIENTE = no tiene N° de comprobante.
+  const faltanObservados = typeof _conCamposFaltantes14 === 'function'
+    ? [...new Set(nuevasFilas.filter(fila => fila.entrega_doc === 'OBSERVADO').flatMap(fila => _conCamposFaltantes14(fila)))]
+    : [];
+  const hayPendienteObs = !!(porEstado.OBSERVADO || porEstado.PENDIENTE);
+  mostrarToast(
+    `${hayPendienteObs ? '⚠️' : '✅'} Transferencia dividida en ${n} comprobantes: ${conteo}.`
+    + (faltanObservados.length ? ` OBSERVADO: falta ${faltanObservados.join(', ')}.` : '')
+    + (porEstado.PENDIENTE ? ' PENDIENTE: falta el N° de comprobante.' : '')
+    + ' Contabilidad refleja estos estados en sus comprobantes.',
+    hayPendienteObs ? 'atencion' : 'exito'
+  );
   _cerrarModalDividir();
   cargarMovimientos(true);
 }
