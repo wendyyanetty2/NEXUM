@@ -2428,6 +2428,8 @@ async function _renderHistorial(wrap) {
     .gte('fecha_deposito', `${yyyy}-${mm}-01`)
     .lte('fecha_deposito', fin)
     .order('fecha_deposito', { ascending: false });
+  // El N° de comprobante de un RH puede estar guardado como UUID: se muestra su N° legible.
+  const mapaRHHist = errMovs ? new Map() : await _conMapaNumeroRH(movs);
 
   if (errMovs) {
     wrap.innerHTML = `<div class="alerta-error">${escapar(errMovs.message)}</div>`;
@@ -2495,7 +2497,7 @@ async function _renderHistorial(wrap) {
               <td style="${_TD};text-align:right;font-weight:700;white-space:nowrap;color:${Number(m.monto) < 0 ? 'var(--color-critico)' : 'var(--color-exito)'}">
                 ${formatearMoneda(m.monto, m.moneda === 'USD' ? 'USD' : 'PEN')}</td>
               <td style="${_TD}">${_tdEstado(m.entrega_doc)}</td>
-              <td style="${_TD};font-weight:600;color:var(--color-secundario);white-space:nowrap">${escapar(m.nro_factura_doc || '—')}</td>
+              <td style="${_TD};font-weight:600;color:var(--color-secundario);white-space:nowrap">${escapar(_conNroFacturaLegible(m, mapaRHHist) || '—')}</td>
               <td style="${_TD};text-align:center">
                 ${m.tipo_doc
                   ? `<span style="background:#2C5282;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">${escapar(m.tipo_doc)}</span>`
@@ -2538,6 +2540,8 @@ async function _verDocumentosEnlazados(movId, nroOp) {
 
   const mov     = resMov.data;
   const concils = resConcils.data || [];
+  // El N° de comprobante de un RH puede estar guardado como UUID: se muestra su N° legible.
+  const mapaRHDet = mov ? await _conMapaNumeroRH([mov]) : new Map();
 
   const _fila = (lbl, val) => `<div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:13px;border-bottom:1px solid var(--color-borde)">
     <span style="color:var(--color-texto-suave);font-size:12px;flex-shrink:0;margin-right:16px">${lbl}</span>
@@ -2598,7 +2602,7 @@ async function _verDocumentosEnlazados(movId, nroOp) {
           ${_fila('Proveedor',      escapar(mov.proveedor_empresa_personal || '—'))}
           ${_fila('Monto',          `<strong style="color:${Number(mov.monto)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda(mov.monto, mov.moneda==='USD'?'USD':'PEN')}</strong>`)}
           ${_fila('Estado doc',     `<span style="color:${estadoColor};font-weight:700">${escapar(estadoMov)}</span>`)}
-          ${_fila('N° Comprobante', mov.nro_factura_doc ? `<strong style="color:var(--color-secundario)">${escapar(mov.nro_factura_doc)}</strong>` : '<span style="color:var(--color-texto-suave)">Sin comprobante</span>')}
+          ${_fila('N° Comprobante', mov.nro_factura_doc ? `<strong style="color:var(--color-secundario)">${escapar(_conNroFacturaLegible(mov, mapaRHDet))}</strong>` : '<span style="color:var(--color-texto-suave)">Sin comprobante</span>')}
           ${mov.tipo_doc ? _fila('Tipo DOC', chipTipo(mov.tipo_doc)) : ''}
           ${mov.estado_conciliacion ? _fila('Conciliación', `<span style="color:${mov.estado_conciliacion==='conciliado'?'#22c55e':'#f59e0b'};font-weight:700">${escapar(mov.estado_conciliacion)}</span>`) : ''}
         ` : '<div style="color:var(--color-texto-suave);font-size:13px">No se encontró el movimiento</div>'}
