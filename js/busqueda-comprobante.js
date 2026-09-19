@@ -287,7 +287,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     }
 
     if (typeof _conValidarAntesDeVincular === 'function' && typeof empresa_activa !== 'undefined' && empresa_activa?.id) {
-      const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKey, extra.total, movBancoId, mov?.monto);
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKey, extra.total, movBancoId, mov?.monto, { ruc: extra.ruc, nombre: extra.proveedor });
       if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
     }
   }
@@ -463,7 +463,7 @@ async function _bmBuscarMov(docTipo, docId, nDoc, proveedor, total, fechaDoc, ru
   const docKey = docTipo === 'RH' ? docId : nDoc;
 
   // Cargar links existentes y manejar cierre (todos los tipos)
-  _bmCargarLinks(overlay, docKey, docTipo, docTipo === 'RH' ? nDoc : null, docTipo === 'RH' ? proveedor : null);
+  _bmCargarLinks(overlay, docKey, docTipo, docTipo === 'RH' ? nDoc : null, proveedor, ruc);
   overlay.querySelector('#bm2-btn-cerrar')?.addEventListener('click', () => {
     overlay.remove();
     if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();
@@ -663,19 +663,30 @@ async function _bmBuscarMovManual(overlay, docTipo, docId, nDoc, proveedor = '',
 // Para RH busca por DOS claves: el UUID (vinculación manual con lupa) y el
 // N° de RH legible (así queda cuando se carga por Excel/Importar MBD) —
 // mismo criterio que _estadoCalculado() en con-rh-recibidas.js.
-async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, proveedorEmisor = null) {
+async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, proveedorEmisor = null, rucEmisor = null) {
   const el  = overlay.querySelector('#bm2-links-lista');
   const cnt = overlay.querySelector('#bm2-links-count');
   const tot = overlay.querySelector('#bm2-links-total');
   if (!el || !nDoc) return;
 
-  const { data: linksUuid } = await _supabase
+  // 2026-09-19: el emisor (RUC/nombre del comprobante) se recuerda en el overlay para que
+  // los refrescos que no lo pasan (ej. tras desvincular) sigan viendo lo mismo.
+  if (rucEmisor != null)      overlay.dataset.bmRuc    = rucEmisor;
+  if (proveedorEmisor != null) overlay.dataset.bmNombre = proveedorEmisor;
+  const emisorRuc    = overlay.dataset.bmRuc || '';
+  const emisorNombre = overlay.dataset.bmNombre || '';
+
+  // También cuenta los movimientos SIN categoría (comprobante escrito a mano en
+  // Tesorería) cuyo emisor coincide — antes este panel decía "Sin operaciones
+  // vinculadas aún" aunque el comprobante ya tuviera un N° de operación.
+  const { data: linksCrudos } = await _supabase
     .from('tesoreria_mbd')
-    .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc,proveedor_empresa_personal')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc,proveedor_empresa_personal,tipo_doc,ruc_dni')
     .eq('empresa_id', empresa_activa.id)
-    .eq('tipo_doc', docTipo)
+    .or(_conFiltroTipoDoc(docTipo))
     .eq('nro_factura_doc', nDoc)
     .order('fecha_deposito', { ascending: false });
+  const linksUuid = _conFiltrarVinculosDelComprobante(linksCrudos, docTipo, emisorRuc, emisorNombre);
 
   let links = linksUuid || [];
 
@@ -791,7 +802,7 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
 
   if (typeof _conValidarAntesDeVincular === 'function' && typeof empresa_activa !== 'undefined' && empresa_activa?.id) {
     const nroFacturaKeyDiv = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
-    const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKeyDiv, totalFactura, movId, montoFactura);
+    const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKeyDiv, totalFactura, movId, montoFactura, { ruc, nombre: proveedor });
     if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
   }
 

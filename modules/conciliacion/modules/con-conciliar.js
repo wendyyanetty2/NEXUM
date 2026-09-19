@@ -323,7 +323,15 @@ async function _ejecutarConciliacion(periodo) {
     _fecha:   d.fecha_emision || null,
   }));
 
-  const documentos = [...compras, ...ventas, ...rhRegs];
+  // 2026-09-19 (Wendy): las sugerencias automáticas NO deben proponer un comprobante
+  // que ya está consolidado (cubierto por su(s) movimiento(s) bancario(s) — APLICADO
+  // o EXCESIVO, misma regla que Compras/Ventas, incluidos los que se rellenaron a mano
+  // en Tesorería). Los PARCIALES siguen siendo candidatos (regla N:M).
+  const todosLosDocs = [...compras, ...ventas, ...rhRegs];
+  let cubiertos = new Set();
+  try { cubiertos = await _conDocsYaCubiertos(empresa_activa.id, todosLosDocs); }
+  catch (e) { console.error('[conciliar] no se pudo excluir comprobantes ya cubiertos:', e); }
+  const documentos = todosLosDocs.filter(d => !cubiertos.has(d.id));
 
   const exactos   = [];
   const posibles  = [];
@@ -634,13 +642,14 @@ async function abrirBusquedaComprobante(docTipo, docId) {
 
   const [candidatos, yaVinculadosRes, crudos] = await Promise.all([
     _conBuscarCandidatosPorMonto(empresa_activa.id, doc.total),
-    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
-      .eq('empresa_id', empresa_activa.id).eq('tipo_doc', doc.tipo).eq('nro_factura_doc', doc.nDoc)
+    // 2026-09-19: también los movimientos sin categoría (comprobante escrito a mano en Tesorería)
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni')
+      .eq('empresa_id', empresa_activa.id).or(_conFiltroTipoDoc(doc.tipo)).eq('nro_factura_doc', doc.nDoc)
       .order('fecha_deposito', { ascending: false }),
     doc.tipo === 'RH' ? _conBuscarEnMovimientosCrudos(doc) : Promise.resolve([]),
   ]);
 
-  _conRenderBusquedaComprobante(doc, candidatos, yaVinculadosRes.data || [], crudos);
+  _conRenderBusquedaComprobante(doc, candidatos, _conFiltrarVinculosDelComprobante(yaVinculadosRes.data, doc.tipo, doc.ruc, doc.proveedor), crudos);
 }
 
 function _conRenderBusquedaComprobante(doc, candidatos, yaVinculados, crudos) {
@@ -780,7 +789,7 @@ async function _conVincularComprobante(doc, movId) {
     .eq('id', movId).single();
   if (!mov) { mostrarToast('No se pudo cargar el movimiento', 'error'); return; }
 
-  const val = await _conValidarAntesDeVincular(empresa_activa.id, doc.tipo, doc.nDoc, doc.total, movId, mov.monto);
+  const val = await _conValidarAntesDeVincular(empresa_activa.id, doc.tipo, doc.nDoc, doc.total, movId, mov.monto, { ruc: doc.ruc, nombre: doc.proveedor });
   if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
 
   const mensajeConfirm = mov.entrega_doc === 'EMITIDO'

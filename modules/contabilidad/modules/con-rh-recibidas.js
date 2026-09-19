@@ -118,13 +118,13 @@ async function _estadoCalculado(rh) {
     _supabase.from('tesoreria_mbd')
       .select('id')
       .eq('empresa_id', empresa_activa.id)
-      .eq('tipo_doc', 'RH')
+      .or(_conFiltroTipoDoc('RH')) // 2026-09-19: también movimientos sin categoría válida (vacía/dañada)
       .eq('nro_factura_doc', rh.id),
     rh.numero_rh
       ? _supabase.from('tesoreria_mbd')
           .select('id,proveedor_empresa_personal')
           .eq('empresa_id', empresa_activa.id)
-          .eq('tipo_doc', 'RH')
+          .or(_conFiltroTipoDoc('RH')) // 2026-09-19: también movimientos sin categoría válida (vacía/dañada)
           .eq('nro_factura_doc', rh.numero_rh)
       : Promise.resolve({ data: [] }),
   ]);

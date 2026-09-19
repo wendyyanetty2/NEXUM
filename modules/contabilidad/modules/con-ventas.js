@@ -153,8 +153,9 @@ async function _renderVentasFiltradas() {
   // MEJORA 7 + Estado Parcial (1.7): traer TODOS los movimientos vinculados por comprobante
   const numerosV = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicadosV } = numerosV.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc, ruc_dni, proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numerosV)
+    // 2026-09-19: además de tipo_doc='VENTA', cuenta los movimientos SIN categoría
+    // válida (vacía/dañada) con este N° — la identidad del emisor sigue filtrando abajo.
+    ? await _conMovsDeComprobantes(empresa_activa.id, 'VENTA', numerosV, 'nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc, ruc_dni, proveedor_empresa_personal')
     : { data: [] };
   const aplicadosMapV = new Map(); // nDoc → [movs...] (sin filtrar por emisor todavía)
   (mbdAplicadosV || []).forEach(r => {
@@ -651,8 +652,7 @@ async function exportarInfoTrabajadaVentas() {
 
   const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbd } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
+    ? await _conMovsDeComprobantes(empresa_activa.id, 'VENTA', numeros, 'nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
     : { data: [] };
   const mapa = new Map();
   (mbd || []).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
@@ -904,12 +904,13 @@ async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmi
   const [movs, { data: yaVinculados }] = await Promise.all([
     _conBuscarCandidatosPorMonto(empresa_activa.id, total),
     // Ya vinculados a este mismo comprobante — mismo panel que ya muestra la 🔍 lupa.
-    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
-      .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').eq('nro_factura_doc', nDoc)
+    // 2026-09-19: también los movimientos sin categoría (comprobante escrito a mano en Tesorería)
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni')
+      .eq('empresa_id', empresa_activa.id).or(_conFiltroTipoDoc('VENTA')).eq('nro_factura_doc', nDoc)
       .order('fecha_deposito', { ascending: false }),
   ]);
 
-  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, ruc, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || [], yaVinculados || []);
+  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, ruc, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || [], _conFiltrarVinculosDelComprobante(yaVinculados, 'VENTA', ruc, cliente));
 }
 
 async function _conciliarLoteVentas() {
@@ -939,9 +940,17 @@ async function _conciliarLoteVentas() {
 
   const numeros = ventas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: yaAplic } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'VENTA').eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,tipo_doc,ruc_dni,proveedor_empresa_personal').eq('empresa_id', empresa_activa.id).or(_conFiltroTipoDoc('VENTA')).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
     : { data: [] };
-  const aplicadosSet = new Set((yaAplic || []).map(r => r.nro_factura_doc));
+  // 2026-09-19: los EMITIDO sin categoría (comprobante escrito a mano en Tesorería) también
+  // cuentan como aplicados, siempre que el emisor coincida con el de la venta.
+  const aplicadosSet = new Set();
+  (yaAplic || []).forEach(m => {
+    if (m.tipo_doc === 'VENTA') { aplicadosSet.add(m.nro_factura_doc); return; }
+    const venta = ventas.find(v => [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-') === m.nro_factura_doc
+      && _conFiltrarPorEmisor([m], v.nro_doc_identidad, v.cliente).length > 0);
+    if (venta) aplicadosSet.add(m.nro_factura_doc);
+  });
   const pendientes   = ventas.filter(r => {
     const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
     return !aplicadosSet.has(nDoc);
@@ -1046,7 +1055,7 @@ async function _vAplicarLoteConciliacion(items) {
     if (!item) continue;
 
     if (typeof _conValidarAntesDeVincular === 'function') {
-      const val = await _conValidarAntesDeVincular(empresa_activa.id, 'VENTA', item.nDoc, item.total, item.movId, item.monto);
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, 'VENTA', item.nDoc, item.total, item.movId, item.monto, { ruc: item.ruc, nombre: item.cliente });
       if (!val.ok) { bloqueados.push(item.nDoc); continue; }
     }
 

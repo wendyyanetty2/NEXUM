@@ -62,19 +62,27 @@ function _conCobertura(movsVinculados, totalComprobante) {
 //    bloqueo, lo que abría una ventana donde el badge ya decía EXCESIVO pero
 //    el sistema todavía dejaba vincular más — corregido tras la auditoría del
 //    documento "NEXUM_Auditoria_y_Mejora_Conciliacion".
-async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, totalComprobante, movIdExcluir, montoNuevo) {
+//    2026-09-19: `emisor` ({ruc, nombre}, opcional) permite ver también los
+//    movimientos cuyo comprobante se escribió a mano en Tesorería y quedaron
+//    SIN categoría (tipo_doc vacío/dañado) — antes este chequeo no los veía, y
+//    un comprobante que ya tenía su N° de operación aparecía como disponible y
+//    se podía vincular de nuevo. Sin `emisor` el comportamiento es el de siempre.
+async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, totalComprobante, movIdExcluir, montoNuevo, emisor = null) {
   const total = Number(totalComprobante) || 0;
   if (!nroFacturaDoc || !total) return { ok: true };
 
-  const { data: existentes } = await _supabase
+  let consulta = _supabase
     .from('tesoreria_mbd')
-    .select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni')
     .eq('empresa_id', empresaId)
-    .eq('tipo_doc', tipoDoc)
     .eq('nro_factura_doc', nroFacturaDoc)
     .neq('id', movIdExcluir || '');
+  consulta = emisor ? consulta.or(_conFiltroTipoDoc(tipoDoc)) : consulta.eq('tipo_doc', tipoDoc);
+  const { data: existentes } = await consulta;
 
-  const lista    = existentes || [];
+  const lista    = emisor
+    ? _conFiltrarVinculosDelComprobante(existentes, tipoDoc, emisor.ruc, emisor.nombre)
+    : (existentes || []);
   const montoAbs = Math.abs(Number(montoNuevo) || 0);
   const cov      = _conCobertura([...lista, { monto: montoAbs, entrega_doc: 'OBSERVADO' }], total);
 
@@ -385,6 +393,378 @@ function _refrescarVistasVinculadas() {
 }
 
 // ════════════════════════════════════════════════════════════════
+// MOVIMIENTOS SIN CATEGORÍA DE COMPROBANTE (Wendy, 2026-09-19)
+//
+// Caso real: se rellena a mano en Tesorería → Movimientos el N° de
+// comprobante (ej. F052-2073625) y el estado, pero la categoría interna
+// tipo_doc (COMPRA/VENTA/RH/PM) queda vacía o dañada (registros guardados
+// antes del fix del 2026-09-18). Contabilidad buscaba SOLO por
+// tipo_doc='COMPRA' (o VENTA/RH), así que ese comprobante seguía en
+// PENDIENTE aunque el movimiento ya estaba OBSERVADO/EMITIDO.
+//
+// Dos piezas, ambas ADITIVAS (lo que ya funcionaba con tipo_doc correcto
+// no cambia):
+//   1) _conMovsDeComprobantes / _conFiltroTipoDoc — Compras/Ventas/RH
+//      además cuentan los movimientos SIN categoría válida cuyo N° de
+//      comprobante coincide; la identidad del emisor (RUC, o nombre
+//      estricto) sigue filtrando después con _conFiltrarPorEmisor.
+//   2) "🔧 Reparar estados" ahora MUESTRA esos casos en un reporte y solo
+//      corrige (asigna la categoría) los que Wendy aprueba.
+// ════════════════════════════════════════════════════════════════
+const _CON_TIPOS_DOC_VALIDOS = ['COMPRA', 'VENTA', 'RH', 'PM'];
+
+// Filtro PostgREST: la categoría exacta O "sin categoría válida" (vacía o
+// dañada, ej. 'FA'/'BO' escritos por el bug del modal). PM queda fuera a
+// propósito: es una categoría válida que pertenece a otro flujo.
+function _conFiltroTipoDoc(categoria) {
+  return `tipo_doc.eq.${categoria},tipo_doc.is.null,tipo_doc.not.in.(${_CON_TIPOS_DOC_VALIDOS.join(',')})`;
+}
+
+// Dado un listado de movimientos con el mismo N° de comprobante, deja los de
+// la categoría exacta (como siempre) y SUMA los que no tienen categoría válida
+// (vacía/dañada) siempre que estén EMITIDO/OBSERVADO y el emisor coincida
+// (RUC, o nombre estricto). Sin emisor conocido, esos NO se cuentan: es mejor
+// no mezclar comprobantes de emisores distintos que compartan serie+número.
+function _conFiltrarVinculosDelComprobante(movs, categoria, ruc, nombre) {
+  return (movs || []).filter(m => {
+    if (m.tipo_doc === categoria) return true;
+    if (m.entrega_doc !== 'EMITIDO' && m.entrega_doc !== 'OBSERVADO') return false;
+    return _conFiltrarPorEmisor([m], ruc, nombre).length > 0;
+  });
+}
+
+// Movimientos que cubren (EMITIDO/OBSERVADO) los comprobantes de `numeros`
+// — reutilizado por Compras y Ventas en pantalla y en su exportación.
+//    Devuelve { data, error } igual que una consulta de Supabase (se usa con await).
+//    Dos pasos: (1) los de la categoría exacta con ese N° (como siempre,
+//    troceado para no pasar el límite de largo de URL con periodos grandes);
+//    (2) los SIN categoría válida, comparando el N° NORMALIZADO (espacios,
+//    mayúsculas, ceros a la izquierda) — así un "F052 -2073625" escrito a mano
+//    igual cubre a "F052-2073625". Los del paso 2 se devuelven con el N° del
+//    comprobante para que quien llama pueda agruparlos por él.
+async function _conMovsDeComprobantes(empresaId, categoria, numeros, columnas) {
+  const lista = [...new Set((numeros || []).filter(Boolean))];
+  const cols  = /\bid\b/.test(columnas) ? columnas : `${columnas},id`;
+  const vistos = new Map();
+
+  for (let i = 0; i < lista.length; i += 80) {
+    const { data, error } = await _supabase.from('tesoreria_mbd').select(cols)
+      .eq('empresa_id', empresaId).eq('tipo_doc', categoria)
+      .in('entrega_doc', ['EMITIDO', 'OBSERVADO'])
+      .in('nro_factura_doc', lista.slice(i, i + 80));
+    if (error) return { data: null, error };
+    (data || []).forEach(r => vistos.set(r.id, r));
+  }
+
+  if (lista.length) {
+    const sinCategoria = await _conTraerTodo(() => _supabase.from('tesoreria_mbd').select(cols)
+      .eq('empresa_id', empresaId)
+      .or(`tipo_doc.is.null,tipo_doc.not.in.(${_CON_TIPOS_DOC_VALIDOS.join(',')})`)
+      .in('entrega_doc', ['EMITIDO', 'OBSERVADO'])
+      .not('nro_factura_doc', 'is', null).order('id'));
+    const porNorm = new Map(lista.map(n => [_conNormNroDoc(n), n]));
+    sinCategoria.forEach(r => {
+      if (vistos.has(r.id)) return;
+      const canonico = porNorm.get(_conNormNroDoc(r.nro_factura_doc));
+      if (canonico) vistos.set(r.id, { ...r, nro_factura_doc: canonico });
+    });
+  }
+  return { data: [...vistos.values()], error: null };
+}
+
+// ── Comprobantes que YA están cubiertos por movimientos bancarios (APLICADO o
+//    EXCESIVO según _conCobertura — misma regla que ven Compras/Ventas), para
+//    que las sugerencias automáticas de Conciliación no los propongan de nuevo
+//    (Wendy, 2026-09-19: "no me va a proponer algo que ya está consolidado").
+//    PARCIAL y PENDIENTE siguen siendo candidatos (regla N:M: un comprobante
+//    puede cubrirse con varios movimientos). Recibe los documentos ya
+//    normalizados de con-conciliar.js (_tipo/_ndoc/_ruc/_proveedor/_total/id).
+//    Devuelve un Set con los `id` de los documentos cubiertos.
+async function _conDocsYaCubiertos(empresaId, documentos) {
+  const cubiertos = new Set();
+  const COLS = 'nro_factura_doc,monto,entrega_doc,ruc_dni,proveedor_empresa_personal';
+
+  for (const cat of ['COMPRA', 'VENTA']) {
+    const docs = documentos.filter(d => d._tipo === cat && d._ndoc && d._ndoc !== '—');
+    if (!docs.length) continue;
+    const { data } = await _conMovsDeComprobantes(empresaId, cat, docs.map(d => d._ndoc), COLS);
+    const porNro = new Map();
+    (data || []).forEach(m => { if (!porNro.has(m.nro_factura_doc)) porNro.set(m.nro_factura_doc, []); porNro.get(m.nro_factura_doc).push(m); });
+    docs.forEach(d => {
+      const movs = _conFiltrarPorEmisor(porNro.get(d._ndoc), d._ruc, d._proveedor);
+      const e5 = _conEstado5(_conCobertura(movs, d._total), false);
+      if (e5 === 'APLICADO' || e5 === 'EXCESIVO') cubiertos.add(d.id);
+    });
+  }
+
+  // RH: el movimiento apunta al UUID del RH (vínculo por lupa) o a su N° legible
+  // (carga por Excel; en ese caso se exige coincidencia estricta de nombre).
+  const rhs = documentos.filter(d => d._tipo === 'RH');
+  if (rhs.length) {
+    const claves = [...new Set(rhs.flatMap(d => [d.id, d.numero_rh]).filter(Boolean))];
+    const movs = [];
+    for (let i = 0; i < claves.length; i += 80) {
+      const { data } = await _supabase.from('tesoreria_mbd').select(COLS)
+        .eq('empresa_id', empresaId).in('entrega_doc', ['EMITIDO', 'OBSERVADO'])
+        .or(_conFiltroTipoDoc('RH')).in('nro_factura_doc', claves.slice(i, i + 80));
+      movs.push(...(data || []));
+    }
+    rhs.forEach(d => {
+      const propios = movs.filter(m => m.nro_factura_doc === d.id
+        || (d.numero_rh && m.nro_factura_doc === d.numero_rh && _conNombreCoincideEstricto(m.proveedor_empresa_personal, d._proveedor)));
+      const e5 = _conEstado5(_conCobertura(propios, d._total), false);
+      if (e5 === 'APLICADO' || e5 === 'EXCESIVO') cubiertos.add(d.id);
+    });
+  }
+  return cubiertos;
+}
+
+// N° de comprobante comparable: sin espacios, mayúsculas y sin ceros a la
+// izquierda en el correlativo ("f052 - 02073625" ≡ "F052-2073625").
+function _conNormNroDoc(v) {
+  const s = (v || '').toString().trim().toUpperCase().replace(/\s+/g, '');
+  const i = s.indexOf('-');
+  if (i < 0) return s;
+  return `${s.slice(0, i)}-${s.slice(i + 1).replace(/^0+(?=\d)/, '')}`;
+}
+
+// Trae TODAS las filas (Supabase corta en 1000 por consulta).
+async function _conTraerTodo(construir, pagina = 1000) {
+  const out = [];
+  for (let desde = 0; ; desde += pagina) {
+    const { data, error } = await construir().range(desde, desde + pagina - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < pagina) break;
+  }
+  return out;
+}
+
+// ── Clasifica los movimientos con N° de comprobante pero sin categoría
+//    válida. PURA (no toca la base de datos) para poder probarla sola.
+//    Tipos de resultado:
+//      seguro          → el N° calza con UN comprobante y el emisor coincide
+//      sin_emisor      → el N° calza con UN comprobante pero RUC/nombre no
+//                        coinciden (no se marca por defecto; Wendy decide)
+//      ambiguo         → el N° calza con comprobantes de categorías distintas
+//      sin_comprobante → ese N° no existe en Compras/Ventas/RH
+//    Para los que sí calzan, predice cómo quedaría el comprobante en
+//    Contabilidad (misma regla _conCobertura/_conEstado5, N:M incluido).
+function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
+  const valido = m => _CON_TIPOS_DOC_VALIDOS.includes(m.tipo_doc);
+  const cuenta = m => m.entrega_doc === 'EMITIDO' || m.entrega_doc === 'OBSERVADO';
+
+  const idx = { COMPRA: new Map(), VENTA: new Map(), RH: new Map() };
+  const alta = (cat, key, c) => {
+    if (!key) return;
+    if (!idx[cat].has(key)) idx[cat].set(key, []);
+    if (!idx[cat].get(key).includes(c)) idx[cat].get(key).push(c);
+  };
+  (compras || []).forEach(c => {
+    const nro = [c.serie_cdp, c.nro_cp_inicial].filter(Boolean).join('-');
+    alta('COMPRA', _conNormNroDoc(nro), { cat: 'COMPRA', nro, nombre: c.proveedor || '', ruc: c.nro_doc_identidad || '', total: Number(c.total_cp) || 0 });
+  });
+  (ventas || []).forEach(v => {
+    const nro = [v.serie_cdp, v.nro_cp_inicial].filter(Boolean).join('-');
+    alta('VENTA', _conNormNroDoc(nro), { cat: 'VENTA', nro, nombre: v.cliente || '', ruc: v.nro_doc_identidad || '', total: Number(v.total_cp) || 0 });
+  });
+  (rhs || []).forEach(r => {
+    const c = {
+      cat: 'RH', nro: r.numero_rh || r.id,
+      nombre: r.nombre_emisor || r.prestadores_servicios?.nombre || '',
+      ruc: r.nro_doc_emisor || r.prestadores_servicios?.dni || '',
+      total: Number(r.monto_neto) || 0,
+    };
+    alta('RH', _conNormNroDoc(r.numero_rh), c);
+    alta('RH', _conNormNroDoc(r.id), c);
+  });
+
+  // Comprobantes que calzan con cada movimiento (y si el emisor coincide)
+  const hitsDe = m => {
+    const key = _conNormNroDoc(m.nro_factura_doc);
+    const out = [];
+    for (const cat of ['COMPRA', 'VENTA', 'RH']) {
+      for (const c of (idx[cat].get(key) || [])) {
+        out.push({ c, emisorOk: _conFiltrarPorEmisor([m], c.ruc, c.nombre).length > 0 });
+      }
+    }
+    return out;
+  };
+
+  const lista = (movs || []).filter(m => (m.nro_factura_doc || '').toString().trim() && m.entrega_doc !== 'CANCELADO');
+  const hitsPorMov = new Map();
+  const miembros = new Map(); // comprobante → movimientos que hoy o mañana lo cubrirían
+  lista.forEach(m => {
+    const hits = hitsDe(m);
+    hitsPorMov.set(m.id, hits);
+    if (!cuenta(m)) return;
+    hits.filter(h => h.emisorOk && (!valido(m) || m.tipo_doc === h.c.cat)).forEach(h => {
+      if (!miembros.has(h.c)) miembros.set(h.c, []);
+      miembros.get(h.c).push(m);
+    });
+  });
+
+  const items = [];
+  for (const m of lista) {
+    if (valido(m)) continue;
+    const hits     = hitsPorMov.get(m.id) || [];
+    const conEmis  = hits.filter(h => h.emisorOk);
+    const catsEmis = [...new Set(conEmis.map(h => h.c.cat))];
+    const catsTodas = [...new Set(hits.map(h => h.c.cat))];
+
+    let tipo, elegido = null;
+    if (catsEmis.length === 1)       { tipo = 'seguro';     elegido = conEmis[0].c; }
+    else if (catsEmis.length > 1)    { tipo = 'ambiguo'; }
+    else if (catsTodas.length === 1) { tipo = 'sin_emisor'; elegido = hits[0].c; }
+    else if (catsTodas.length > 1)   { tipo = 'ambiguo'; }
+    else                             { tipo = 'sin_comprobante'; }
+
+    const item = { mov: m, tipo, categoria: elegido?.cat || null, comprobante: elegido, cuentaEnConta: cuenta(m),
+                   nroCanonico: null, cambiaNro: false, cov: null, estado5: null, categoriasPosibles: catsTodas };
+    if (elegido) {
+      // El N° escrito a mano puede diferir en formato (espacios, ceros, minúsculas);
+      // Contabilidad busca por igualdad exacta, así que se normaliza al del comprobante.
+      // RH conserva su forma (puede ser UUID o N° legible, ambos válidos).
+      item.nroCanonico = elegido.cat === 'RH' ? m.nro_factura_doc : elegido.nro;
+      item.cambiaNro   = elegido.cat !== 'RH' && m.nro_factura_doc !== elegido.nro;
+      if (tipo === 'seguro' && item.cuentaEnConta) {
+        item.cov = _conCobertura(miembros.get(elegido) || [], elegido.total);
+        item.estado5 = _conEstado5(item.cov, false);
+      }
+    }
+    items.push(item);
+  }
+  return items;
+}
+
+// ── Paso 0 de "🔧 Reparar estados": detecta, MUESTRA y solo con aprobación
+//    asigna la categoría (tipo_doc) faltante o dañada. Antes esto corría en
+//    silencio y, además, dependía de _migBuscarComprobante — que solo se
+//    carga en Tesorería —, así que desde Contabilidad NUNCA hacía nada.
+//    Devuelve { cancelado } o { aplicados, sinResolver }.
+async function _conRevisarVinculosSinCategoria(empId, hoy) {
+  const [movs, compras, ventas, rhs] = await Promise.all([
+    _conTraerTodo(() => _supabase.from('tesoreria_mbd')
+      .select('id,nro_factura_doc,tipo_doc,tipo_comprobante,entrega_doc,monto,ruc_dni,proveedor_empresa_personal,nro_operacion_bancaria,fecha_deposito')
+      .eq('empresa_id', empId).not('nro_factura_doc', 'is', null).order('id')),
+    _conTraerTodo(() => _supabase.from('contabilidad_compras')
+      .select('serie_cdp,nro_cp_inicial,proveedor,nro_doc_identidad,total_cp').eq('empresa_id', empId).order('id')),
+    _conTraerTodo(() => _supabase.from('contabilidad_ventas')
+      .select('serie_cdp,nro_cp_inicial,cliente,nro_doc_identidad,total_cp').eq('empresa_id', empId).order('id')),
+    _conTraerTodo(() => _supabase.from('rh_registros')
+      .select('id,numero_rh,nombre_emisor,nro_doc_emisor,monto_neto,prestadores_servicios(nombre,dni)')
+      .eq('empresa_operadora_id', empId).order('id')),
+  ]);
+
+  const items = _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs);
+  if (!items.length) return { aplicados: 0, sinResolver: 0 };
+
+  const elegidos = await _conModalVinculosSinCategoria(items);
+  if (!elegidos) return { cancelado: true };
+
+  let aplicados = 0;
+  for (const it of elegidos) {
+    const patch = { tipo_doc: it.categoria, fecha_actualizacion: hoy };
+    if (!it.mov.tipo_comprobante && typeof _mbdCodigoTipoComprobante === 'function') {
+      patch.tipo_comprobante = _mbdCodigoTipoComprobante(it.categoria, it.nroCanonico);
+    }
+    if (it.cambiaNro) patch.nro_factura_doc = it.nroCanonico;
+    const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', it.mov.id);
+    if (!error) aplicados++;
+  }
+  return { aplicados, sinResolver: items.length - aplicados };
+}
+
+// Reporte previo (regla de Wendy: reporte + aprobación antes de tocar datos
+// existentes). Resuelve con la lista de items aprobados, o null si cancela.
+function _conModalVinculosSinCategoria(items) {
+  return new Promise(resolve => {
+    const mc = document.getElementById('modal-container');
+    if (!mc) { resolve(null); return; }
+
+    const NOMBRE_CAT = { COMPRA: 'Compras', VENTA: 'Ventas', RH: 'RH Recibidos' };
+    const MOTIVO = {
+      sin_emisor: 'El N° existe, pero el RUC/nombre del movimiento no coincide con el del comprobante. Marca la casilla solo si es el comprobante correcto.',
+      ambiguo: 'Ese N° existe en más de una categoría (Compras/Ventas/RH). Vincúlalo a mano desde el módulo correspondiente.',
+      sin_comprobante: 'Ese N° no existe en Compras, Ventas ni RH. Revisa que esté bien escrito o que el comprobante ya esté cargado.',
+    };
+    const aplicables = items.filter(i => i.categoria);
+    const porTipo = t => items.filter(i => i.tipo === t).length;
+
+    const tarjeta = (it, i) => {
+      const m = it.mov;
+      const marcable = !!it.categoria;
+      const c = it.comprobante;
+      const cabecera = `
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+          <span style="font-weight:700;color:var(--color-secundario)">${escapar(m.nro_factura_doc)} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
+          <span style="font-family:monospace;font-size:11px;color:var(--color-texto-suave)">Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.entrega_doc || '—')}</span>
+        </div>`;
+      let cuerpo;
+      if (marcable) {
+        let despues;
+        if (it.estado5) {
+          const col = _CON_ESTADO5_COLOR[it.estado5];
+          despues = `En Contabilidad quedará: <strong style="color:${col}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (vinculado ${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)})`;
+        } else if (!it.cuentaEnConta) {
+          despues = 'Su estado en Movimientos es PENDIENTE: Contabilidad seguirá mostrándolo PENDIENTE (regla), aunque se le asigne la categoría.';
+        } else {
+          despues = 'Aunque se asigne la categoría, Contabilidad no lo contará porque el RUC/nombre no coincide con el comprobante.';
+        }
+        cuerpo = `
+          <div style="font-size:12px;margin-bottom:4px">Comprobante hallado en <strong>${NOMBRE_CAT[it.categoria]}</strong>: ${escapar(c.nombre || '—')} · RUC/DNI ${escapar(c.ruc || '—')} · Total ${formatearMoneda(c.total)}</div>
+          <div style="font-size:12px;margin-bottom:4px">Se asignará categoría <strong style="font-family:monospace">${it.categoria}</strong> (hoy: <span style="font-family:monospace">${escapar(m.tipo_doc || 'vacío')}</span>)${it.cambiaNro ? ` y el N° se normalizará a <strong style="font-family:monospace">${escapar(it.nroCanonico)}</strong>` : ''}.</div>
+          <div style="font-size:12px">${despues}</div>
+          ${it.tipo === 'sin_emisor' ? `<div style="font-size:11px;color:#C05621;margin-top:4px">⚠️ ${MOTIVO.sin_emisor}</div>` : ''}`;
+      } else {
+        cuerpo = `<div style="font-size:12px;color:var(--color-texto-suave)">${MOTIVO[it.tipo]}</div>`;
+      }
+      return `
+        <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px;${marcable ? 'cursor:pointer' : 'opacity:.85'}">
+          <input type="checkbox" class="rev-chk" data-i="${i}" ${it.tipo === 'seguro' ? 'checked' : ''} ${marcable ? '' : 'disabled'} style="margin-top:3px">
+          <div style="flex:1;min-width:0">${cabecera}${cuerpo}</div>
+        </label>`;
+    };
+
+    mc.innerHTML = `
+      <div class="modal-overlay" style="display:flex">
+        <div class="modal" style="max-width:860px;width:95%;max-height:90vh;display:flex;flex-direction:column">
+          <div class="modal-header">
+            <h3>🔧 Movimientos con comprobante pero sin categoría — ${items.length} caso(s)</h3>
+            <button class="modal-cerrar" id="rev-x">✕</button>
+          </div>
+          <div class="modal-body" style="flex:1;overflow-y:auto">
+            <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:6px">
+              Estos movimientos ya tienen un N° de comprobante escrito, pero les falta (o tienen dañada) la categoría interna que Contabilidad usa para saber a qué comprobante pertenecen. Por eso hoy su comprobante puede aparecer PENDIENTE aunque el movimiento esté OBSERVADO o EMITIDO.
+            </p>
+            <p style="font-size:12px;margin-bottom:14px">
+              <strong>${porTipo('seguro')}</strong> seguro(s) · <strong>${porTipo('sin_emisor')}</strong> con emisor distinto · <strong>${porTipo('ambiguo')}</strong> ambiguo(s) · <strong>${porTipo('sin_comprobante')}</strong> sin comprobante.
+              Nada se modifica hasta que confirmes; solo se corrigen las casillas marcadas. El estado de cada movimiento (Emitido/Observado/Pendiente) no se cambia aquí.
+            </p>
+            ${items.map(tarjeta).join('')}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secundario" id="rev-cancel">Cancelar (no cambia nada)</button>
+            <button class="btn btn-primario" id="rev-ok">Aplicar seleccionados y reparar</button>
+          </div>
+        </div>
+      </div>`;
+
+    const cerrar = valor => { mc.innerHTML = ''; resolve(valor); };
+    const btnOk = mc.querySelector('#rev-ok');
+    const actualizarBoton = () => {
+      const n = mc.querySelectorAll('.rev-chk:checked').length;
+      btnOk.textContent = n ? `Aplicar ${n} seleccionado(s) y reparar` : 'Continuar sin cambiar categorías';
+    };
+    mc.querySelectorAll('.rev-chk').forEach(ch => ch.addEventListener('change', actualizarBoton));
+    actualizarBoton();
+    btnOk.onclick = () => cerrar([...mc.querySelectorAll('.rev-chk:checked')].map(ch => items[Number(ch.dataset.i)]));
+    mc.querySelector('#rev-cancel').onclick = () => cerrar(null);
+    mc.querySelector('#rev-x').onclick = () => cerrar(null);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
 // CONSOLIDACIÓN INDIVIDUAL
 // Llamada automáticamente tras cada vinculación nueva.
 // Re-evalúa entrega_doc con datos frescos de BD.
@@ -433,6 +813,7 @@ async function consolidarEstadosRetroactivo() {
     let concCreadas  = 0;
     let proveedorSincronizados = 0;
     let tipoDocSanados = 0;
+    let sinResolver = 0;
 
     // ── Paso 0: Sanar tipo_doc dañado (bug 2026-09-18 corregido en
     //    guardarMBD: el desplegable "Tipo DOC" del modal de Movimientos
@@ -444,23 +825,18 @@ async function consolidarEstadosRetroactivo() {
     //    Aquí se detectan los que quedaron con nro_factura_doc pero
     //    tipo_doc fuera de las categorías válidas, y se re-detecta
     //    buscando en Compras/Ventas/RH — igual que hace guardarMBD ahora.
-    const { data: movsRotos } = await _supabase
-      .from('tesoreria_mbd')
-      .select('id,nro_factura_doc,tipo_doc')
-      .eq('empresa_id', empId)
-      .not('nro_factura_doc', 'is', null)
-      .or('tipo_doc.is.null,tipo_doc.not.in.(COMPRA,VENTA,RH,PM)');
-    if (movsRotos?.length && typeof _migBuscarComprobante === 'function') {
-      for (const m of movsRotos) {
-        const comprobante = await _migBuscarComprobante(m.nro_factura_doc, null);
-        if (comprobante?.tipoDoc) {
-          await _supabase.from('tesoreria_mbd')
-            .update({ tipo_doc: comprobante.tipoDoc, fecha_actualizacion: hoy })
-            .eq('id', m.id);
-          tipoDocSanados++;
-        }
-      }
+    //    2026-09-19: antes esto dependía de _migBuscarComprobante (solo se
+    //    carga en Tesorería), así que desde Contabilidad se saltaba en
+    //    silencio y nunca sanaba nada. Ahora es autónomo y, siguiendo la
+    //    regla de Wendy (reporte + aprobación antes de tocar datos
+    //    existentes), muestra los casos y solo corrige los aprobados.
+    const rev = await _conRevisarVinculosSinCategoria(empId, hoy);
+    if (rev.cancelado) {
+      mostrarToast('Reparación cancelada — no se modificó nada.', 'info');
+      return;
     }
+    tipoDocSanados = rev.aplicados;
+    sinResolver    = rev.sinResolver;
 
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
     const { data: movsCrudos, error: errMovs } = await _supabase
@@ -675,14 +1051,16 @@ async function consolidarEstadosRetroactivo() {
     // avisa dónde revisarlas, en vez de abrir el reporte aquí mismo.
     const discrepancias = discrepanciasDetalle.length;
     const parts = [`${movs.length} mov. revisados`];
-    if (tipoDocSanados) parts.push(`${tipoDocSanados} tipo_doc dañado(s) sanado(s)`);
+    if (tipoDocSanados) parts.push(`${tipoDocSanados} movimiento(s) sin categoría de comprobante corregido(s)`);
+    if (sinResolver)    parts.push(`⚠️ ${sinResolver} con N° de comprobante sin resolver — revísalos a mano en Movimientos`);
     if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
     if (proveedorSincronizados) parts.push(`${proveedorSincronizados} proveedor/RUC resincronizado(s) con el comprobante`);
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
     if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
     if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revísalas en Conciliación → Verificar montos`);
-    if (!tipoDocSanados && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
-    mostrarToast((discrepancias ? '⚠️ ' : '✅ ') + parts.join(' · '), discrepancias ? 'atencion' : 'exito');
+    if (!tipoDocSanados && !sinResolver && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
+    const hayAviso = discrepancias || sinResolver;
+    mostrarToast((hayAviso ? '⚠️ ' : '✅ ') + parts.join(' · '), hayAviso ? 'atencion' : 'exito');
 
     // ── Refrescar módulos abiertos ───────────────────────────────
     if (typeof cargarRHRecibidas === 'function') cargarRHRecibidas();

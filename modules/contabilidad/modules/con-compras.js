@@ -159,8 +159,9 @@ async function _renderComprasFiltradas() {
   // (un comprobante puede cubrirse con varios movimientos — regla N:M)
   const numeros = filas.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbdAplicados } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc, ruc_dni, proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').in('entrega_doc', ['EMITIDO', 'OBSERVADO']).in('nro_factura_doc', numeros)
+    // 2026-09-19: además de tipo_doc='COMPRA', cuenta los movimientos SIN categoría
+    // válida (vacía/dañada) con este N° — la identidad del emisor sigue filtrando abajo.
+    ? await _conMovsDeComprobantes(empresa_activa.id, 'COMPRA', numeros, 'nro_factura_doc, nro_operacion_bancaria, monto, id, entrega_doc, ruc_dni, proveedor_empresa_personal')
     : { data: [] };
   const aplicadosMap = new Map(); // nDoc → [movs...] (sin filtrar por emisor todavía)
   (mbdAplicados || []).forEach(r => {
@@ -665,8 +666,7 @@ async function exportarInfoTrabajadaCompras() {
 
   const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: mbd } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
-        .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
+    ? await _conMovsDeComprobantes(empresa_activa.id, 'COMPRA', numeros, 'nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
     : { data: [] };
   const mapa = new Map();
   (mbd || []).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
@@ -918,12 +918,13 @@ async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fech
     _conBuscarCandidatosPorMonto(empresa_activa.id, total),
     // Ya vinculados a este mismo comprobante — para saber, antes de vincular otro,
     // con qué N° de operación ya está afiliado (mismo panel que ya muestra la 🔍 lupa).
-    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc')
-      .eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').eq('nro_factura_doc', nDoc)
+    // 2026-09-19: también los movimientos sin categoría (comprobante escrito a mano en Tesorería)
+    _supabase.from('tesoreria_mbd').select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni')
+      .eq('empresa_id', empresa_activa.id).or(_conFiltroTipoDoc('COMPRA')).eq('nro_factura_doc', nDoc)
       .order('fecha_deposito', { ascending: false }),
   ]);
 
-  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, ruc, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || [], yaVinculados || []);
+  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, ruc, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || [], _conFiltrarVinculosDelComprobante(yaVinculados, 'COMPRA', ruc, proveedor));
 }
 
 // ── Conciliar lote — todos los PEND. del periodo actual ──────────
@@ -955,9 +956,17 @@ async function _conciliarLoteCompras() {
 
   const numeros = compras.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
   const { data: yaAplic } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc').eq('empresa_id', empresa_activa.id).eq('tipo_doc', 'COMPRA').eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
+    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,tipo_doc,ruc_dni,proveedor_empresa_personal').eq('empresa_id', empresa_activa.id).or(_conFiltroTipoDoc('COMPRA')).eq('entrega_doc', 'EMITIDO').in('nro_factura_doc', numeros)
     : { data: [] };
-  const aplicadosSet = new Set((yaAplic || []).map(r => r.nro_factura_doc));
+  // 2026-09-19: los EMITIDO sin categoría (comprobante escrito a mano en Tesorería) también
+  // cuentan como aplicados, siempre que el emisor coincida con el de la compra.
+  const aplicadosSet = new Set();
+  (yaAplic || []).forEach(m => {
+    if (m.tipo_doc === 'COMPRA') { aplicadosSet.add(m.nro_factura_doc); return; }
+    const compra = compras.find(c => [c.serie_cdp, c.nro_cp_inicial].filter(Boolean).join('-') === m.nro_factura_doc
+      && _conFiltrarPorEmisor([m], c.nro_doc_identidad, c.proveedor).length > 0);
+    if (compra) aplicadosSet.add(m.nro_factura_doc);
+  });
 
   const pendientes = compras.filter(r => {
     const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
@@ -1181,7 +1190,7 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
   const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto,proveedor_empresa_personal,ruc_dni').eq('id', movId).maybeSingle();
 
   if (typeof _conValidarAntesDeVincular === 'function') {
-    const val = await _conValidarAntesDeVincular(empresa_activa.id, tipoDoc, nDoc, total, movId, movPrevio?.monto);
+    const val = await _conValidarAntesDeVincular(empresa_activa.id, tipoDoc, nDoc, total, movId, movPrevio?.monto, { ruc, nombre: proveedor });
     if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
   }
 
@@ -1251,7 +1260,7 @@ async function _cAplicarLoteConciliacion(items) {
     if (!item) continue;
 
     if (typeof _conValidarAntesDeVincular === 'function') {
-      const val = await _conValidarAntesDeVincular(empresa_activa.id, 'COMPRA', item.nDoc, item.total, item.movId, item.monto);
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, 'COMPRA', item.nDoc, item.total, item.movId, item.monto, { ruc: item.ruc, nombre: item.proveedor });
       if (!val.ok) { bloqueados.push(item.nDoc); continue; }
     }
 
@@ -1319,7 +1328,7 @@ async function _verMovBancarioLink(nDoc, tipo, ruc = '', nombre = '') {
     .from('tesoreria_mbd')
     .select('*')
     .eq('empresa_id', empresa_activa.id)
-    .eq('tipo_doc', tipo)
+    .or(_conFiltroTipoDoc(tipo)) // 2026-09-19: también movimientos sin categoría; abajo se filtra por emisor
     .eq('nro_factura_doc', nDoc)
     .limit(20);
 
