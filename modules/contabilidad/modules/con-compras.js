@@ -229,6 +229,7 @@ async function _renderComprasFiltradas() {
       ${_cBadge('POSIBLE', countPosC)}
       ${_cBadge('PENDIENTE', countPendC)}
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicC}% conciliado</span>
+      ${covFilas.filter(x => x.roto).length ? `<span style="color:#C05621;font-size:10px;font-weight:700" title="Ya hay un movimiento con el N° de estos comprobantes, pero no cuenta (está PENDIENTE o su emisor no coincide). Usa 🔧 Reparar estados o corrige el movimiento.">⚠️ ${covFilas.filter(x => x.roto).length} con un movimiento que trae su N° pero no cuenta</span>` : ''}
       ${_cFiltroEstado ? `<span onclick="_cToggleFiltroEstado('${_cFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-size:10px;font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
     </div>
     <div class="resumen-card" style="background:var(--color-secundario)">
@@ -294,7 +295,7 @@ async function _renderComprasFiltradas() {
             ? `_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')`
             : `nexumIrAConciliar('COMPRA','${r.id}')`;
           const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;cursor:pointer"
-               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
+               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}${roto ? ' ⚠️' : ''}</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -1186,7 +1187,7 @@ async function _cBuscarMovManual(compraId, nDoc, tipoDoc, proveedor = '', ruc = 
 async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = '', ruc = '', total = 0) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto,proveedor_empresa_personal,ruc_dni').eq('id', movId).maybeSingle();
+  const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto,proveedor_empresa_personal,ruc_dni,titular_comprobante').eq('id', movId).maybeSingle();
   if (typeof nexumPrecargarNumerosRH === 'function') await nexumPrecargarNumerosRH(movPrevio?.nro_factura_doc);
 
   if (typeof _conValidarAntesDeVincular === 'function') {
@@ -1210,7 +1211,7 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
   // tercero), se conserva y el del comprobante se guarda aparte en
   // titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
   if (typeof _resolverProveedorTitular === 'function') {
-    const rt = _resolverProveedorTitular(movPrevio?.proveedor_empresa_personal, proveedor, movPrevio?.ruc_dni, ruc);
+    const rt = _resolverProveedorTitular(movPrevio?.proveedor_empresa_personal, proveedor, movPrevio?.ruc_dni, ruc, movPrevio?.titular_comprobante);
     patch.proveedor_empresa_personal = rt.proveedor;
     patch.titular_comprobante = rt.titular;
     patch.ruc_dni = rt.ruc;
@@ -1266,8 +1267,8 @@ async function _cAplicarLoteConciliacion(items) {
 
     let rt = { proveedor: item.proveedor || undefined, titular: null, ruc: item.ruc || undefined };
     if (typeof _resolverProveedorTitular === 'function') {
-      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni').eq('id', item.movId).maybeSingle();
-      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.proveedor, movActual?.ruc_dni, item.ruc);
+      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni,titular_comprobante').eq('id', item.movId).maybeSingle();
+      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.proveedor, movActual?.ruc_dni, item.ruc, movActual?.titular_comprobante);
     }
 
     const { error } = await _supabase.from('tesoreria_mbd').update({

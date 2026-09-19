@@ -440,7 +440,10 @@ function _tercNombreNorm(v) {
 // `titular_comprobante = rt.titular` en un update OMITE el campo y se conserva el "A quién se
 // depositó" que ya estuviera escrito. Con null se BORRABA (p. ej. al re-vincular o al correr
 // "Reparar estados" dos veces, cuando el nombre del banco ya coincidía con el del comprobante).
-function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucActual, rucComprobante) {
+// `titularActual` (opcional) = el «A quién se depositó» que el movimiento YA tiene escrito: si existe y es distinto del
+// nombre del banco, no se toca nada (ni Proveedor ni RUC ni titular) para no perder ninguno de los dos nombres; se
+// devuelve `titularRespetado: true`. Todos los botones que vinculan deben pasarlo.
+function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucActual, rucComprobante, titularActual) {
   const actual = (proveedorActual || '').toString().trim();
   const comp   = (proveedorComprobante || '').toString().trim();
   const rucAct = (rucActual || '').toString().trim() || null;
@@ -454,6 +457,10 @@ function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucAct
   // emisor del comprobante (ej. "TIENDAS DEL MEJORAMIENTO...") — el campo
   // Proveedor/Empresa/Personal migra igual al emisor del comprobante (dato
   // contable correcto) y el nombre del depositario se guarda aparte.
+  const titularYa = (titularActual || '').toString().trim();
+  if (titularYa && _tercNombreNorm(titularYa) !== _tercNombreNorm(actual)) {
+    return { proveedor: actual, titular: undefined, ruc: rucAct, titularRespetado: true };
+  }
   return { proveedor: comp, titular: actual, ruc: rucComp || rucAct };
 }
 
@@ -975,7 +982,7 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
 
   // Respaldo ANTES de tocar nada (Wendy, 2026-09-19: "¿esto va a borrar lo que he conciliado?"): se
   // descarga una copia de TODOS los movimientos tal como están. Si no se puede guardar, no se cambia nada.
-  if (decision.items.length || decision.completarTipo || decision.convertirUUIDs || decision.reevaluar14 || decision.quitarCeros) {
+  if (decision.items.length || decision.completarTipo || decision.convertirUUIDs || decision.reevaluar14 || decision.quitarCeros || decision.corregirEstados) {
     try {
       const n = await _conRespaldarMovimientos(empId, hoy);
       mostrarToast(`📥 Respaldo descargado (${n} movimientos) antes de aplicar los cambios.`, 'info');
@@ -999,7 +1006,7 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
     }
     if (it.cambiaNro) patch.nro_factura_doc = it.nroCanonico;
     // Estado de un movimiento con N° pero PENDIENTE → el que da la regla de 14 campos (solo si sigue PENDIENTE/vacío).
-    if (it.corregirEstado && it.estadoNuevo && !['EMITIDO', 'OBSERVADO', 'CANCELADO'].includes(it.mov.entrega_doc)) patch.entrega_doc = it.estadoNuevo;
+    if (decision.corregirEstados && it.corregirEstado && it.estadoNuevo && !['EMITIDO', 'OBSERVADO', 'CANCELADO'].includes(it.mov.entrega_doc)) patch.entrega_doc = it.estadoNuevo;
     const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', it.mov.id);
     if (!error) aplicados++;
   }
@@ -1184,9 +1191,9 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
       const cv = it.categoria === 'COMPRA' || it.categoria === 'VENTA';
       let nota = '';
       const cambio = it.corregirEstado
-        ? `Su estado pasa de ${escapar(m.entrega_doc || 'PENDIENTE')} a <strong>${it.estadoNuevo}</strong> (ya tiene N° de comprobante; regla de 14 campos). ` : '';
+        ? `⚠️ Está ${escapar(m.entrega_doc || 'PENDIENTE')} aunque ya tiene N° de comprobante (por eso su comprobante no lo cuenta). Con la opción «Pasar a OBSERVADO/EMITIDO» de arriba quedaría <strong>${it.estadoNuevo}</strong>. ` : '';
       if (it.estado5) {
-        nota = cambio + `En Contabilidad quedará <strong style="color:${_CON_ESTADO5_COLOR[it.estado5]}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)}).`;
+        nota = cambio + `${it.corregirEstado ? 'Y en Contabilidad quedaría' : 'En Contabilidad quedará'} <strong style="color:${_CON_ESTADO5_COLOR[it.estado5]}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)}).`;
       } else if (cambio) {
         nota = cambio;
       }
@@ -1262,11 +1269,14 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
       faltantesTipo.length ? opcion('rev-tipo', true, faltantesTipo.length,
         `Completar «Tipo DOC» vacío — ${faltantesTipo.length} movimiento(s)`,
         `${['FA', 'BO', 'RH'].map(cod => { const n = faltantesTipo.filter(m => m._codigo === cod).length; return n ? `${n} → ${cod}` : ''; }).filter(Boolean).join(' · ')}. Solo se llena el vacío; nunca se cambia uno ya elegido.`) : '',
+      items.some(i => i.corregirEstado) ? opcion('rev-estpend', false, items.filter(i => i.corregirEstado).length,
+        `(Opcional) Pasar a OBSERVADO/EMITIDO los ${items.filter(i => i.corregirEstado).length} movimientos que ya tienen N° de comprobante pero figuran PENDIENTE`,
+        'Por eso su comprobante no los cuenta y sigue Pendiente/Posible. Viene sin marcar: en Movimientos los verás con una alerta ⚠️ para corregirlos tú. Si lo marcas, cada uno pasa a EMITIDO (si tiene sus 14 campos) o a OBSERVADO (si le falta alguno).') : '',
       estados14.length ? opcion('rev-est14', false, estados14.length,
         `(Opcional) Re-evaluar el estado con la regla de los 14 campos — ${estados14.length} movimiento(s)`,
         `${a_obs} pasarían de EMITIDO a OBSERVADO (les falta algún dato) y ${a_emi} de OBSERVADO a EMITIDO. No afecta a Contabilidad; por eso viene sin marcar.`) : '',
     ].join('');
-    const nOpciones = [ceros, uuids, faltantesTipo, estados14].filter(a => a.length).length;
+    const nOpciones = [ceros, uuids, faltantesTipo, estados14, items.filter(i => i.corregirEstado)].filter(a => a.length).length;
 
     const hayAlgo = seguros.length || terceros.length || ambiguos.length || opciones;
     mc.innerHTML = `
@@ -1282,7 +1292,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
               Nada cambia hasta que lo hagas; con <strong>«Cancelar»</strong> no se toca nada.
               <div style="font-size:12px;color:var(--color-texto-suave);margin-top:4px;line-height:1.5">
                 <strong>Antes de aplicar se descarga un respaldo</strong> de todos tus movimientos, por si quieres volver atrás.
-                Nunca se tocan montos, observaciones ni notas. El estado solo cambia en los movimientos que ya traen el N° de su comprobante pero figuran PENDIENTE (pasan a OBSERVADO/EMITIDO por la regla de 14 campos, para que su comprobante los cuente). Lo demás que se escribe es la categoría, el N° en formato Contabilidad y, en los pagos a terceros, el Proveedor/RUC del comprobante
+                Nunca se tocan montos, observaciones ni notas, y el estado de un movimiento solo cambia si tú marcas la opción «Pasar a OBSERVADO/EMITIDO». Lo que se escribe es la categoría, el N° en formato Contabilidad y, en los pagos a terceros, el Proveedor/RUC del comprobante
                 (el nombre del banco pasa a «A quién se depositó»; si ya había uno escrito, no se pisa).
                 Abre cada sección solo si quieres ver el detalle o quitar algún caso.
               </div>
@@ -1323,10 +1333,10 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
       const cAmb = mc.querySelector('.rev-cont[data-g="ambiguo"]');
       if (cAmb) cAmb.textContent = `${radios().length} elegidos`;
       const cFmt = mc.querySelector('.rev-cont[data-g="fmt"]');
-      if (cFmt) cFmt.textContent = `${mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked').length} marcados`;
+      if (cFmt) cFmt.textContent = `${mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked, #rev-estpend:checked').length} marcados`;
       // Botón: cuántos cambios se harán
       let n = chk().filter(c => c.checked).length + radios().length;
-      mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked').forEach(c => { n += Number(c.dataset.n) || 0; });
+      mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked, #rev-estpend:checked').forEach(c => { n += Number(c.dataset.n) || 0; });
       btnOk.textContent = n ? `Aplicar (${n} cambio${n === 1 ? '' : 's'})` : 'Continuar sin cambiar nada';
     };
     mc.querySelector('.modal-overlay').addEventListener('change', actualizar);
@@ -1349,6 +1359,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
         completarTipo:   !!mc.querySelector('#rev-tipo:checked'),
         convertirUUIDs:  !!mc.querySelector('#rev-uuid:checked'),
         reevaluar14:     !!mc.querySelector('#rev-est14:checked'),
+        corregirEstados: !!mc.querySelector('#rev-estpend:checked'),
         quitarCeros:     !!mc.querySelector('#rev-ceros:checked'),
       });
     };

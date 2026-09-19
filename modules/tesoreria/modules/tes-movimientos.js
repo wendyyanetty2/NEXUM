@@ -5,6 +5,13 @@
 let movimientos_lista    = [];
 let movimientos_filtrada = [];
 let movimientos_pag      = 1;
+// Alerta (Wendy, 2026-09-19): un movimiento con N° de comprobante pero en estado PENDIENTE no cuenta para su
+// comprobante (que sigue Pendiente/Posible). Se avisa para que ella lo corrija, en vez de cambiarlo solo.
+let mov_solo_alerta      = false;
+function _movTieneAlertaPend(r) {
+  return !!((r.nro_factura_doc || '').toString().trim()) && (r.entrega_doc || 'PENDIENTE') === 'PENDIENTE';
+}
+function _movToggleAlerta() { mov_solo_alerta = !mov_solo_alerta; movimientos_pag = 1; filtrarMovimientos(); }
 const MOV_POR_PAG        = 20;
 let mov_seleccionados    = new Set();
 let mov_ultimo_undo      = null; // { campos, registros: [{id, ...valoresAnteriores}] }
@@ -223,6 +230,7 @@ function filtrarMovimientos() {
     if (nat === 'CARGO'  && Number(r.monto) >= 0) return false;
     if (nat === 'ABONO'  && Number(r.monto) < 0)  return false;
     if (est && r.entrega_doc !== est) return false;
+    if (mov_solo_alerta && !_movTieneAlertaPend(r)) return false;
     if (q) {
       if (fechaFiltro) {
         // Filtrar por fecha exacta / mes / año
@@ -267,6 +275,7 @@ function _renderResumenMov() {
   const totS   = filas.filter(r => r.moneda !== 'USD').reduce((s,r)=>s+Number(r.monto),0);
   const totD   = filas.filter(r => r.moneda === 'USD').reduce((s,r)=>s+Number(r.monto),0);
   const pend   = filas.filter(r => r.entrega_doc === 'PENDIENTE').length;
+  const nAlerta = movimientos_lista.filter(_movTieneAlertaPend).length;
   div.innerHTML = `
     <div class="resumen-card" style="background:${totS<0?'var(--color-critico)':'var(--color-exito)'}">
       <div class="rc-label">Saldo neto (S/)</div>
@@ -283,7 +292,13 @@ function _renderResumenMov() {
     <div class="resumen-card" style="background:#4A5568">
       <div class="rc-label">Total movimientos</div>
       <div class="rc-valor">${filas.length}</div>
-    </div>`;
+    </div>
+    ${nAlerta ? `<div class="resumen-card" onclick="_movToggleAlerta()" style="background:#C05621;cursor:pointer;${mov_solo_alerta ? 'box-shadow:0 0 0 3px #fff inset;' : ''}"
+      title="Estos movimientos ya tienen N° de comprobante pero su estado es PENDIENTE. Por eso su comprobante NO los cuenta y sigue Pendiente/Posible. Edítalos y pasa el estado a OBSERVADO o EMITIDO.">
+      <div class="rc-label">⚠️ Con N° pero PENDIENTE</div>
+      <div class="rc-valor">${nAlerta}</div>
+      <div class="rc-sub">${mov_solo_alerta ? 'Clic: ver todos' : 'Clic: ver solo estos'}</div>
+    </div>` : ''}`;
 }
 
 function _fmtMov(n) {
@@ -323,7 +338,7 @@ function renderTablaMovimientos() {
         <td style="${_TD}font-size:11px;white-space:nowrap">${escapar(r.concepto||'—')}</td>
         <td style="${_TD}max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.empresa||'')}">${escapar(r.empresa||'—')}</td>
         <td style="${_TD}">
-          <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBg[est]||'#718096'};color:#fff;white-space:nowrap">${est}</span>
+          <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBg[est]||'#718096'};color:#fff;white-space:nowrap"${_movTieneAlertaPend(r) ? ` title="Tiene N° de comprobante (${escapar(_conLegible(r.nro_factura_doc))}) pero está PENDIENTE: por eso su comprobante no lo cuenta. Edítalo y pásalo a OBSERVADO o EMITIDO."` : ''}>${est}${_movTieneAlertaPend(r) ? ' ⚠️' : ''}</span>
         </td>
         <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(_conLegible(window._rhUuidMap?.[r.nro_factura_doc]||r.nro_factura_doc)||'—')}</td>
         <td style="${_TD}text-align:center">
@@ -369,6 +384,7 @@ function limpiarFiltrosMov() {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   const b = document.getElementById('mov-buscar'); if (b) b.value = '';
+  mov_solo_alerta = false;
   filtrarMovimientos();
 }
 
@@ -1840,7 +1856,7 @@ async function _confirmarDividirMBD() {
     const nroGuardar = comp ? (comp.nro || f.nrodoc) : (f.nrodoc || null);
     // Proveedor/RUC/titular con la regla central de pago a terceros (igual que al vincular).
     const rt = comp && typeof _resolverProveedorTitular === 'function'
-      ? _resolverProveedorTitular(f.proveedor || r.proveedor_empresa_personal, comp.proveedor, f.ruc, comp.ruc)
+      ? _resolverProveedorTitular(f.proveedor || r.proveedor_empresa_personal, comp.proveedor, f.ruc, comp.ruc, r.titular_comprobante)
       : null;
     const proveedor = rt ? rt.proveedor : (f.proveedor || r.proveedor_empresa_personal || null);
     const rucFila   = rt ? rt.ruc : (f.ruc || null);
@@ -1875,7 +1891,7 @@ async function _confirmarDividirMBD() {
       // tipo_comprobante = código de la lista (FA/BO/RH…) — nunca al revés.
       tipo_doc:                   comp?.tipoDoc || null,
       tipo_comprobante:           tipoComprobante,
-      titular_comprobante:        rt?.titular || null,
+      titular_comprobante:        rt?.titular || r.titular_comprobante || null,
       nro_factura_doc:            nroGuardar,
       entrega_doc:                estadoDoc,
       concepto,

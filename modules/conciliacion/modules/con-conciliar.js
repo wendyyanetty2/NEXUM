@@ -787,7 +787,7 @@ async function _conBuscarComprobanteManual(doc) {
 
 async function _conVincularComprobante(doc, movId) {
   const { data: mov } = await _supabase.from('tesoreria_mbd')
-    .select('nro_operacion_bancaria,fecha_deposito,descripcion,moneda,monto,proveedor_empresa_personal,ruc_dni,cotizacion,oc,proyecto,concepto,empresa,autorizacion,entrega_doc')
+    .select('nro_operacion_bancaria,fecha_deposito,descripcion,moneda,monto,proveedor_empresa_personal,ruc_dni,titular_comprobante,cotizacion,oc,proyecto,concepto,empresa,autorizacion,entrega_doc')
     .eq('id', movId).single();
   if (!mov) { mostrarToast('No se pudo cargar el movimiento', 'error'); return; }
 
@@ -813,7 +813,7 @@ async function _conVincularComprobante(doc, movId) {
     fecha_actualizacion: hoy,
   };
   if (typeof _resolverProveedorTitular === 'function') {
-    const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor, mov.ruc_dni, doc.ruc);
+    const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor, mov.ruc_dni, doc.ruc, mov.titular_comprobante);
     patch.proveedor_empresa_personal = rt.proveedor;
     patch.titular_comprobante = rt.titular;
     patch.ruc_dni = rt.ruc;
@@ -1238,14 +1238,14 @@ async function _aprobarMatchMultiComprobante(key, idx) {
   let ok = 0, errores = 0;
   for (const d of item.docs) {
     const rt = typeof _resolverProveedorTitular === 'function'
-      ? _resolverProveedorTitular(base.proveedor_empresa_personal, d._proveedor, base.ruc_dni, d._ruc)
+      ? _resolverProveedorTitular(base.proveedor_empresa_personal, d._proveedor, base.ruc_dni, d._ruc, base.titular_comprobante)
       : { proveedor: d._proveedor || base.proveedor_empresa_personal || null, titular: null, ruc: d._ruc || base.ruc_dni || null };
     const { data: ins, error: errIns } = await _supabase.from('tesoreria_mbd').insert({
       empresa_id: base.empresa_id, nro_operacion_bancaria: base.nro_operacion_bancaria,
       fecha_deposito: base.fecha_deposito, moneda: base.moneda, monto: signo * Math.abs(d._total || 0),
       descripcion: (base.descripcion || '') + ` (${d._ndoc})`,
       proveedor_empresa_personal: rt.proveedor,
-      titular_comprobante: rt.titular,
+      titular_comprobante: rt.titular ?? base.titular_comprobante ?? null,
       ruc_dni: rt.ruc,
       tipo_doc: d._tipo, nro_factura_doc: d._ndoc,
       tipo_comprobante: _conCodigoTipoComprobante(d._tipo, d._ndoc),

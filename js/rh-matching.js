@@ -238,7 +238,7 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
     const nroOpSin  = nroOp.replace(/^0+/, '');
     let consulta = _supabase
       .from('tesoreria_mbd')
-      .select('id, nro_operacion_bancaria, fecha_deposito, descripcion, moneda, monto, proveedor_empresa_personal, ruc_dni, nro_factura_doc, tipo_doc, tipo_comprobante, cotizacion, oc, proyecto, concepto, empresa, autorizacion, entrega_doc')
+      .select('id, nro_operacion_bancaria, fecha_deposito, descripcion, moneda, monto, proveedor_empresa_personal, ruc_dni, titular_comprobante, nro_factura_doc, tipo_doc, tipo_comprobante, cotizacion, oc, proyecto, concepto, empresa, autorizacion, entrega_doc')
       .or(`nro_operacion_bancaria.eq.${nroOp},nro_operacion_bancaria.eq.${nroOpSin}`);
     // Solo movimientos de la empresa activa (el N° de operación puede repetirse entre empresas).
     if (typeof empresa_activa !== 'undefined' && empresa_activa?.id) consulta = consulta.eq('empresa_id', empresa_activa.id);
@@ -261,7 +261,7 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
       // — nunca se sobrescribe en silencio (Wendy, 2026-09-18). El DNI del RH pasa al
       // movimiento: con él se reconoce el vínculo (N° + emisor).
       if (typeof _resolverProveedorTitular === 'function') {
-        const rt = _resolverProveedorTitular(mbd.proveedor_empresa_personal, rhNombre, mbd.ruc_dni, rhDni);
+        const rt = _resolverProveedorTitular(mbd.proveedor_empresa_personal, rhNombre, mbd.ruc_dni, rhDni, mbd.titular_comprobante);
         patch.proveedor_empresa_personal = rt.proveedor;
         patch.titular_comprobante = rt.titular;
         patch.ruc_dni = rt.ruc;

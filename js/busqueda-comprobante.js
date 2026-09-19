@@ -275,7 +275,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
   if (tabla === 'tesoreria_mbd') {
     const { data: mov } = await _supabase
       .from('tesoreria_mbd')
-      .select('nro_operacion_bancaria,fecha_deposito,descripcion,moneda,monto,proveedor_empresa_personal,ruc_dni,cotizacion,oc,proyecto,concepto,empresa,autorizacion,entrega_doc')
+      .select('nro_operacion_bancaria,fecha_deposito,descripcion,moneda,monto,proveedor_empresa_personal,ruc_dni,titular_comprobante,cotizacion,oc,proyecto,concepto,empresa,autorizacion,entrega_doc')
       .eq('id', movBancoId)
       .single();
     movActual = mov;
@@ -313,7 +313,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
   // (pago a tercero), se conserva y el del comprobante se guarda aparte en
   // titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
   if (tabla === 'tesoreria_mbd' && typeof _resolverProveedorTitular === 'function') {
-    const rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, extra.proveedor, movActual?.ruc_dni, extra.ruc);
+    const rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, extra.proveedor, movActual?.ruc_dni, extra.ruc, movActual?.titular_comprobante);
     updatePayload.proveedor_empresa_personal = rt.proveedor;
     updatePayload.titular_comprobante = rt.titular;
     updatePayload.ruc_dni = rt.ruc;
@@ -720,13 +720,27 @@ async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, provee
   if (cnt) cnt.textContent = `${links.length} operación(es)`;
   if (tot) tot.textContent = `Total vinculado: ${formatearMoneda ? formatearMoneda(totalAbs) : 'S/ '+totalAbs.toFixed(2)}`;
 
+  // Movimientos repetidos (Wendy, 2026-09-19): una misma factura registrada dos veces en el banco. Mismo N° de
+  // operación y monto = casi seguro duplicado; solo mismo monto = puede serlo (o ser un pago dividido).
+  const _monto2 = l => Math.abs(Number(l.monto || 0)).toFixed(2);
+  const _conteo = (clave) => { const m = new Map(); links.forEach(l => m.set(clave(l), (m.get(clave(l)) || 0) + 1)); return m; };
+  const _kOp    = l => `${(l.nro_operacion_bancaria || '').toString().trim()}|${_monto2(l)}`;
+  const _cOp    = _conteo(_kOp), _cMonto = _conteo(_monto2);
+  const _hayDup = links.some(l => (l.nro_operacion_bancaria || '').toString().trim() && _cOp.get(_kOp(l)) > 1);
+  if (tot && _hayDup) tot.textContent += ' · ⚠️ hay movimientos repetidos: desvincula el que sobra (🔓)';
+
   el.innerHTML = links.map(l => {
     const badgeColor = l.entrega_doc === 'EMITIDO' ? '#2F855A' : l.entrega_doc === 'OBSERVADO' ? '#744210' : '#718096';
+    const marcaDup = ((l.nro_operacion_bancaria || '').toString().trim() && _cOp.get(_kOp(l)) > 1)
+      ? '<span title="Mismo N° de operación y mismo monto que otro movimiento vinculado a este comprobante: casi seguro está registrado dos veces" style="font-size:10px;background:#C53030;color:#fff;padding:1px 5px;border-radius:8px;font-weight:700">🔁 repetido</span>'
+      : (_cMonto.get(_monto2(l)) > 1
+        ? '<span title="Otro movimiento vinculado tiene el mismo monto: puede ser un duplicado o un pago dividido, revísalo" style="font-size:10px;background:#D69E2E;color:#fff;padding:1px 5px;border-radius:8px;font-weight:700">≈ mismo monto</span>' : '');
     return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)">
       <span style="font-family:monospace;font-size:11px;color:var(--color-secundario);font-weight:600">${escapar(l.nro_operacion_bancaria||'—')}</span>
       <span style="font-size:11px;color:var(--color-texto-suave)">${l.fecha_deposito||''}</span>
       <span style="font-weight:700;font-size:12px;color:${Number(l.monto||0)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda?formatearMoneda(l.monto,l.moneda||'PEN'):'S/'+Number(l.monto||0).toFixed(2)}</span>
       <span style="font-size:10px;background:${badgeColor};color:#fff;padding:1px 5px;border-radius:8px;font-weight:600">${escapar(l.entrega_doc||'')}</span>
+      ${marcaDup}
       <button onclick="_bmDesvincularmovLink('${l.id}','${escapar(nDoc)}','${docTipo}','${escapar(nDocLegible || nDoc)}')"
         title="Desvincular esta operación"
         style="margin-left:auto;padding:2px 8px;background:rgba(197,48,48,.12);color:#C53030;border:1px solid rgba(197,48,48,.3);border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font);flex-shrink:0">
@@ -820,7 +834,7 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
   // del comprobante (pago a tercero), se conserva y el del comprobante se guarda
   // aparte en titular_comprobante — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
   const rtDiv = typeof _resolverProveedorTitular === 'function'
-    ? _resolverProveedorTitular(r.proveedor_empresa_personal, proveedor, r.ruc_dni, ruc)
+    ? _resolverProveedorTitular(r.proveedor_empresa_personal, proveedor, r.ruc_dni, ruc, r.titular_comprobante)
     : { proveedor: proveedor || r.proveedor_empresa_personal || null, titular: null, ruc: ruc || r.ruc_dni || null };
   const nuevasFilas = [
     {
@@ -828,7 +842,7 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
       fecha_deposito: r.fecha_deposito, moneda: r.moneda, monto: montoFactura,
       descripcion: (r.descripcion || '') + ' (1/2)',
       proveedor_empresa_personal: rtDiv.proveedor,
-      titular_comprobante: rtDiv.titular,
+      titular_comprobante: rtDiv.titular ?? r.titular_comprobante ?? null,
       ruc_dni: rtDiv.ruc,
       tipo_doc: docTipo, nro_factura_doc: nDoc,
       tipo_comprobante: _mbdCodigoTipoComprobante(docTipo, nDoc),

@@ -221,6 +221,7 @@ async function _renderVentasFiltradas() {
       ${_vBadge('POSIBLE', countPosV)}
       ${_vBadge('PENDIENTE', countPendV)}
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicV}% conciliado</span>
+      ${covFilasV.filter(x => x.roto).length ? `<span style="color:#C05621;font-size:10px;font-weight:700" title="Ya hay un movimiento con el N° de estos comprobantes, pero no cuenta (está PENDIENTE o su emisor no coincide). Usa 🔧 Reparar estados o corrige el movimiento.">⚠️ ${covFilasV.filter(x => x.roto).length} con un movimiento que trae su N° pero no cuenta</span>` : ''}
       ${_vFiltroEstado ? `<span onclick="_vToggleFiltroEstado('${_vFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-size:10px;font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
     </div>
     <div class="resumen-card" style="background:var(--color-secundario)">
@@ -286,7 +287,7 @@ async function _renderVentasFiltradas() {
             ? `_verMovBancarioLink('${escapar(nDoc)}','VENTA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.cliente||'')}')`
             : `nexumIrAConciliar('VENTA','${r.id}')`;
           const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;cursor:pointer"
-               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
+               title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}${roto ? ' ⚠️' : ''}</span>`;
           return `
           <tr>
             <td>${escapar(r.periodo)}</td>
@@ -1060,8 +1061,8 @@ async function _vAplicarLoteConciliacion(items) {
 
     let rt = { proveedor: item.cliente || undefined, titular: null, ruc: item.ruc || undefined };
     if (typeof _resolverProveedorTitular === 'function') {
-      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni').eq('id', item.movId).maybeSingle();
-      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.cliente, movActual?.ruc_dni, item.ruc);
+      const { data: movActual } = await _supabase.from('tesoreria_mbd').select('proveedor_empresa_personal,ruc_dni,titular_comprobante').eq('id', item.movId).maybeSingle();
+      rt = _resolverProveedorTitular(movActual?.proveedor_empresa_personal, item.cliente, movActual?.ruc_dni, item.ruc, movActual?.titular_comprobante);
     }
 
     const { error } = await _supabase.from('tesoreria_mbd').update({
