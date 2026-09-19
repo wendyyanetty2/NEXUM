@@ -237,6 +237,9 @@ function filtrarMovimientos() {
           r.autorizacion, r.observaciones, r.observaciones_2,
           r.cotizacion, r.oc, r.moneda, r.entrega_doc, r.tipo_doc,
           r.detalles_compra_servicio,
+          // "A quién se depositó" (dato real del banco cuando difiere del proveedor):
+          // debe poder encontrarse escribiendo ese nombre en Buscar.
+          r.titular_comprobante,
           r.monto != null ? String(r.monto) : ''
         ].map(v=>(v||'').toLowerCase()).join(' ');
         if (!haystack.includes(q)) return false;
@@ -312,7 +315,7 @@ function renderTablaMovimientos() {
         <td style="${_TD}max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="${escapar(r.descripcion||'')}">${escapar(r.descripcion||'—')}</td>
         <td style="${_TD}text-align:center">${escapar(r.moneda||'S/')}</td>
         <td style="${_TD}text-align:right;font-weight:700;color:${Number(r.monto)>=0?'var(--color-exito)':'var(--color-critico)'};white-space:nowrap">${formatearMoneda(r.monto,r.moneda==='USD'?'USD':'PEN')}</td>
-        <td style="${_TD}max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}${r.titular_comprobante ? ' — Depositado a: '+escapar(r.titular_comprobante) : ''}">${escapar(r.proveedor_empresa_personal||'—')}${r.titular_comprobante ? ' ⚠️' : ''}</td>
+        <td style="${_TD}max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapar(r.proveedor_empresa_personal||'')}${r.titular_comprobante ? ' — Depositado a: '+escapar(r.titular_comprobante) : ''}">${escapar(r.proveedor_empresa_personal||'—')}${r.titular_comprobante ? ` ⚠️<div style="font-size:10px;color:var(--color-texto-suave);overflow:hidden;text-overflow:ellipsis" title="A quién se depositó">↳ ${escapar(r.titular_comprobante)}</div>` : ''}</td>
         <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(r.ruc_dni||'—')}</td>
         <td style="${_TD}font-size:11px">${escapar(r.cotizacion||'—')}</td>
         <td style="${_TD}font-size:11px">${escapar(r.oc||'—')}</td>
