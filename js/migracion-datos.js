@@ -11,46 +11,82 @@
        elige, campo por campo, con cuál quedarse.
    ============================================================ */
 
-// ── Busca un comprobante existente en Contabilidad que coincida con
-//    el N° Factura/DOC + tipo escritos en Tesorería. Solo lectura.
-//    Si no se sabe la categoría (tipoDoc vacío — ej. al tipear el N°
-//    Factura/DOC a mano sin haber vinculado todavía por 🔗/🔍), se
-//    prueba COMPRA → VENTA → RH en orden y se devuelve `tipoDoc` con la
-//    categoría que sí tuvo match, para que el llamador la guarde junto
-//    con el resto (nunca se adivina ni se deja tipo_doc a medias). ────
-async function _migBuscarComprobante(nroFacturaDoc, tipoDoc) {
-  if (!nroFacturaDoc || typeof empresa_activa === 'undefined' || !empresa_activa?.id) return null;
+// ── Busca TODOS los comprobantes de Contabilidad (Compras, Ventas y RH) que
+//    tengan el N° Factura/DOC escrito en Tesorería. Solo lectura.
+//    Un mismo N° puede repetirse: la factura E001-156 de un proveedor y un
+//    RH E001-156 de otra persona, o el mismo N° de RH de dos emisores distintos
+//    (Wendy, 2026-09-19). Antes se devolvía solo el primero que apareciera, así
+//    que a veces se vinculaba al comprobante equivocado sin avisar.
+//    El N° se busca tolerando mayúsculas/minúsculas, espacios y ceros a la izquierda.
+//    Cada candidato: { tipoDoc, id, proveedor, ruc, monto, origen, nro, fecha }
+//    (más los alias cat/nombre/total que usan las tarjetas de consolidacion-estados.js).
+async function _migCandidatosComprobante(nroFacturaDoc) {
+  if (!nroFacturaDoc || typeof empresa_activa === 'undefined' || !empresa_activa?.id) return [];
+  const crudo = String(nroFacturaDoc).trim();
+  const out = [];
+  const agregar = c => out.push({ ...c, cat: c.tipoDoc, nombre: c.proveedor, total: c.monto });
 
-  if (!tipoDoc) {
-    for (const candidato of ['COMPRA', 'VENTA', 'RH']) {
-      const encontrado = await _migBuscarComprobante(nroFacturaDoc, candidato);
-      if (encontrado) return { ...encontrado, tipoDoc: candidato };
+  const i = crudo.indexOf('-');
+  if (i > 0) {
+    const serie = crudo.slice(0, i).trim().toUpperCase();
+    const nro   = crudo.slice(i + 1).trim();
+    const nros  = [...new Set([nro, nro.replace(/^0+(?=\d)/, '')])].filter(Boolean);
+    for (const [tipoDoc, tabla, campoProveedor] of [['COMPRA', 'contabilidad_compras', 'proveedor'], ['VENTA', 'contabilidad_ventas', 'cliente']]) {
+      const { data } = await _supabase.from(tabla).select('*')
+        .eq('empresa_id', empresa_activa.id).eq('serie_cdp', serie).in('nro_cp_inicial', nros);
+      (data || []).forEach(d => agregar({
+        tipoDoc, id: d.id, proveedor: d[campoProveedor] || '', ruc: d.nro_doc_identidad || '',
+        monto: Number(d.total_cp) || 0, origen: tabla, nro: [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-'), fecha: d.fecha_emision || null,
+      }));
     }
-    return null;
   }
 
-  if (tipoDoc === 'COMPRA' || tipoDoc === 'VENTA') {
-    const [serie, ...resto] = nroFacturaDoc.split('-');
-    const nro = resto.join('-');
-    const tabla = tipoDoc === 'COMPRA' ? 'contabilidad_compras' : 'contabilidad_ventas';
-    const campoProveedor = tipoDoc === 'COMPRA' ? 'proveedor' : 'cliente';
-    const { data } = await _supabase.from(tabla).select('*')
-      .eq('empresa_id', empresa_activa.id).eq('serie_cdp', serie).eq('nro_cp_inicial', nro).limit(1).maybeSingle();
-    if (!data) return null;
-    return { proveedor: data[campoProveedor] || '', ruc: data.nro_doc_identidad || '', monto: Number(data.total_cp) || 0, origen: tabla };
-  }
+  // RH: nro_factura_doc puede ser el UUID del RH o el "numero_rh" legible
+  const esUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(crudo);
+  let q = _supabase.from('rh_registros').select('*, prestadores_servicios(nombre, dni)').eq('empresa_operadora_id', empresa_activa.id);
+  q = esUUID ? q.eq('id', crudo) : q.in('numero_rh', [...new Set([crudo, crudo.toUpperCase()])]);
+  const { data: rhs } = await q;
+  (rhs || []).forEach(d => agregar({
+    tipoDoc: 'RH', id: d.id, proveedor: d.nombre_emisor || d.prestadores_servicios?.nombre || '',
+    ruc: d.nro_doc_emisor || d.prestadores_servicios?.dni || '',
+    monto: Number(d.monto_neto) || 0, origen: 'rh_registros', nro: d.numero_rh || d.id, fecha: d.fecha_emision || null,
+  }));
 
-  if (tipoDoc === 'RH') {
-    // nro_factura_doc puede ser el UUID del RH o el "numero_rh" legible
-    let q = _supabase.from('rh_registros').select('*').eq('empresa_operadora_id', empresa_activa.id);
-    const esUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nroFacturaDoc);
-    q = esUUID ? q.eq('id', nroFacturaDoc) : q.eq('numero_rh', nroFacturaDoc);
-    const { data } = await q.limit(1).maybeSingle();
-    if (!data) return null;
-    return { proveedor: data.nombre_emisor || '', ruc: data.nro_doc_emisor || '', monto: Number(data.monto_neto) || 0, origen: 'rh_registros' };
-  }
+  // El mismo comprobante cargado dos veces (misma categoría + N° + RUC) es UNO solo.
+  const vistos = new Set();
+  return out.filter(c => {
+    const k = `${c.tipoDoc}|${String(c.nro).trim().toUpperCase()}|${String(c.ruc).trim()}`;
+    if (vistos.has(k)) return false;
+    vistos.add(k);
+    return true;
+  });
+}
 
-  return null;
+// ── Busca el comprobante de Contabilidad que corresponde al N° Factura/DOC
+//    (+ categoría, si se conoce). Si no se sabe la categoría (tipoDoc vacío — ej.
+//    al tipear el N° a mano sin haber vinculado todavía por 🔗/🔍) se prueba en
+//    Compras, Ventas y RH, y se devuelve `tipoDoc` con la categoría hallada para
+//    que el llamador la guarde junto con el resto.
+//    Devuelve: el comprobante | null (no existe) | { cancelado: true } (había varios
+//    comprobantes con ese N° y Wendy canceló el aviso).
+//    `contexto` (opcional) = { ruc, nombre, monto, nroOperacion } del movimiento: si
+//    su RUC identifica UN solo comprobante entre los que comparten el N°, se usa ese;
+//    en cualquier otro caso con varios candidatos NO se adivina — se abre un aviso
+//    interactivo (_conElegirComprobante) para que Wendy elija cuál vincular. ──────
+async function _migBuscarComprobante(nroFacturaDoc, tipoDoc, contexto = null) {
+  const todos = await _migCandidatosComprobante(nroFacturaDoc);
+  if (tipoDoc) return todos.find(c => c.tipoDoc === tipoDoc) || null; // compatibilidad: búsqueda por categoría
+  if (!todos.length) return null;
+  if (todos.length === 1) return todos[0];
+
+  const ruc = ((contexto && contexto.ruc) || '').toString().trim();
+  if (ruc) {
+    const porRuc = todos.filter(c => String(c.ruc || '').trim() === ruc);
+    if (porRuc.length === 1) return porRuc[0];
+  }
+  if (typeof _conElegirComprobante !== 'function') return todos[0]; // sin la UI de elección, comportamiento anterior
+  const elegido = await _conElegirComprobante(todos, { nro: nroFacturaDoc, ...(contexto || {}) });
+  return elegido || { cancelado: true };
 }
 
 // ── Compara dos nombres tolerando orden distinto de palabras y acentos

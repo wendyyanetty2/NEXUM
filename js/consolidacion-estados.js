@@ -555,10 +555,14 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
   const cuenta = m => m.entrega_doc === 'EMITIDO' || m.entrega_doc === 'OBSERVADO';
 
   const idx = { COMPRA: new Map(), VENTA: new Map(), RH: new Map() };
+  // Un comprobante importado dos veces (misma categoría + N° + RUC) es UNO solo:
+  // no debe generar una falsa ambigüedad.
+  const firma = c => `${c.cat}|${_conNormNroDoc(c.nro)}|${(c.ruc || '').toString().trim()}`;
   const alta = (cat, key, c) => {
     if (!key) return;
     if (!idx[cat].has(key)) idx[cat].set(key, []);
-    if (!idx[cat].get(key).includes(c)) idx[cat].get(key).push(c);
+    const lista = idx[cat].get(key);
+    if (!lista.includes(c) && !lista.some(x => firma(x) === firma(c))) lista.push(c);
   };
   (compras || []).forEach(c => {
     const nro = [c.serie_cdp, c.nro_cp_inicial].filter(Boolean).join('-');
@@ -607,26 +611,23 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
   const items = [];
   for (const m of lista) {
     if (valido(m)) continue;
-    const hits     = hitsPorMov.get(m.id) || [];
-    const conEmis  = hits.filter(h => h.emisorOk);
-    const catsEmis = [...new Set(conEmis.map(h => h.c.cat))];
-    const catsTodas = [...new Set(hits.map(h => h.c.cat))];
+    const hits    = hitsPorMov.get(m.id) || [];
+    const conEmis = hits.filter(h => h.emisorOk);
 
-    let tipo, elegido = null;
-    if (catsEmis.length === 1)       { tipo = 'seguro';     elegido = conEmis[0].c; }
-    else if (catsEmis.length > 1)    { tipo = 'ambiguo'; }
-    else if (catsTodas.length === 1) { tipo = 'sin_emisor'; elegido = hits[0].c; }
-    else if (catsTodas.length > 1)   { tipo = 'ambiguo'; }
-    else                             { tipo = 'sin_comprobante'; }
+    // Se decide por COMPROBANTES distintos (no solo por categoría): dos emisores
+    // distintos pueden compartir el mismo N° dentro de la misma categoría (ej. el
+    // mismo RH de dos personas). Un N° compartido no se "adivina": se pregunta.
+    let tipo, elegido = null, candidatos = [];
+    if (conEmis.length === 1)      { tipo = 'seguro';     elegido = conEmis[0].c; }
+    else if (conEmis.length > 1)   { tipo = 'ambiguo';    candidatos = conEmis.map(h => h.c); }
+    else if (hits.length === 1)    { tipo = 'sin_emisor'; elegido = hits[0].c; }
+    else if (hits.length > 1)      { tipo = 'ambiguo';    candidatos = hits.map(h => h.c); }
+    else                           { tipo = 'sin_comprobante'; }
 
-    const item = { mov: m, tipo, categoria: elegido?.cat || null, comprobante: elegido, cuentaEnConta: cuenta(m),
-                   nroCanonico: null, cambiaNro: false, cov: null, estado5: null, categoriasPosibles: catsTodas };
+    const item = { mov: m, tipo, categoria: null, comprobante: null, cuentaEnConta: cuenta(m),
+                   nroCanonico: null, cambiaNro: false, cov: null, estado5: null, candidatos };
     if (elegido) {
-      // El N° escrito a mano puede diferir en formato (espacios, ceros, minúsculas);
-      // Contabilidad busca por igualdad exacta, así que se normaliza al del comprobante.
-      // RH conserva su forma (puede ser UUID o N° legible, ambos válidos).
-      item.nroCanonico = elegido.cat === 'RH' ? m.nro_factura_doc : elegido.nro;
-      item.cambiaNro   = elegido.cat !== 'RH' && m.nro_factura_doc !== elegido.nro;
+      _conAsignarCandidato(item, elegido);
       if (tipo === 'seguro' && item.cuentaEnConta) {
         item.cov = _conCobertura(miembros.get(elegido) || [], elegido.total);
         item.estado5 = _conEstado5(item.cov, false);
@@ -635,6 +636,84 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
     items.push(item);
   }
   return items;
+}
+
+// Fija en el item el comprobante elegido (por el sistema o por Wendy).
+// El N° escrito a mano puede diferir en formato (espacios, ceros, minúsculas);
+// Contabilidad busca por igualdad exacta, así que se normaliza al del comprobante.
+// RH conserva su forma (puede ser UUID o N° legible, ambos válidos).
+function _conAsignarCandidato(item, c) {
+  item.comprobante = c;
+  item.categoria   = c.cat;
+  item.nroCanonico = c.cat === 'RH' ? item.mov.nro_factura_doc : c.nro;
+  item.cambiaNro   = c.cat !== 'RH' && item.mov.nro_factura_doc !== c.nro;
+}
+
+// ── Tarjeta de un comprobante candidato (compartida por el aviso interactivo
+//    de ambigüedad y por el reporte de "Reparar estados"). Acepta la forma de
+//    candidato de este archivo {cat,nro,nombre,ruc,total,fecha} y la de
+//    migracion-datos.js {tipoDoc,proveedor,ruc,monto}.
+const _CON_NOMBRE_CATEGORIA = { COMPRA: 'Compras', VENTA: 'Ventas', RH: 'RH Recibidos' };
+function _conHtmlCandidato(c, { name, value, checked = false, destacado = false } = {}) {
+  const cat    = c.cat || c.tipoDoc;
+  const nombre = c.nombre ?? c.proveedor ?? '';
+  const total  = c.total ?? c.monto ?? 0;
+  return `
+    <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid ${destacado ? 'var(--color-secundario)' : 'var(--color-borde)'};border-radius:8px;padding:10px 12px;margin-top:6px;cursor:pointer">
+      <input type="radio" name="${name}" value="${value}" ${checked ? 'checked' : ''} style="margin-top:3px">
+      <div style="flex:1;min-width:0;font-size:12px">
+        <div style="font-weight:700;color:var(--color-secundario)">${escapar(_CON_NOMBRE_CATEGORIA[cat] || cat)} · ${escapar(c.nro || '')}</div>
+        <div>${escapar(nombre || '—')} · RUC/DNI ${escapar(c.ruc || '—')}</div>
+        <div style="color:var(--color-texto-suave)">Total ${formatearMoneda(total)}${c.fecha ? ' · emitido ' + formatearFecha(c.fecha) : ''}</div>
+      </div>
+    </label>`;
+}
+
+// ── Aviso interactivo cuando un mismo N° corresponde a VARIOS comprobantes
+//    (Wendy, 2026-09-19: p. ej. la factura E001-156 y un RH E001-156, o el mismo
+//    RH de dos emisores distintos — el sistema no adivina, pregunta cuál se
+//    quiere vincular). Se abre SOBRE la pantalla actual (no reemplaza el
+//    formulario que se está llenando). Resuelve con el candidato elegido, o
+//    null si cancela. `ctx` = { nro, proveedor, ruc, monto, nroOperacion }.
+function _conElegirComprobante(candidatos, ctx = {}) {
+  return new Promise(resolve => {
+    const puntaje = c => {
+      const ruc = (ctx.ruc || '').toString().trim();
+      let p = 0;
+      if (ruc && String(c.ruc || '').trim() === ruc) p += 100;
+      if (ctx.proveedor && typeof _tercNombreNorm === 'function'
+          && _tercNombreNorm(ctx.proveedor) === _tercNombreNorm(c.nombre ?? c.proveedor)) p += 50;
+      if (ctx.monto && Math.abs(Math.abs(Number(ctx.monto)) - Math.abs(Number(c.total ?? c.monto))) < 0.01) p += 30;
+      return p;
+    };
+    const ordenados = candidatos.map(c => ({ c, p: puntaje(c) })).sort((a, b) => b.p - a.p);
+    const sugerido  = ordenados[0].p > 0 && ordenados[0].p > (ordenados[1]?.p || 0) ? 0 : -1;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px';
+    overlay.innerHTML = `
+      <div style="background:var(--color-bg-card);border-radius:12px;padding:22px 24px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:var(--sombra-lg);border:1px solid var(--color-borde)">
+        <div style="font-size:15px;font-weight:700;color:var(--color-texto);margin-bottom:8px">⚠️ ${candidatos.length} comprobantes distintos comparten el N° ${escapar(ctx.nro || '')}</div>
+        <p style="font-size:12px;color:var(--color-texto-suave);margin:0 0 6px;line-height:1.5">
+          Un mismo N° puede repetirse entre emisores distintos (por ejemplo una factura y un RH, o el mismo RH de dos personas). Indica cuál es el que quieres vincular${ctx.nroOperacion || ctx.proveedor ? ' a este movimiento' : ''}:
+        </p>
+        ${(ctx.nroOperacion || ctx.proveedor || ctx.monto) ? `<div style="font-size:11px;color:var(--color-texto-suave);margin-bottom:6px">Movimiento: ${escapar(ctx.nroOperacion ? 'Op. ' + ctx.nroOperacion + ' · ' : '')}${escapar(ctx.proveedor || '—')}${ctx.ruc ? ' · RUC/DNI ' + escapar(ctx.ruc) : ''}${ctx.monto ? ' · ' + formatearMoneda(ctx.monto) : ''}</div>` : ''}
+        ${ordenados.map((o, i) => _conHtmlCandidato(o.c, { name: 'elegir-comp', value: i, checked: i === sugerido, destacado: i === sugerido })).join('')}
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+          <button id="elegir-cancel" class="btn btn-secundario">Cancelar</button>
+          <button id="elegir-ok" class="btn btn-primario">Vincular el seleccionado</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const ok = overlay.querySelector('#elegir-ok');
+    const habilitar = () => { ok.disabled = !overlay.querySelector('input[name="elegir-comp"]:checked'); };
+    overlay.querySelectorAll('input[name="elegir-comp"]').forEach(r => r.addEventListener('change', habilitar));
+    habilitar();
+    const cerrar = v => { overlay.remove(); resolve(v); };
+    ok.onclick = () => cerrar(ordenados[Number(overlay.querySelector('input[name="elegir-comp"]:checked').value)].c);
+    overlay.querySelector('#elegir-cancel').onclick = () => cerrar(null);
+  });
 }
 
 // ── Paso 0 de "🔧 Reparar estados": detecta, MUESTRA y solo con aprobación
@@ -657,27 +736,65 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
   ]);
 
   const items = _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs);
-  if (!items.length) return { aplicados: 0, sinResolver: 0 };
 
-  const elegidos = await _conModalVinculosSinCategoria(items);
-  if (!elegidos) return { cancelado: true };
+  // Movimientos YA vinculados (categoría COMPRA/VENTA/RH correcta) con el "Tipo DOC"
+  // vacío: se les completa con el código de la lista (FA/BO/RH). Wendy, 2026-09-19:
+  // "los comprobantes no se llaman COMPRAS, son facturas → en la lista es FA; si es RH → RH".
+  const faltantesTipo = movs
+    .filter(m => ['COMPRA', 'VENTA', 'RH'].includes(m.tipo_doc) && !(m.tipo_comprobante || '').toString().trim()
+      && m.entrega_doc !== 'CANCELADO' && (m.nro_factura_doc || '').toString().trim())
+    .map(m => ({ ...m, _codigo: _conCodigoTipoDoc(m.tipo_doc, m.nro_factura_doc) }));
+
+  if (!items.length && !faltantesTipo.length) return { aplicados: 0, sinResolver: 0, tipoCompletados: 0 };
+
+  const decision = await _conModalVinculosSinCategoria(items, faltantesTipo);
+  if (!decision) return { cancelado: true };
 
   let aplicados = 0;
-  for (const it of elegidos) {
+  for (const it of decision.items) {
     const patch = { tipo_doc: it.categoria, fecha_actualizacion: hoy };
-    if (!it.mov.tipo_comprobante && typeof _mbdCodigoTipoComprobante === 'function') {
-      patch.tipo_comprobante = _mbdCodigoTipoComprobante(it.categoria, it.nroCanonico);
+    if (!it.mov.tipo_comprobante) {
+      // El bug del modal escribió en tipo_doc UNO DE LOS CÓDIGOS del desplegable "Tipo DOC"
+      // (ej. 'FA'): es justo lo que se eligió como tipo de comprobante, así que se conserva
+      // en tipo_comprobante en vez de perderlo. Si no era un código, se deduce de la categoría.
+      patch.tipo_comprobante = _CON_CODIGOS_TIPO_COMPROBANTE.includes(it.mov.tipo_doc)
+        ? it.mov.tipo_doc
+        : _conCodigoTipoDoc(it.categoria, it.nroCanonico);
     }
     if (it.cambiaNro) patch.nro_factura_doc = it.nroCanonico;
     const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', it.mov.id);
     if (!error) aplicados++;
   }
-  return { aplicados, sinResolver: items.length - aplicados };
+
+  // Tipo DOC vacío en ya vinculados: un update por código (FA / BO / RH), en trozos.
+  let tipoCompletados = 0;
+  if (decision.completarTipo) {
+    for (const codigo of ['FA', 'BO', 'RH']) {
+      const ids = faltantesTipo.filter(m => m._codigo === codigo).map(m => m.id);
+      for (let i = 0; i < ids.length; i += 80) {
+        const { error } = await _supabase.from('tesoreria_mbd')
+          .update({ tipo_comprobante: codigo, fecha_actualizacion: hoy })
+          .eq('empresa_id', empId).is('tipo_comprobante', null).in('id', ids.slice(i, i + 80));
+        if (!error) tipoCompletados += Math.min(80, ids.length - i);
+      }
+    }
+  }
+  return { aplicados, sinResolver: items.length - aplicados, tipoCompletados };
+}
+
+// Códigos de tipo de comprobante = los del desplegable "Tipo DOC" de Movimientos.
+const _CON_CODIGOS_TIPO_COMPROBANTE = ['FA', 'BO', 'BP', 'RH', 'TK', 'PM', 'AT', 'DL', 'PJ', 'SB', 'VB', 'OT'];
+// Código de la lista según la categoría interna: factura→FA (BO si la serie empieza con B),
+// RH→RH, PM→PM. NUNCA devuelve COMPRA/VENTA (eso es la categoría, no el tipo de comprobante).
+function _conCodigoTipoDoc(categoria, nroDoc) {
+  if (categoria === 'RH') return 'RH';
+  if (categoria === 'PM') return 'PM';
+  return String(nroDoc || '').trim().toUpperCase().startsWith('B') ? 'BO' : 'FA';
 }
 
 // Reporte previo (regla de Wendy: reporte + aprobación antes de tocar datos
 // existentes). Resuelve con la lista de items aprobados, o null si cancela.
-function _conModalVinculosSinCategoria(items) {
+function _conModalVinculosSinCategoria(items, faltantesTipo = []) {
   return new Promise(resolve => {
     const mc = document.getElementById('modal-container');
     if (!mc) { resolve(null); return; }
@@ -685,16 +802,26 @@ function _conModalVinculosSinCategoria(items) {
     const NOMBRE_CAT = { COMPRA: 'Compras', VENTA: 'Ventas', RH: 'RH Recibidos' };
     const MOTIVO = {
       sin_emisor: 'El N° existe, pero el RUC/nombre del movimiento no coincide con el del comprobante. Marca la casilla solo si es el comprobante correcto.',
-      ambiguo: 'Ese N° existe en más de una categoría (Compras/Ventas/RH). Vincúlalo a mano desde el módulo correspondiente.',
+      ambiguo: 'Ese N° lo comparten varios comprobantes (distinto tipo o emisor). Elige cuál corresponde a este movimiento; si no eliges ninguno, no se toca.',
       sin_comprobante: 'Ese N° no existe en Compras, Ventas ni RH. Revisa que esté bien escrito o que el comprobante ya esté cargado.',
     };
-    const aplicables = items.filter(i => i.categoria);
     const porTipo = t => items.filter(i => i.tipo === t).length;
 
     const tarjeta = (it, i) => {
       const m = it.mov;
       const marcable = !!it.categoria;
       const c = it.comprobante;
+      if (it.tipo === 'ambiguo') {
+        return `
+        <div style="border:1px solid #DD6B20;border-radius:8px;padding:12px 14px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
+            <span style="font-weight:700;color:var(--color-secundario)">${escapar(m.nro_factura_doc)} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
+            <span style="font-family:monospace;font-size:11px;color:var(--color-texto-suave)">Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.entrega_doc || '—')}</span>
+          </div>
+          <div style="font-size:11px;color:#C05621;margin-bottom:2px">⚠️ ${MOTIVO.ambiguo}</div>
+          ${it.candidatos.map((cand, k) => _conHtmlCandidato(cand, { name: `rev-cand-${i}`, value: k })).join('')}
+        </div>`;
+      }
       const cabecera = `
         <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px">
           <span style="font-weight:700;color:var(--color-secundario)">${escapar(m.nro_factura_doc)} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
@@ -726,21 +853,35 @@ function _conModalVinculosSinCategoria(items) {
         </label>`;
     };
 
+    // Tipo DOC vacío en movimientos YA vinculados (categoría COMPRA/VENTA/RH válida): se
+    // completa con el código de la lista — FA (factura), BO (boleta) o RH — nunca "COMPRA".
+    const bloqueTipo = faltantesTipo.length ? `
+      <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--color-secundario);border-radius:8px;padding:12px 14px;margin-bottom:14px;cursor:pointer">
+        <input type="checkbox" id="rev-tipo" checked style="margin-top:3px">
+        <div style="font-size:12px">
+          <strong>Completar "Tipo DOC" en ${faltantesTipo.length} movimiento(s) ya vinculado(s)</strong> que lo tienen vacío:
+          ${['FA', 'BO', 'RH'].map(cod => { const n = faltantesTipo.filter(m => m._codigo === cod).length; return n ? `<strong>${n}</strong> → ${cod}` : ''; }).filter(Boolean).join(' · ')}.
+          <div style="color:var(--color-texto-suave);margin-top:2px">FA si es factura de Compras/Ventas, BO si la serie empieza con B, RH si es recibo por honorarios. Solo se llena el vacío; nunca se cambia uno ya elegido.</div>
+        </div>
+      </label>` : '';
+
     mc.innerHTML = `
       <div class="modal-overlay" style="display:flex">
         <div class="modal" style="max-width:860px;width:95%;max-height:90vh;display:flex;flex-direction:column">
           <div class="modal-header">
-            <h3>🔧 Movimientos con comprobante pero sin categoría — ${items.length} caso(s)</h3>
+            <h3>🔧 Revisión de vínculos con comprobantes — ${items.length} sin categoría${faltantesTipo.length ? ` · ${faltantesTipo.length} sin Tipo DOC` : ''}</h3>
             <button class="modal-cerrar" id="rev-x">✕</button>
           </div>
           <div class="modal-body" style="flex:1;overflow-y:auto">
+            ${bloqueTipo}
+            ${items.length ? `
             <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:6px">
               Estos movimientos ya tienen un N° de comprobante escrito, pero les falta (o tienen dañada) la categoría interna que Contabilidad usa para saber a qué comprobante pertenecen. Por eso hoy su comprobante puede aparecer PENDIENTE aunque el movimiento esté OBSERVADO o EMITIDO.
             </p>
             <p style="font-size:12px;margin-bottom:14px">
               <strong>${porTipo('seguro')}</strong> seguro(s) · <strong>${porTipo('sin_emisor')}</strong> con emisor distinto · <strong>${porTipo('ambiguo')}</strong> ambiguo(s) · <strong>${porTipo('sin_comprobante')}</strong> sin comprobante.
-              Nada se modifica hasta que confirmes; solo se corrigen las casillas marcadas. El estado de cada movimiento (Emitido/Observado/Pendiente) no se cambia aquí.
-            </p>
+              Nada se modifica hasta que confirmes; solo se corrigen las casillas marcadas u opciones elegidas. El estado de cada movimiento (Emitido/Observado/Pendiente) no se cambia aquí.
+            </p>` : ''}
             ${items.map(tarjeta).join('')}
           </div>
           <div class="modal-footer">
@@ -752,13 +893,24 @@ function _conModalVinculosSinCategoria(items) {
 
     const cerrar = valor => { mc.innerHTML = ''; resolve(valor); };
     const btnOk = mc.querySelector('#rev-ok');
+    const marcados = () => mc.querySelectorAll('.rev-chk:checked, input[name^="rev-cand-"]:checked');
     const actualizarBoton = () => {
-      const n = mc.querySelectorAll('.rev-chk:checked').length;
-      btnOk.textContent = n ? `Aplicar ${n} seleccionado(s) y reparar` : 'Continuar sin cambiar categorías';
+      const n = marcados().length + (mc.querySelector('#rev-tipo:checked') ? 1 : 0);
+      btnOk.textContent = n ? 'Aplicar lo seleccionado y reparar' : 'Continuar sin cambiar nada';
     };
-    mc.querySelectorAll('.rev-chk').forEach(ch => ch.addEventListener('change', actualizarBoton));
+    mc.querySelectorAll('.rev-chk, input[name^="rev-cand-"], #rev-tipo').forEach(ch => ch.addEventListener('change', actualizarBoton));
     actualizarBoton();
-    btnOk.onclick = () => cerrar([...mc.querySelectorAll('.rev-chk:checked')].map(ch => items[Number(ch.dataset.i)]));
+    btnOk.onclick = () => {
+      const aprobados = [];
+      mc.querySelectorAll('.rev-chk:checked').forEach(ch => aprobados.push(items[Number(ch.dataset.i)]));
+      // Ambiguos: se aplican SOLO si Wendy eligió uno de los comprobantes candidatos.
+      mc.querySelectorAll('input[name^="rev-cand-"]:checked').forEach(r => {
+        const it = items[Number(r.name.replace('rev-cand-', ''))];
+        _conAsignarCandidato(it, it.candidatos[Number(r.value)]);
+        aprobados.push(it);
+      });
+      cerrar({ items: aprobados, completarTipo: !!mc.querySelector('#rev-tipo:checked') });
+    };
     mc.querySelector('#rev-cancel').onclick = () => cerrar(null);
     mc.querySelector('#rev-x').onclick = () => cerrar(null);
   });
@@ -814,6 +966,8 @@ async function consolidarEstadosRetroactivo() {
     let proveedorSincronizados = 0;
     let tipoDocSanados = 0;
     let sinResolver = 0;
+    let tipoCompletados = 0;
+    let ambiguosSinSync = 0;
 
     // ── Paso 0: Sanar tipo_doc dañado (bug 2026-09-18 corregido en
     //    guardarMBD: el desplegable "Tipo DOC" del modal de Movimientos
@@ -837,6 +991,7 @@ async function consolidarEstadosRetroactivo() {
     }
     tipoDocSanados = rev.aplicados;
     sinResolver    = rev.sinResolver;
+    tipoCompletados = rev.tipoCompletados || 0;
 
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
     const { data: movsCrudos, error: errMovs } = await _supabase
@@ -963,10 +1118,16 @@ async function consolidarEstadosRetroactivo() {
         if (candidatos.length === 1) {
           candidatoProveedor = candidatos[0];
         } else if (candidatos.length > 1) {
-          const porPeriodo = candidatos.filter(c => _conPeriodoCercano(periodoMov, c.periodo));
-          const pool = porPeriodo.length ? porPeriodo : candidatos;
-          candidatoProveedor = pool.reduce((a, b) =>
-            Math.abs(sumaGrupo - a.total) <= Math.abs(sumaGrupo - b.total) ? a : b);
+          // N° compartido por varios emisores (Wendy, 2026-09-19): NO se adivina por cercanía
+          // de monto/periodo — eso podía pisar el proveedor/RUC con el de OTRO emisor. Solo se
+          // sincroniza si el RUC del movimiento identifica UN solo comprobante; si no, se deja
+          // como está y se avisa (se resuelve vinculando y eligiendo el comprobante).
+          const rucMov = (mov.ruc_dni || '').toString().trim();
+          const porRuc = rucMov ? candidatos.filter(c => String(c.ruc || '').trim() === rucMov) : [];
+          const mismoEmisor = new Set(candidatos.map(c => String(c.ruc || '').trim())).size === 1; // mismo comprobante cargado 2 veces
+          if (mismoEmisor)             candidatoProveedor = candidatos[0];
+          else if (porRuc.length >= 1) candidatoProveedor = porRuc[0];
+          else                         ambiguosSinSync++;
         }
         if (candidatoProveedor && typeof _resolverProveedorTitular === 'function') {
           const rt = _resolverProveedorTitular(
@@ -1052,14 +1213,16 @@ async function consolidarEstadosRetroactivo() {
     const discrepancias = discrepanciasDetalle.length;
     const parts = [`${movs.length} mov. revisados`];
     if (tipoDocSanados) parts.push(`${tipoDocSanados} movimiento(s) sin categoría de comprobante corregido(s)`);
+    if (tipoCompletados) parts.push(`${tipoCompletados} "Tipo DOC" completado(s) (FA/BO/RH)`);
     if (sinResolver)    parts.push(`⚠️ ${sinResolver} con N° de comprobante sin resolver — revísalos a mano en Movimientos`);
+    if (ambiguosSinSync) parts.push(`⚠️ ${ambiguosSinSync} con N° compartido por varios emisores: no se tocó su proveedor/RUC — vincúlalos eligiendo el comprobante`);
     if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
     if (proveedorSincronizados) parts.push(`${proveedorSincronizados} proveedor/RUC resincronizado(s) con el comprobante`);
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
     if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
     if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revísalas en Conciliación → Verificar montos`);
-    if (!tipoDocSanados && !sinResolver && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
-    const hayAviso = discrepancias || sinResolver;
+    if (!tipoDocSanados && !tipoCompletados && !sinResolver && !ambiguosSinSync && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
+    const hayAviso = discrepancias || sinResolver || ambiguosSinSync;
     mostrarToast((hayAviso ? '⚠️ ' : '✅ ') + parts.join(' · '), hayAviso ? 'atencion' : 'exito');
 
     // ── Refrescar módulos abiertos ───────────────────────────────

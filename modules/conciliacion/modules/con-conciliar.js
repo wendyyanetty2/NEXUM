@@ -594,6 +594,7 @@ function _buscarComboDocsPorMonto(mov, docsList) {
 // (busqueda-comprobante.js) para no depender de ese archivo aquí.
 function _conCodigoTipoComprobante(docTipo, nDoc) {
   if (docTipo === 'RH') return 'RH';
+  if (docTipo === 'PM') return 'PM';
   const serie = String(nDoc || '').trim().toUpperCase();
   return serie.startsWith('B') ? 'BO' : 'FA';
 }
@@ -1711,6 +1712,8 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
     estado_conciliacion:  'conciliado',
     nro_factura_doc:      nroDoc,
     tipo_doc:             tipoDoc,
+    // Tipo de comprobante de la lista (FA/BO/RH), no la categoría interna (COMPRA/VENTA)
+    tipo_comprobante:     tipoDoc ? _conCodigoTipoComprobante(tipoDoc, nroDoc) : undefined,
     fecha_actualizacion:  hoy,
   };
   if (typeof _resolverProveedorTitular === 'function') {
@@ -1808,6 +1811,7 @@ async function _aprobarMatchMulti(key, idx) {
       estado_conciliacion:  'conciliado',
       nro_factura_doc:      d._ndoc || null,
       tipo_doc:             d._tipo || null,
+      tipo_comprobante:     d._tipo ? _conCodigoTipoComprobante(d._tipo, d._ndoc) : undefined,
       fecha_actualizacion:  hoy,
     };
     if (typeof _resolverProveedorTitular === 'function') {
@@ -1881,6 +1885,7 @@ async function _aprobarEnLote() {
       estado_conciliacion:  'conciliado',
       nro_factura_doc:      item.doc._ndoc || null,
       tipo_doc:             item.doc._tipo || null,
+      tipo_comprobante:     item.doc._tipo ? _conCodigoTipoComprobante(item.doc._tipo, item.doc._ndoc) : undefined,
       fecha_actualizacion:  hoy,
     };
     if (typeof _resolverProveedorTitular === 'function') {
@@ -2075,6 +2080,7 @@ async function _vincularManual(movId, docTipo, docId, nDocDirecto) {
       entrega_doc:     'OBSERVADO',
       nro_factura_doc: nroDoc,
       tipo_doc:        docTipo,
+      tipo_comprobante: docTipo ? _conCodigoTipoComprobante(docTipo, nroDoc) : undefined,
     }).eq('id', movId);
 
   if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }

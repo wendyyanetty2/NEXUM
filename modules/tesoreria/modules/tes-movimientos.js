@@ -1404,7 +1404,13 @@ async function guardarMBD(id) {
   // conciliados en cada guardado). Se detecta sola buscando en Compras/
   // Ventas/RH, y solo se guarda si de verdad hubo match — nunca se adivina.
   if (payload.nro_factura_doc && typeof _migBuscarComprobante === 'function') {
-    const comprobante = await _migBuscarComprobante(payload.nro_factura_doc, null);
+    // Si el N° lo comparten varios comprobantes (ej. factura y RH, o el mismo RH de dos
+    // emisores) se abre un aviso para elegir cuál vincular — no se adivina (2026-09-19).
+    const comprobante = await _migBuscarComprobante(payload.nro_factura_doc, null, {
+      ruc: payload.ruc_dni, nombre: payload.proveedor_empresa_personal,
+      monto: payload.monto, nroOperacion: payload.nro_operacion_bancaria,
+    });
+    if (comprobante?.cancelado) return; // canceló el aviso — no se guarda nada
     if (comprobante) {
       payload.tipo_doc = comprobante.tipoDoc;
       if (!payload.tipo_comprobante && typeof _mbdCodigoTipoComprobante === 'function') {
@@ -1507,7 +1513,9 @@ async function _abrirModalDividirMBD(id) {
   if (error || !r) { mostrarToast('No se pudo cargar el movimiento.', 'error'); return; }
   _dividirOriginal = r;
   _dividirFilas = [
-    { tipodoc: r.tipo_doc || '', nrodoc: r.nro_factura_doc || '', proveedor: r.proveedor_empresa_personal || '', ruc: r.ruc_dni || '', monto: '' },
+    // El desplegable de esta pantalla es el "Tipo DOC" (FA/BO/RH…) = tipo_comprobante;
+    // tipo_doc es la categoría interna (COMPRA/VENTA/RH) y no está en esa lista.
+    { tipodoc: r.tipo_comprobante || '', nrodoc: r.nro_factura_doc || '', proveedor: r.proveedor_empresa_personal || '', ruc: r.ruc_dni || '', monto: '' },
     { tipodoc: '', nrodoc: '', proveedor: '', ruc: '', monto: '' },
   ];
   _renderModalDividir();
@@ -1682,9 +1690,38 @@ async function _confirmarDividirMBD() {
 
   if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
 
+  // Comprobante de Contabilidad que corresponde a cada fila (2026-09-19). Antes el desplegable
+  // "Tipo DOC" (FA/BO…) se guardaba en tipo_doc — la categoría interna COMPRA/VENTA/RH — y
+  // dejaba el movimiento "invisible" para su comprobante en Contabilidad. Ahora el Tipo DOC va
+  // a tipo_comprobante y la categoría se detecta buscando el N°; si el N° lo comparten varios
+  // comprobantes, se pregunta cuál (aviso interactivo) en vez de adivinar.
+  const comprobantes = [];
+  for (const f of _dividirFilas) {
+    let comp = null;
+    if (f.nrodoc && typeof _migBuscarComprobante === 'function') {
+      comp = await _migBuscarComprobante(f.nrodoc, null, {
+        ruc: f.ruc, nombre: f.proveedor || r.proveedor_empresa_personal, monto: f.monto,
+        nroOperacion: r.nro_operacion_bancaria,
+      });
+      if (comp?.cancelado) {
+        if (btn) { btn.disabled = false; btn.textContent = `✂️ Confirmar división (${n} comprobantes)`; }
+        return;
+      }
+    }
+    comprobantes.push(comp);
+  }
+
   // Construir las N filas hijas
   const nuevasFilas = _dividirFilas.map((f, i) => {
-    const proveedor = f.proveedor || r.proveedor_empresa_personal || null;
+    const comp = comprobantes[i];
+    // Proveedor/RUC/titular con la regla central de pago a terceros (igual que al vincular).
+    const rt = comp && typeof _resolverProveedorTitular === 'function'
+      ? _resolverProveedorTitular(f.proveedor || r.proveedor_empresa_personal, comp.proveedor, f.ruc, comp.ruc)
+      : null;
+    const proveedor = rt ? rt.proveedor : (f.proveedor || r.proveedor_empresa_personal || null);
+    const rucFila   = rt ? rt.ruc : (f.ruc || null);
+    const tipoComprobante = f.tipodoc || (comp && typeof _mbdCodigoTipoComprobante === 'function'
+      ? _mbdCodigoTipoComprobante(comp.tipoDoc, f.nrodoc) : null);
     const cotizacion = r.cotizacion;
     const oc = r.oc;
     const proyecto = r.proyecto;
@@ -1696,9 +1733,9 @@ async function _confirmarDividirMBD() {
       ? _conEvalCompletitud14({
           nro_operacion_bancaria: r.nro_operacion_bancaria, fecha_deposito: r.fecha_deposito,
           descripcion, moneda: r.moneda, monto: f.monto,
-          proveedor_empresa_personal: proveedor, ruc_dni: f.ruc,
+          proveedor_empresa_personal: proveedor, ruc_dni: rucFila,
           cotizacion, oc, proyecto, concepto, empresa,
-          nro_factura_doc: f.nrodoc, tipo_doc: f.tipodoc, autorizacion: r.autorizacion,
+          nro_factura_doc: f.nrodoc, tipo_doc: comp?.tipoDoc || null, tipo_comprobante: tipoComprobante, autorizacion: r.autorizacion,
         })
       : 'PENDIENTE';
     return {
@@ -1709,9 +1746,13 @@ async function _confirmarDividirMBD() {
       monto:                      parseFloat(f.monto),
       descripcion,
       proveedor_empresa_personal: proveedor,
-      ruc_dni:                    f.ruc || null,
-      tipo_doc:                   f.tipodoc,
-      nro_factura_doc:            f.nrodoc,
+      ruc_dni:                    rucFila,
+      // tipo_doc = categoría interna (COMPRA/VENTA/RH), solo si se halló el comprobante;
+      // tipo_comprobante = código de la lista (FA/BO/RH…) — nunca al revés.
+      tipo_doc:                   comp?.tipoDoc || null,
+      tipo_comprobante:           tipoComprobante,
+      titular_comprobante:        rt?.titular || null,
+      nro_factura_doc:            f.nrodoc || null,
       entrega_doc:                estadoDoc,
       concepto,
       empresa,
