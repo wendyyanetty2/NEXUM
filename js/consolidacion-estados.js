@@ -632,6 +632,26 @@ function _conNormNroDoc(v) {
   return `${s.slice(0, i)}-${s.slice(i + 1).replace(/^0+(?=\d)/, '')}`;
 }
 
+// ── Formato del N° de comprobante en Movimientos = el de Contabilidad: serie de hasta 4 caracteres,
+//    guion y número SIN ceros a la izquierda (F001-118811, no F001-00118811). Contabilidad guarda el
+//    número como entero, así que un N° con ceros no coincidía con su comprobante (Wendy, 2026-09-19).
+//    Solo quita los ceros del número: nada más se toca (si no aplica, devuelve el texto tal cual).
+function _conQuitarCerosNro(v) {
+  const s = (v ?? '').toString();
+  const m = s.trim().match(/^([A-Za-z0-9]{1,4})-0+([0-9]+)$/);
+  return m ? `${m[1]}-${m[2]}` : s;
+}
+
+// Movimientos cuyo N° de comprobante lleva ceros a la izquierda. No se tocan los RH (su N° se guarda
+// tal como se escribió en el RH y sus vínculos dependen de esa forma), las planillas (PM), los códigos
+// internos ni los CANCELADOS.
+function _conClasificarCerosNro(movs) {
+  return (movs || [])
+    .filter(m => m.entrega_doc !== 'CANCELADO' && m.tipo_doc !== 'RH' && m.tipo_doc !== 'PM' && !_conEsUUID(m.nro_factura_doc))
+    .map(m => ({ mov: m, antes: m.nro_factura_doc, despues: _conQuitarCerosNro(m.nro_factura_doc) }))
+    .filter(x => x.despues !== x.antes);
+}
+
 // Trae TODAS las filas (Supabase corta en 1000 por consulta).
 async function _conTraerTodo(construir, pagina = 1000) {
   const out = [];
@@ -858,12 +878,13 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
   // regla de los 14 campos (opcional, sin marcar por defecto).
   const uuidItems = _conClasificarUUIDsRH(movs, rhs);
   const estados14 = _conClasificarEstados14(movs);
+  const cerosItems = _conClasificarCerosNro(movs);
 
-  if (!items.length && !faltantesTipo.length && !uuidItems.length && !estados14.length) {
-    return { aplicados: 0, sinResolver: 0, tipoCompletados: 0, uuidConvertidos: 0, uuidSinConvertir: 0, estadosReevaluados: 0 };
+  if (!items.length && !faltantesTipo.length && !uuidItems.length && !estados14.length && !cerosItems.length) {
+    return { aplicados: 0, sinResolver: 0, tipoCompletados: 0, uuidConvertidos: 0, uuidSinConvertir: 0, estadosReevaluados: 0, cerosQuitados: 0 };
   }
 
-  const decision = await _conModalVinculosSinCategoria(items, faltantesTipo, { uuids: uuidItems, estados14 });
+  const decision = await _conModalVinculosSinCategoria(items, faltantesTipo, { uuids: uuidItems, estados14, ceros: cerosItems });
   if (!decision) return { cancelado: true };
 
   let aplicados = 0;
@@ -925,7 +946,20 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
       }
     }
   }
+  // Quitar ceros a la izquierda del N° (solo si el N° sigue igual que cuando se revisó).
+  let cerosQuitados = 0;
+  if (decision.quitarCeros) {
+    for (let i = 0; i < cerosItems.length; i += 10) {
+      await Promise.all(cerosItems.slice(i, i + 10).map(async c => {
+        const { data, error } = await _supabase.from('tesoreria_mbd')
+          .update({ nro_factura_doc: c.despues, fecha_actualizacion: hoy })
+          .eq('id', c.mov.id).eq('empresa_id', empId).eq('nro_factura_doc', c.antes).select('id');
+        if (!error && data && data.length) cerosQuitados++; // solo cuenta las filas realmente actualizadas
+      }));
+    }
+  }
   return {
+    cerosQuitados,
     aplicados, sinResolver: items.length - aplicados, tipoCompletados, uuidConvertidos,
     uuidSinConvertir: uuidItems.filter(u => !u.ok).length + (decision.convertirUUIDs ? 0 : uuidItems.filter(u => u.ok).length),
     estadosReevaluados,
@@ -1011,6 +1045,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
     if (!mc) { resolve(null); return; }
     const uuids = extras.uuids || [];
     const estados14 = extras.estados14 || [];
+    const ceros = extras.ceros || [];
 
     const NOMBRE_CAT = { COMPRA: 'Compras', VENTA: 'Ventas', RH: 'RH Recibidos' };
     const MOTIVO = {
@@ -1117,6 +1152,23 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
         </div>
       </label>` : '';
 
+    // N° con ceros a la izquierda → mismo formato que Contabilidad (solo se quitan los ceros).
+    const bloqueCeros = ceros.length ? `
+      <div style="border:1px solid var(--color-secundario);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="rev-ceros" checked style="margin-top:3px">
+          <div style="font-size:12px">
+            <strong>N° de comprobante con ceros a la izquierda: ${ceros.length} movimiento(s)</strong>
+            <div style="color:var(--color-texto-suave);margin-top:3px;line-height:1.5">
+              Contabilidad guarda el número sin ceros (F001-118811), por eso un N° con ceros (F001-00118811) no se reconocía como el mismo comprobante.
+              Se quitan <strong>solo los ceros</strong> del número; nada más cambia. Algunos comprobantes pueden cambiar de estado porque ahora sí se reconocerán sus movimientos.
+            </div>
+          </div>
+        </label>
+        <details style="margin:8px 0 0 26px;font-size:11px"><summary style="cursor:pointer">Ver ejemplos (primeros 10)</summary>
+          ${ceros.slice(0, 10).map(c => `<div style="padding:2px 0">Op. ${escapar(c.mov.nro_operacion_bancaria || '—')}: <span style="font-family:monospace">${escapar(c.antes)}</span> → <strong style="font-family:monospace">${escapar(c.despues)}</strong></div>`).join('')}</details>
+      </div>` : '';
+
     mc.innerHTML = `
       <div class="modal-overlay" style="display:flex">
         <div class="modal" style="max-width:860px;width:95%;max-height:90vh;display:flex;flex-direction:column">
@@ -1125,6 +1177,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
             <button class="modal-cerrar" id="rev-x">✕</button>
           </div>
           <div class="modal-body" style="flex:1;overflow-y:auto">
+            ${bloqueCeros}
             ${bloqueUUID}
             ${bloqueEstados}
             ${bloqueTipo}
@@ -1149,10 +1202,10 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
     const btnOk = mc.querySelector('#rev-ok');
     const marcados = () => mc.querySelectorAll('.rev-chk:checked, input[name^="rev-cand-"]:checked');
     const actualizarBoton = () => {
-      const n = marcados().length + mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked').length;
+      const n = marcados().length + mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked').length;
       btnOk.textContent = n ? 'Aplicar lo seleccionado y reparar' : 'Continuar sin cambiar nada';
     };
-    mc.querySelectorAll('.rev-chk, input[name^="rev-cand-"], #rev-tipo, #rev-uuid, #rev-est14').forEach(ch => ch.addEventListener('change', actualizarBoton));
+    mc.querySelectorAll('.rev-chk, input[name^="rev-cand-"], #rev-tipo, #rev-uuid, #rev-est14, #rev-ceros').forEach(ch => ch.addEventListener('change', actualizarBoton));
     actualizarBoton();
     btnOk.onclick = () => {
       const aprobados = [];
@@ -1168,6 +1221,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
         completarTipo:   !!mc.querySelector('#rev-tipo:checked'),
         convertirUUIDs:  !!mc.querySelector('#rev-uuid:checked'),
         reevaluar14:     !!mc.querySelector('#rev-est14:checked'),
+        quitarCeros:     !!mc.querySelector('#rev-ceros:checked'),
       });
     };
     mc.querySelector('#rev-cancel').onclick = () => cerrar(null);
@@ -1226,7 +1280,7 @@ async function consolidarEstadosRetroactivo() {
     let tipoDocSanados = 0;
     let sinResolver = 0;
     let tipoCompletados = 0;
-    let uuidConvertidos = 0, uuidSinConvertir = 0, estadosReevaluados = 0;
+    let uuidConvertidos = 0, uuidSinConvertir = 0, estadosReevaluados = 0, cerosQuitados = 0;
     let ambiguosSinSync = 0;
 
     // ── Paso 0: Sanar tipo_doc dañado (bug 2026-09-18 corregido en
@@ -1255,6 +1309,7 @@ async function consolidarEstadosRetroactivo() {
     uuidConvertidos = rev.uuidConvertidos || 0;
     uuidSinConvertir = rev.uuidSinConvertir || 0;
     estadosReevaluados = rev.estadosReevaluados || 0;
+    cerosQuitados = rev.cerosQuitados || 0;
 
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
     const { data: movsCrudos, error: errMovs } = await _supabase
@@ -1480,6 +1535,7 @@ async function consolidarEstadosRetroactivo() {
     const parts = [`${movs.length} mov. revisados`];
     if (tipoDocSanados) parts.push(`${tipoDocSanados} movimiento(s) sin categoría de comprobante corregido(s)`);
     if (tipoCompletados) parts.push(`${tipoCompletados} "Tipo DOC" completado(s) (FA/BO/RH)`);
+    if (cerosQuitados) parts.push(`${cerosQuitados} N° de comprobante sin ceros a la izquierda (formato de Contabilidad)`);
     if (uuidConvertidos) parts.push(`${uuidConvertidos} RH pasaron de código a N° legible`);
     if (uuidSinConvertir) parts.push(`⚠️ ${uuidSinConvertir} RH con código quedaron igual (no se pueden distinguir con seguridad — revísalos a mano)`);
     if (estadosReevaluados) parts.push(`${estadosReevaluados} estado(s) re-evaluado(s) con la regla de 14 campos`);
@@ -1490,7 +1546,7 @@ async function consolidarEstadosRetroactivo() {
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
     if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
     if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revísalas en Conciliación → Verificar montos`);
-    if (!tipoDocSanados && !tipoCompletados && !uuidConvertidos && !uuidSinConvertir && !estadosReevaluados && !sinResolver && !ambiguosSinSync && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
+    if (!tipoDocSanados && !tipoCompletados && !uuidConvertidos && !uuidSinConvertir && !estadosReevaluados && !cerosQuitados && !sinResolver && !ambiguosSinSync && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
     const hayAviso = discrepancias || sinResolver || ambiguosSinSync || uuidSinConvertir;
     mostrarToast((hayAviso ? '⚠️ ' : '✅ ') + parts.join(' · '), hayAviso ? 'atencion' : 'exito');
 

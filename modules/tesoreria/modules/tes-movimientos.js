@@ -754,7 +754,7 @@ async function _movGuardarMasivo() {
   for (const c of CAMPOS) {
     if (!document.getElementById(`chk-mas-${c}`)?.checked) continue;
     const val = (document.getElementById(`mas-${c}`)?.value || '').trim();
-    payload[c] = val || null;
+    payload[c] = (c === 'nro_factura_doc' ? _conQuitarCerosNro(val) : val) || null; // N° sin ceros a la izquierda, como Contabilidad
   }
 
   if (!Object.keys(payload).length) {
@@ -1424,7 +1424,8 @@ async function guardarMBD(id) {
     empresa:                  document.getElementById('mbd-empresa').value||null,
     tipo_comprobante:         document.getElementById('mbd-tipo-doc').value||null,
     entrega_doc:              document.getElementById('mbd-entrega-doc').value,
-    nro_factura_doc:          document.getElementById('mbd-nro-factura').value.trim()||null,
+    // mismo formato que Contabilidad: sin ceros a la izquierda en el número (F001-00118811 → F001-118811)
+    nro_factura_doc:          _conQuitarCerosNro(document.getElementById('mbd-nro-factura').value.trim())||null,
     autorizacion:             document.getElementById('mbd-autorizacion').value||null,
     cotizacion:               document.getElementById('mbd-cotizacion').value.trim()||null,
     oc:                       document.getElementById('mbd-oc').value.trim()||null,
@@ -1742,6 +1743,7 @@ function _cerrarModalDividir() {
 
 async function _confirmarDividirMBD() {
   _guardarFilasDividir();
+  _dividirFilas.forEach(f => { f.nrodoc = _conQuitarCerosNro(f.nrodoc); }); // N° sin ceros a la izquierda, como Contabilidad
   const r      = _dividirOriginal;
   const alerta = document.getElementById('div-alerta');
   const btn    = document.getElementById('btn-div-confirmar');
