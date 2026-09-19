@@ -916,7 +916,8 @@ async function _conciliarCompraIndividual(compraId, nDoc, proveedor, total, fech
       .order('fecha_deposito', { ascending: false }),
   ]);
 
-  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, ruc, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || [], _conFiltrarVinculosDelComprobante(yaVinculados, 'COMPRA', ruc, proveedor));
+  const vinculadosVisibles = await _conUnirVinculos(_conFiltrarVinculosDelComprobante(yaVinculados, 'COMPRA', ruc, proveedor), empresa_activa.id, 'COMPRA', nDoc, ruc, proveedor);
+  _cAbrirModalConciliar({ id: compraId, nDoc, proveedor, ruc, total, fecha: fechaEmision, tipo: 'COMPRA' }, movs || [], vinculadosVisibles);
 }
 
 // ── Conciliar lote — todos los PEND. del periodo actual ──────────

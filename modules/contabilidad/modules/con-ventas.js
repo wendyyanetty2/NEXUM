@@ -902,7 +902,8 @@ async function _conciliarVentaIndividual(ventaId, nDoc, cliente, total, fechaEmi
       .order('fecha_deposito', { ascending: false }),
   ]);
 
-  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, ruc, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || [], _conFiltrarVinculosDelComprobante(yaVinculados, 'VENTA', ruc, cliente));
+  const vinculadosVisibles = await _conUnirVinculos(_conFiltrarVinculosDelComprobante(yaVinculados, 'VENTA', ruc, cliente), empresa_activa.id, 'VENTA', nDoc, ruc, cliente);
+  _cAbrirModalConciliar({ id: ventaId, nDoc, proveedor: cliente, ruc, total, fecha: fechaEmision, tipo: 'VENTA' }, movs || [], vinculadosVisibles);
 }
 
 async function _conciliarLoteVentas() {

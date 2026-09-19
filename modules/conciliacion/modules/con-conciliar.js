@@ -650,7 +650,8 @@ async function abrirBusquedaComprobante(docTipo, docId) {
     doc.tipo === 'RH' ? _conBuscarEnMovimientosCrudos(doc) : Promise.resolve([]),
   ]);
 
-  _conRenderBusquedaComprobante(doc, candidatos, _conFiltrarVinculosDelComprobante(yaVinculadosRes.data, doc.tipo, doc.ruc, doc.proveedor), crudos);
+  const vinculadosVisibles = await _conUnirVinculos(_conFiltrarVinculosDelComprobante(yaVinculadosRes.data, doc.tipo, doc.ruc, doc.proveedor), empresa_activa.id, doc.tipo, doc.nDoc, doc.ruc, doc.proveedor);
+  _conRenderBusquedaComprobante(doc, candidatos, vinculadosVisibles, crudos);
 }
 
 function _conRenderBusquedaComprobante(doc, candidatos, yaVinculados, crudos) {

@@ -689,7 +689,7 @@ async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, provee
     .or(_conFiltroTipoDoc(docTipo))
     .eq('nro_factura_doc', nDoc)
     .order('fecha_deposito', { ascending: false });
-  const linksUuid = _conFiltrarVinculosDelComprobante(linksCrudos, docTipo, emisorRuc, emisorNombre);
+  const linksUuid = await _conUnirVinculos(_conFiltrarVinculosDelComprobante(linksCrudos, docTipo, emisorRuc, emisorNombre), empresa_activa.id, docTipo, nDoc, emisorRuc, emisorNombre);
 
   let links = linksUuid || [];
 

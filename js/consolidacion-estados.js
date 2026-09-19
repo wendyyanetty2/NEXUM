@@ -81,7 +81,16 @@ async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, tot
     .in('nro_factura_doc', claves)
     .neq('id', movIdExcluir || '');
   consulta = emisor ? consulta.or(_conFiltroTipoDoc(tipoDoc)) : consulta.eq('tipo_doc', tipoDoc);
-  const { data: existentes } = await consulta;
+  const { data: existentesExactos } = await consulta;
+  // Compras/Ventas: además del N° exacto, los movimientos con el N° escrito en otro formato (los mismos
+  // que ya cuenta el estado de la pantalla) — si no, el aviso de exceso no los veía.
+  let existentes = existentesExactos || [];
+  if (emisor && (tipoDoc === 'COMPRA' || tipoDoc === 'VENTA')) {
+    const { data: variantes } = await _conMovsDeComprobantes(empresaId, tipoDoc, [nroFacturaDoc],
+      'id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni,nro_factura_doc');
+    const vistos = new Set(existentes.map(m => m.id));
+    (variantes || []).forEach(m => { if (m.id !== movIdExcluir && !vistos.has(m.id)) { existentes.push(m); vistos.add(m.id); } });
+  }
 
   const lista    = emisor
     ? _conFiltrarVinculosDelComprobante(existentes, tipoDoc, emisor.ruc, emisor.nombre)
@@ -545,6 +554,24 @@ async function _conEstadosCobertura(empresaId, categoria, filas, campoNombre) {
     ...x,
     estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && _conHayCandidato(candidatos, filas[i].total_cp)),
   }));
+}
+
+// ── Los movimientos que CUENTAN para el estado de un comprobante de Compras/Ventas son los de
+//    _conMovsDeComprobantes (categoría exacta + los sin categoría con el N° escrito en otro formato:
+//    espacios, ceros, mayúsculas) filtrados por emisor. Los paneles "operaciones ya vinculadas" antes
+//    solo buscaban el N° EXACTO, así que un movimiento contado en el estado (p. ej. un EXCESIVO)
+//    podía no aparecer en el panel ni en el aviso de exceso (Wendy, 2026-09-19). Esta función une lo que
+//    el panel ya lista con lo que cuenta el estado, sin repetir ninguno, para que se vea lo mismo.
+async function _conUnirVinculos(base, empresaId, categoria, nro, ruc, nombre) {
+  const lista = [...(base || [])];
+  if (categoria !== 'COMPRA' && categoria !== 'VENTA') return lista;
+  try {
+    const { data } = await _conMovsDeComprobantes(empresaId, categoria, [nro],
+      'id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni,nro_factura_doc');
+    const vistos = new Set(lista.map(m => m.id));
+    _conFiltrarPorEmisor(data, ruc, nombre).forEach(m => { if (!vistos.has(m.id)) { lista.push(m); vistos.add(m.id); } });
+  } catch (e) { console.warn('[nexum] no se pudieron unir los vínculos del comprobante', e); }
+  return lista;
 }
 
 // ── Comprobantes que YA están cubiertos por movimientos bancarios (APLICADO o
