@@ -967,7 +967,7 @@ async function _qkEjecutar(periodo) {
     ...(rComp.data||[]).map(d=>({...d,_tipo:'COMPRA',_ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'—',_proveedor:d.proveedor||'',_ruc:d.nro_doc_identidad||'',importe:d.total_cp||0})),
     ...(rVent.data||[]).map(d=>({...d,_tipo:'VENTA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'—',_proveedor:d.cliente||'',  _ruc:d.nro_doc_identidad||'',  importe:d.total_cp||0})),
     // RH: el N° es numero_rh (antes se armaba con columnas que no existen y quedaba "—", que se guardaba como N° del comprobante)
-    ...(rRh.data  ||[]).map(d=>({...d,_tipo:'RH',    _ndoc:d.numero_rh||'—',_proveedor:d.nombre_emisor||d.prestadores_servicios?.nombre||'',_ruc:d.nro_doc_emisor||d.prestadores_servicios?.dni||'',importe:d.monto_neto||d.monto||0})),
+    ...(rRh.data  ||[]).map(d=>({...d,_tipo:'RH',    _ndoc:d.numero_rh||'—',_proveedor:d.prestadores_servicios?.nombre||d.nombre_emisor||'',_ruc:d.prestadores_servicios?.dni||d.nro_doc_emisor||'',importe:d.monto_neto||d.monto||0})),
   ];
   // Regla del sistema (2026-09-19): no se propone un comprobante sin N° (no se puede vincular) ni uno que ya está
   // cubierto por sus movimientos (APLICADO/EXCESIVO) — sumarle otro movimiento sería un duplicado / un exceso.
@@ -1530,7 +1530,11 @@ async function guardarMBD(id) {
       // verdad), se guarda en su propio campo (titular_comprobante) — nunca
       // mezclado con Observaciones/Obs.2/Obs.4. Ese campo también es
       // editable a mano: si Wendy ya escribió algo ahí, no se pisa.
-      if (!payload.titular_comprobante && tercero) payload.titular_comprobante = tercero;
+      // Si «A quién se depositó» ya tenía texto, el nombre que estaba en Proveedor se AGREGA (no se pierde ninguno).
+      if (tercero) {
+        const unido = typeof _conUnirTitular === 'function' ? _conUnirTitular(payload.titular_comprobante, tercero) : (payload.titular_comprobante ? undefined : tercero);
+        if (unido !== undefined) payload.titular_comprobante = unido;
+      }
     }
   }
 

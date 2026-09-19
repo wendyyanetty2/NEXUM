@@ -440,9 +440,22 @@ function _tercNombreNorm(v) {
 // `titular_comprobante = rt.titular` en un update OMITE el campo y se conserva el "A quién se
 // depositó" que ya estuviera escrito. Con null se BORRABA (p. ej. al re-vincular o al correr
 // "Reparar estados" dos veces, cuando el nombre del banco ya coincidía con el del comprobante).
-// `titularActual` (opcional) = el «A quién se depositó» que el movimiento YA tiene escrito: si existe y es distinto del
-// nombre del banco, no se toca nada (ni Proveedor ni RUC ni titular) para no perder ninguno de los dos nombres; se
-// devuelve `titularRespetado: true`. Todos los botones que vinculan deben pasarlo.
+// `titularActual` (opcional) = el «A quién se depositó» que el movimiento YA tiene escrito (Wendy, 2026-09-19): el
+// Proveedor/Empresa/Personal SIEMPRE toma el nombre del comprobante y el valor que ya tenía no se sobrescribe ni se
+// pierde: se traslada a «A quién se depositó»; si ese campo ya tenía texto, se AGREGA a continuación ("uno / otro").
+// Todos los botones que vinculan deben pasarlo.
+function _tercNombreLlano(v) {
+  return (v || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+// Une lo que ya estaba en «A quién se depositó» con el nombre que se traslada. Devuelve undefined si no hay nada
+// nuevo que guardar (el campo se omite y se conserva lo escrito).
+function _conUnirTitular(existente, nuevo) {
+  const e = (existente || '').toString().trim(), n = (nuevo || '').toString().trim();
+  if (!n) return undefined;
+  if (!e) return n;
+  if (_tercNombreNorm(e) === _tercNombreNorm(n) || _tercNombreLlano(e).includes(_tercNombreLlano(n))) return undefined; // ya está
+  return `${e} / ${n}`;
+}
 function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucActual, rucComprobante, titularActual) {
   const actual = (proveedorActual || '').toString().trim();
   const comp   = (proveedorComprobante || '').toString().trim();
@@ -457,11 +470,7 @@ function _resolverProveedorTitular(proveedorActual, proveedorComprobante, rucAct
   // emisor del comprobante (ej. "TIENDAS DEL MEJORAMIENTO...") — el campo
   // Proveedor/Empresa/Personal migra igual al emisor del comprobante (dato
   // contable correcto) y el nombre del depositario se guarda aparte.
-  const titularYa = (titularActual || '').toString().trim();
-  if (titularYa && _tercNombreNorm(titularYa) !== _tercNombreNorm(actual)) {
-    return { proveedor: actual, titular: undefined, ruc: rucAct, titularRespetado: true };
-  }
-  return { proveedor: comp, titular: actual, ruc: rucComp || rucAct };
+  return { proveedor: comp, titular: _conUnirTitular(titularActual, actual), ruc: rucComp || rucAct };
 }
 
 // ── Refresca las vistas cuyo estado se calcula en vivo desde tesoreria_mbd
@@ -754,8 +763,8 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
   (rhs || []).forEach(r => {
     const c = {
       cat: 'RH', nro: r.numero_rh || r.id,
-      nombre: r.nombre_emisor || r.prestadores_servicios?.nombre || '',
-      ruc: r.nro_doc_emisor || r.prestadores_servicios?.dni || '',
+      nombre: r.prestadores_servicios?.nombre || r.nombre_emisor || '',
+      ruc: r.prestadores_servicios?.dni || r.nro_doc_emisor || '',
       total: Number(r.monto_neto) || 0,
     };
     alta('RH', _conNormNroDoc(r.numero_rh), c);
@@ -818,7 +827,7 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
 
     const item = { mov: m, tipo, categoria: null, comprobante: null, cuentaEnConta: cuenta(m),
                    nroCanonico: null, cambiaNro: false, cov: null, estado5: null, candidatos,
-                   rucConflicto: false, titularChoca: false, marcarPorDefecto: false, corregirEstado: false, estadoNuevo: null };
+                   rucConflicto: false, marcarPorDefecto: false, corregirEstado: false, estadoNuevo: null };
     if (elegido) {
       _conAsignarCandidato(item, elegido);
       if (tipo === 'seguro') {
@@ -831,18 +840,14 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
         // no lo contradice y el monto es exactamente el del comprobante (2026-09-19).
         const rucMov = (m.ruc_dni || '').toString().trim(), rucComp = (elegido.ruc || '').toString().trim();
         item.rucConflicto = !!(rucMov && rucComp && rucMov !== rucComp);
-        // Ya tiene un "A quién se depositó" escrito y distinto del nombre del banco: no se sincroniza (no se
-        // puede guardar ninguno de los dos sin perder uno).
-        const titularYa = (m.titular_comprobante || '').toString().trim();
-        item.titularChoca = !!(titularYa && _tercNombreNorm(m.proveedor_empresa_personal) !== _tercNombreNorm(titularYa));
-        item.marcarPorDefecto = !item.rucConflicto && !item.titularChoca
+        item.marcarPorDefecto = !item.rucConflicto
           && (elegido.cat === 'COMPRA' || elegido.cat === 'VENTA')
           && Math.abs(Math.abs(Number(m.monto) || 0) - (Number(elegido.total) || 0)) <= 0.01;
       }
       // Movimiento con N° de comprobante pero en estado PENDIENTE (o vacío): no cuenta para su comprobante, que se
       // queda PENDIENTE/POSIBLE aunque ya esté pagado. Con N° presente la regla de 14 campos nunca da PENDIENTE
       // (EMITIDO si tiene todo, OBSERVADO si falta algo), así que el estado se corrige a lo que dice esa regla.
-      if (!cuenta(m) && (tipo === 'seguro' || (tipo === 'sin_emisor' && !item.rucConflicto && !item.titularChoca))) {
+      if (!cuenta(m) && (tipo === 'seguro' || (tipo === 'sin_emisor' && !item.rucConflicto))) {
         const sincroniza = elegido.cat === 'COMPRA' || elegido.cat === 'VENTA';
         const rt = sincroniza ? _resolverProveedorTitular(m.proveedor_empresa_personal, elegido.nombre, m.ruc_dni, elegido.ruc) : null;
         const nuevo = _conEvalCompletitud14({
@@ -1200,10 +1205,8 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
       if (it.tipo === 'sin_emisor') {
         if (it.rucConflicto) {
           nota = `⚠️ El RUC del movimiento (${escapar(m.ruc_dni)}) es distinto al del comprobante (${escapar(c.ruc || '—')}): probablemente NO es el mismo comprobante.`;
-        } else if (it.titularChoca) {
-          nota = `Ya tiene escrito «A quién se depositó»: «${escapar(m.titular_comprobante)}». No se cambia nada de su proveedor para no perder ese nombre ni «${escapar(m.proveedor_empresa_personal || '—')}»: revísalo a mano.`;
         } else if (cv) {
-          nota = cambio + `Pago a tercero: el Proveedor y el RUC pasan a ser los del comprobante y «${escapar(m.proveedor_empresa_personal || '—')}» queda en «A quién se depositó».`
+          nota = cambio + `Pago a tercero: el Proveedor y el RUC pasan a ser los del comprobante y «${escapar(m.proveedor_empresa_personal || '—')}» ${(m.titular_comprobante || '').toString().trim() ? `se agrega a lo que ya tenía en «A quién se depositó» («${escapar(m.titular_comprobante)}»)` : 'queda en «A quién se depositó»'}.`
             + (it.marcarPorDefecto ? '' : ' Su monto no es el total del comprobante (¿pago parcial?): márcalo solo si es el correcto.');
         } else {
           nota = cambio + 'El RUC/nombre no coincide con el comprobante: márcalo solo si es el correcto.';
@@ -1407,8 +1410,8 @@ async function _conCargarDocPorId(tipo, id) {
   if (tipo === 'RH') {
     const { data: d } = await _supabase.from('rh_registros').select('*, prestadores_servicios(nombre, dni)').eq('id', id).eq('empresa_operadora_id', empresa_activa.id).maybeSingle();
     if (!d) return null;
-    return { tipo, id: d.id, nDoc: d.numero_rh || '', proveedor: d.nombre_emisor || d.prestadores_servicios?.nombre || '',
-      ruc: d.nro_doc_emisor || d.prestadores_servicios?.dni || '', total: Number(d.monto_neto) || 0 };
+    return { tipo, id: d.id, nDoc: d.numero_rh || '', proveedor: d.prestadores_servicios?.nombre || d.nombre_emisor || '',
+      ruc: d.prestadores_servicios?.dni || d.nro_doc_emisor || '', total: Number(d.monto_neto) || 0 };
   }
   return null;
 }
@@ -1416,7 +1419,7 @@ async function _conCargarDocPorId(tipo, id) {
 // Vincula UN movimiento a UN comprobante con todas las reglas. `doc` = { tipo, id, nDoc, proveedor, ruc, total }.
 // Opciones: tipoMatch/score (para la tabla conciliaciones), omitirValidacion (ya se validó el grupo entero),
 // silencioso (no abrir el aviso de bloqueo: devuelve el mensaje para que el llamador lo junte).
-// Devuelve { ok, estado, motivo, mensaje, titularRespetado }.
+// Devuelve { ok, estado, motivo, mensaje }.
 async function _conVincularCentral(movId, doc, opc = {}) {
   const { tipoMatch = 'MANUAL', score = 0, omitirValidacion = false, silencioso = false } = opc;
   if (typeof empresa_activa === 'undefined' || !empresa_activa?.id) return { ok: false, motivo: 'sin_empresa' };
@@ -1446,16 +1449,12 @@ async function _conVincularCentral(movId, doc, opc = {}) {
     estado_conciliacion: 'conciliado',
     fecha_actualizacion: hoy,
   };
-  // Proveedor/RUC/titular: el comprobante manda, el nombre del banco pasa a «A quién se depositó». Si el
-  // movimiento ya tiene un titular distinto, no se toca la identidad (no se puede guardar ninguno sin perder uno).
-  const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor, mov.ruc_dni, doc.ruc);
-  const titularYa = (mov.titular_comprobante || '').toString().trim();
-  const choca = !!(rt.titular && titularYa && _tercNombreNorm(rt.titular) !== _tercNombreNorm(titularYa));
-  if (!choca) {
-    patch.proveedor_empresa_personal = rt.proveedor;
-    patch.ruc_dni = rt.ruc;
-    if (rt.titular && !titularYa) patch.titular_comprobante = rt.titular;
-  }
+  // Proveedor/RUC ← comprobante; lo que ya estaba en Proveedor pasa a «A quién se depositó» (se une con lo que ese
+  // campo ya tuviera): nada se sobrescribe ni se pierde.
+  const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor, mov.ruc_dni, doc.ruc, mov.titular_comprobante);
+  patch.proveedor_empresa_personal = rt.proveedor;
+  patch.ruc_dni = rt.ruc;
+  if (rt.titular !== undefined) patch.titular_comprobante = rt.titular;
   patch.entrega_doc = _conEvalCompletitud14({ ...mov, ...patch });
 
   const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
@@ -1465,7 +1464,7 @@ async function _conVincularCentral(movId, doc, opc = {}) {
     empresa_operadora_id: empresa_activa.id, movimiento_id: movId, doc_tipo: doc.tipo, doc_id: doc.id || null,
     score, tipo_match: tipoMatch, estado: 'APROBADO', usuario_id: (typeof perfil_usuario !== 'undefined' ? perfil_usuario?.id : null) || null,
   });
-  return { ok: true, estado: patch.entrega_doc, titularRespetado: choca };
+  return { ok: true, estado: patch.entrega_doc };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1550,7 +1549,6 @@ async function consolidarEstadosRetroactivo() {
     estadosReevaluados = rev.estadosReevaluados || 0;
     cerosQuitados = rev.cerosQuitados || 0;
     const idsAprobados = rev.idsAprobados || new Set();
-    let titularesRespetados = 0;
 
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
     const { data: movsCrudos, error: errMovs } = await _supabase
@@ -1695,21 +1693,13 @@ async function consolidarEstadosRetroactivo() {
         if (candidatoProveedor && typeof _resolverProveedorTitular === 'function') {
           const rt = _resolverProveedorTitular(
             mov.proveedor_empresa_personal, candidatoProveedor.proveedor,
-            mov.ruc_dni, candidatoProveedor.ruc
+            mov.ruc_dni, candidatoProveedor.ruc, mov.titular_comprobante
           );
           const cambiosProv = {};
-          const titularActual = (mov.titular_comprobante || '').toString().trim();
-          // Si ya hay un "A quién se depositó" escrito y el nombre del banco (que pasaría a ese campo) es
-          // otro, no se puede guardar ninguno de los dos sin perder uno: se deja el movimiento como está.
-          const chocaTitular = !!(rt.titular && titularActual && _tercNombreNorm(rt.titular) !== _tercNombreNorm(titularActual));
-          if (chocaTitular) {
-            titularesRespetados++;
-          } else {
-            if (rt.proveedor !== (mov.proveedor_empresa_personal || null)) cambiosProv.proveedor_empresa_personal = rt.proveedor;
-            if (rt.ruc !== (mov.ruc_dni || null)) cambiosProv.ruc_dni = rt.ruc;
-            // Solo se completa si estaba vacío: nunca se pisa (ni se borra) un titular ya escrito.
-            if (rt.titular && !titularActual) cambiosProv.titular_comprobante = rt.titular;
-          }
+          if (rt.proveedor !== (mov.proveedor_empresa_personal || null)) cambiosProv.proveedor_empresa_personal = rt.proveedor;
+          if (rt.ruc !== (mov.ruc_dni || null)) cambiosProv.ruc_dni = rt.ruc;
+          // El nombre que ya tenía el movimiento se traslada a «A quién se depositó» (unido a lo que hubiera): no se pierde.
+          if (rt.titular !== undefined && rt.titular !== (mov.titular_comprobante || null)) cambiosProv.titular_comprobante = rt.titular;
           if (Object.keys(cambiosProv).length) {
             cambiosProv.fecha_actualizacion = hoy;
             await _supabase.from('tesoreria_mbd').update(cambiosProv).eq('id', mov.id);
@@ -1797,12 +1787,11 @@ async function consolidarEstadosRetroactivo() {
     if (ambiguosSinSync) parts.push(`⚠️ ${ambiguosSinSync} con N° compartido por varios emisores: no se tocó su proveedor/RUC — vincúlalos eligiendo el comprobante`);
     if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
     if (proveedorSincronizados) parts.push(`${proveedorSincronizados} proveedor/RUC resincronizado(s) con el comprobante`);
-    if (titularesRespetados) parts.push(`⚠️ ${titularesRespetados} ya tenían un «A quién se depositó» distinto: se dejaron como están para no perder ninguno de los dos nombres`);
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
     if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
     if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revísalas en Conciliación → Verificar montos`);
-    if (!tipoDocSanados && !tipoCompletados && !uuidConvertidos && !uuidSinConvertir && !estadosReevaluados && !cerosQuitados && !sinResolver && !ambiguosSinSync && !actualizados && !proveedorSincronizados && !titularesRespetados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
-    const hayAviso = discrepancias || sinResolver || ambiguosSinSync || uuidSinConvertir || titularesRespetados;
+    if (!tipoDocSanados && !tipoCompletados && !uuidConvertidos && !uuidSinConvertir && !estadosReevaluados && !cerosQuitados && !sinResolver && !ambiguosSinSync && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
+    const hayAviso = discrepancias || sinResolver || ambiguosSinSync || uuidSinConvertir;
     mostrarToast((hayAviso ? '⚠️ ' : '✅ ') + parts.join(' · '), hayAviso ? 'atencion' : 'exito');
 
     // ── Refrescar módulos abiertos ───────────────────────────────

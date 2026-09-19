@@ -317,8 +317,8 @@ async function _ejecutarConciliacion(periodo) {
     ...d,
     _tipo:    'RH',
     _ndoc:    d.numero_rh || 'RH sin N°',
-    _proveedor: d.prestadores_servicios?.nombre || '',
-    _ruc:     d.prestadores_servicios?.dni || '',
+    _proveedor: d.prestadores_servicios?.nombre || d.nombre_emisor || '',
+    _ruc:     d.prestadores_servicios?.dni || d.nro_doc_emisor || '',
     _total:   Math.abs(parseFloat(d.monto_neto || 0)),
     _fecha:   d.fecha_emision || null,
   }));
@@ -614,7 +614,7 @@ async function _conCargarComprobante(docTipo, docId) {
   if (docTipo === 'RH') {
     const { data: d } = await _supabase.from('rh_registros').select('*, prestadores_servicios(nombre,dni)').eq('id', docId).eq('empresa_operadora_id', empId).single();
     if (!d) return null;
-    return { id: d.id, tipo: 'RH', nDoc: d.numero_rh || 'RH sin N°', proveedor: d.prestadores_servicios?.nombre || '', ruc: d.prestadores_servicios?.dni || '', total: Math.abs(parseFloat(d.monto_neto) || 0), fecha: d.fecha_emision };
+    return { id: d.id, tipo: 'RH', nDoc: d.numero_rh || 'RH sin N°', proveedor: d.prestadores_servicios?.nombre || d.nombre_emisor || '', ruc: d.prestadores_servicios?.dni || d.nro_doc_emisor || '', total: Math.abs(parseFloat(d.monto_neto) || 0), fecha: d.fecha_emision };
   }
   return null;
 }
@@ -1827,7 +1827,7 @@ async function _aprobarMatchMulti(key, idx) {
   if (!item || !item.esMulti) return;
   const hoy = new Date().toISOString().slice(0, 10);
   const d   = item.doc;
-  let ok = 0, errores = 0, titularesRespetados = 0;
+  let ok = 0, errores = 0;
 
   // Regla única de vinculación (2026-09-19): se valida la SUMA de todos los movimientos contra el total del
   // comprobante ANTES de tocar nada (si se pasa, no se vincula ninguno), y cada movimiento toma su estado
@@ -1844,7 +1844,6 @@ async function _aprobarMatchMulti(key, idx) {
     if (d._tipo !== 'PM') {
       const r = await _conVincularCentral(m.id, docCentral, { tipoMatch: 'MULTI_TRANSFER', score: item.score, omitirValidacion: true, silencioso: true });
       if (!r.ok) { errores++; continue; }
-      if (r.titularRespetado) titularesRespetados++;
       ok++;
       continue;
     }
@@ -1892,7 +1891,7 @@ async function _aprobarMatchMulti(key, idx) {
   document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
   _conRefrescarPanel();
   if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
-  mostrarToast(`✅ Multi-transferencia aprobada (${ok} movimientos)${errores ? ` · ${errores} con error` : ''}${titularesRespetados ? ` · ${titularesRespetados} con «A quién se depositó» ya escrito (no se pisó)` : ''}`, ok ? 'exito' : 'error');
+  mostrarToast(`✅ Multi-transferencia aprobada (${ok} movimientos)${errores ? ` · ${errores} con error` : ''}`, ok ? 'exito' : 'error');
 }
 
 // ── Rechazar multi-transferencia ──────────────────────────────────
@@ -2072,7 +2071,7 @@ async function _panelBuscar(movId) {
   else promesas.push(Promise.resolve({ data: [] }));
 
   if (!qTipo || qTipo === 'RH')
-    promesas.push(_supabase.from('rh_registros').select('id,numero_rh,monto_neto,fecha_emision,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
+    promesas.push(_supabase.from('rh_registros').select('id,numero_rh,monto_neto,fecha_emision,nombre_emisor,nro_doc_emisor,prestadores_servicios(nombre,dni)').eq('empresa_operadora_id', empId).in('periodo', periodosVentana));
   else promesas.push(Promise.resolve({ data: [] }));
 
   if (!qTipo || qTipo === 'PM')
@@ -2087,7 +2086,7 @@ async function _panelBuscar(movId) {
   const todos = [
     ...(resC.data||[]).map(d => ({ _tipo:'COMPRA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'Sin N°', _prov: d.proveedor||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
     ...(resV.data||[]).map(d => ({ _tipo:'VENTA',  _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'Sin N°', _prov: d.cliente||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
-    ...(resR.data||[]).map(d => ({ _tipo:'RH',     _ndoc: d.numero_rh||'RH sin N°', _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, id: d.id })),
+    ...(resR.data||[]).map(d => ({ _tipo:'RH',     _ndoc: d.numero_rh||'RH sin N°', _prov: d.prestadores_servicios?.nombre||d.nombre_emisor||'', _ruc: d.prestadores_servicios?.dni||d.nro_doc_emisor||'', _total: d.monto_neto||0, id: d.id })),
     ...(resPM.data||[]).map(d => ({ _tipo:'PM',    _ndoc: d.numero_planilla||'Planilla sin N°', _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, id: d.id, _estado: d.estado })),
   ].filter(d => {
     const ndocL = (d._ndoc||'').toLowerCase();

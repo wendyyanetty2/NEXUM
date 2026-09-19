@@ -47,8 +47,8 @@ async function _migCandidatosComprobante(nroFacturaDoc) {
   q = esUUID ? q.eq('id', crudo) : q.in('numero_rh', [...new Set([crudo, crudo.toUpperCase()])]);
   const { data: rhs } = await q;
   (rhs || []).forEach(d => agregar({
-    tipoDoc: 'RH', id: d.id, proveedor: d.nombre_emisor || d.prestadores_servicios?.nombre || '',
-    ruc: d.nro_doc_emisor || d.prestadores_servicios?.dni || '',
+    tipoDoc: 'RH', id: d.id, proveedor: d.prestadores_servicios?.nombre || d.nombre_emisor || '',
+    ruc: d.prestadores_servicios?.dni || d.nro_doc_emisor || '',
     monto: Number(d.monto_neto) || 0, origen: 'rh_registros', nro: d.numero_rh || d.id, fecha: d.fecha_emision || null,
   }));
 

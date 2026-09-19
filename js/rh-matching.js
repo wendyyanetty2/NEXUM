@@ -211,7 +211,7 @@ async function _rhValidarVinculo(rhId, movimientoId) {
   if (!mbd) return { ok: true };
   return _conValidarAntesDeVincular(
     empresa_activa.id, 'RH', rh.numero_rh || rhId, Number(rh.monto_neto) || 0, mbd.id, mbd.monto,
-    { ruc: rh.nro_doc_emisor || rh.prestadores_servicios?.dni || '', nombre: rh.nombre_emisor || rh.prestadores_servicios?.nombre || '', alt: [rhId] }
+    { ruc: rh.prestadores_servicios?.dni || rh.nro_doc_emisor || '', nombre: rh.prestadores_servicios?.nombre || rh.nombre_emisor || '', alt: [rhId] }
   );
 }
 
@@ -229,8 +229,8 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
     _supabase.from('rh_registros').select('numero_rh, nombre_emisor, nro_doc_emisor, prestadores_servicios(nombre, dni)').eq('id', rhId).single(),
     _supabase.from('movimientos').select('numero_operacion').eq('id', movimientoId).single(),
   ]);
-  const rhNombre = rh?.nombre_emisor  || rh?.prestadores_servicios?.nombre || '';
-  const rhDni    = rh?.nro_doc_emisor || rh?.prestadores_servicios?.dni    || '';
+  const rhNombre = rh?.prestadores_servicios?.nombre || rh?.nombre_emisor  || '';
+  const rhDni    = rh?.prestadores_servicios?.dni    || rh?.nro_doc_emisor || '';
 
   // Buscar en tesoreria_mbd el registro por N° operación (con o sin ceros iniciales)
   if (movOld?.numero_operacion) {

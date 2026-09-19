@@ -179,13 +179,13 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
 
   // ── RH ───────────────────────────────────────────────────────
   if (!tipo || tipo === 'RH') {
-    let q = _supabase.from('rh_registros').select('id,numero_rh,monto_neto,fecha_emision,prestadores_servicios(nombre,dni)')
+    let q = _supabase.from('rh_registros').select('id,numero_rh,monto_neto,fecha_emision,nombre_emisor,nro_doc_emisor,prestadores_servicios(nombre,dni)')
       .eq('empresa_operadora_id', empId);
     if (desde) q = q.gte('fecha_emision', desde);
     if (hasta) q = q.lte('fecha_emision', hasta);
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
-      todos.push({ _tipo:'RH', _ndoc: d.numero_rh||'RH sin N°', _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, _fecha: d.fecha_emision, id: d.id });
+      todos.push({ _tipo:'RH', _ndoc: d.numero_rh||'RH sin N°', _prov: d.prestadores_servicios?.nombre||d.nombre_emisor||'', _ruc: d.prestadores_servicios?.dni||d.nro_doc_emisor||'', _total: d.monto_neto||0, _fecha: d.fecha_emision, id: d.id });
     });
   }
 

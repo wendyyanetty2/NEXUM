@@ -132,13 +132,17 @@ async function _estadoCalculado(rh) {
   (concLinks   || []).forEach(l => { if (l.movimiento_id) todosIds.add(l.movimiento_id); });
   (uuidLinks   || []).forEach(l => todosIds.add(l.id));
   (numeroLinks || []).forEach(l => {
-    const nombreEmisor = rh.nombre_emisor || rh.prestadores_servicios?.nombre || '';
-    const dniEmisor    = rh.nro_doc_emisor || rh.prestadores_servicios?.dni || '';
+    // El Emisor/N° Doc de un RH puede estar en el prestador o en el propio RH (nombre_emisor / nro_doc_emisor):
+    // el vínculo cuenta si el movimiento coincide con cualquiera de las dos formas (2026-09-19).
+    const variantesEmisor = [
+      { nombre: rh.nombre_emisor || rh.prestadores_servicios?.nombre || '', dni: rh.nro_doc_emisor || rh.prestadores_servicios?.dni || '' },
+      { nombre: rh.prestadores_servicios?.nombre || rh.nombre_emisor || '', dni: rh.prestadores_servicios?.dni || rh.nro_doc_emisor || '' },
+    ];
     // El N° legible lo usan varios emisores (E001-6 puede ser de 7 personas): el vínculo es de ESTE
     // RH si el emisor coincide — DNI exacto y, si falta el DNI, nombre estricto (2026-09-19).
-    if (typeof _conFiltrarPorEmisor === 'function'
-        ? _conFiltrarPorEmisor([l], dniEmisor, nombreEmisor).length > 0
-        : (typeof _conNombreCoincideEstricto === 'function' && _conNombreCoincideEstricto(l.proveedor_empresa_personal, nombreEmisor))) {
+    if (variantesEmisor.some(v => typeof _conFiltrarPorEmisor === 'function'
+        ? _conFiltrarPorEmisor([l], v.dni, v.nombre).length > 0
+        : (typeof _conNombreCoincideEstricto === 'function' && _conNombreCoincideEstricto(l.proveedor_empresa_personal, v.nombre)))) {
       todosIds.add(l.id);
     }
   });
