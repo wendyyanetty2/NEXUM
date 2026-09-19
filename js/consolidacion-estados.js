@@ -755,12 +755,23 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
     else                           { tipo = 'sin_comprobante'; }
 
     const item = { mov: m, tipo, categoria: null, comprobante: null, cuentaEnConta: cuenta(m),
-                   nroCanonico: null, cambiaNro: false, cov: null, estado5: null, candidatos };
+                   nroCanonico: null, cambiaNro: false, cov: null, estado5: null, candidatos,
+                   rucConflicto: false, marcarPorDefecto: false };
     if (elegido) {
       _conAsignarCandidato(item, elegido);
       if (tipo === 'seguro' && item.cuentaEnConta) {
         item.cov = _conCobertura(miembros.get(elegido) || [], elegido.total);
         item.estado5 = _conEstado5(item.cov, false);
+      }
+      if (tipo === 'sin_emisor') {
+        // Mismo N° de un único comprobante, pero el nombre del movimiento es el de quien recibió el
+        // depósito (pago a terceros), no el del emisor. Es seguro pre-marcarlo solo si además el RUC
+        // no lo contradice y el monto es exactamente el del comprobante (2026-09-19).
+        const rucMov = (m.ruc_dni || '').toString().trim(), rucComp = (elegido.ruc || '').toString().trim();
+        item.rucConflicto = !!(rucMov && rucComp && rucMov !== rucComp);
+        item.marcarPorDefecto = !item.rucConflicto && item.cuentaEnConta
+          && (elegido.cat === 'COMPRA' || elegido.cat === 'VENTA')
+          && Math.abs(Math.abs(Number(m.monto) || 0) - (Number(elegido.total) || 0)) <= 0.01;
       }
     }
     items.push(item);
@@ -1086,6 +1097,9 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
           despues = `En Contabilidad quedará: <strong style="color:${col}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (vinculado ${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)})`;
         } else if (!it.cuentaEnConta) {
           despues = 'Su estado en Movimientos es PENDIENTE: Contabilidad seguirá mostrándolo PENDIENTE (regla), aunque se le asigne la categoría.';
+        } else if (it.tipo === 'sin_emisor' && !it.rucConflicto && (it.categoria === 'COMPRA' || it.categoria === 'VENTA')) {
+          // Tras asignar la categoría, "Reparar estados" sincroniza el emisor con el comprobante (Paso 2).
+          despues = `Al aplicar, el Proveedor y el RUC del movimiento pasan a ser los del comprobante y el nombre actual (<strong>${escapar(m.proveedor_empresa_personal || '—')}</strong>) queda en «A quién se depositó». Así Contabilidad sí lo cuenta.${it.marcarPorDefecto ? ' Viene marcado porque el monto es exactamente el del comprobante.' : ' No viene marcado: el monto no es el total del comprobante (¿pago parcial?). Márcalo si es el correcto.'}`;
         } else {
           despues = 'Aunque se asigne la categoría, Contabilidad no lo contará porque el RUC/nombre no coincide con el comprobante.';
         }
@@ -1099,7 +1113,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
       }
       return `
         <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px;${marcable ? 'cursor:pointer' : 'opacity:.85'}">
-          <input type="checkbox" class="rev-chk" data-i="${i}" ${it.tipo === 'seguro' ? 'checked' : ''} ${marcable ? '' : 'disabled'} style="margin-top:3px">
+          <input type="checkbox" class="rev-chk" data-i="${i}" ${it.tipo === 'seguro' || it.marcarPorDefecto ? 'checked' : ''} ${marcable ? '' : 'disabled'} style="margin-top:3px">
           <div style="flex:1;min-width:0">${cabecera}${cuerpo}</div>
         </label>`;
     };
