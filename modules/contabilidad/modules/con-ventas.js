@@ -197,7 +197,8 @@ async function _renderVentasFiltradas() {
   const pctAplicV   = filas.length > 0 ? Math.round(countAplicV / filas.length * 100) : 0;
 
   // Filas visibles en la tabla: todas, o solo las del estado clicado en los badges
-  const filasVista = _vFiltroEstado
+  const filasVista = _vFiltroEstado === 'ROTO' ? covFilasV.filter(x => x.roto)
+    : _vFiltroEstado
     ? covFilasV.filter(x => _conCoincideFiltroEstado(x.estado5, _vFiltroEstado))
     : covFilasV;
 
@@ -221,7 +222,7 @@ async function _renderVentasFiltradas() {
       ${_vBadge('POSIBLE', countPosV)}
       ${_vBadge('PENDIENTE', countPendV)}
       <span style="color:var(--color-texto-suave);font-size:10px;font-weight:400">— ${filas.length} comprobante(s) · ${pctAplicV}% conciliado</span>
-      ${covFilasV.filter(x => x.roto).length ? `<span style="color:#C05621;font-size:10px;font-weight:700" title="Ya hay un movimiento con el N° de estos comprobantes, pero no cuenta (está PENDIENTE o su emisor no coincide). Usa 🔧 Reparar estados o corrige el movimiento.">⚠️ ${covFilasV.filter(x => x.roto).length} con un movimiento que trae su N° pero no cuenta</span>` : ''}
+      ${covFilasV.filter(x => x.roto).length ? `<span onclick="_vToggleFiltroEstado('ROTO')" style="color:#C05621;font-size:10px;font-weight:700;cursor:pointer;text-decoration:underline" title="Clic: ver solo estos comprobantes. Dentro, clic en su estado ⚠️ para ver el movimiento y por qué no cuenta.">⚠️ ${covFilasV.filter(x => x.roto).length} con un movimiento que trae su N° pero no cuenta</span>` : ''}
       ${_vFiltroEstado ? `<span onclick="_vToggleFiltroEstado('${_vFiltroEstado}')" style="cursor:pointer;color:var(--color-secundario);font-size:10px;font-weight:700;text-decoration:underline">✕ Quitar filtro</span>` : ''}
     </div>
     <div class="resumen-card" style="background:var(--color-secundario)">
@@ -283,7 +284,9 @@ async function _renderVentasFiltradas() {
             : estado5 === 'POSIBLE'   ? 'Sugerencia: hay un movimiento bancario sin vincular con un monto parecido — click para revisar y confirmar.'
             : roto                    ? 'Ya hay un movimiento con el N° de este comprobante, pero no cuenta (está PENDIENTE o su emisor no coincide). Usa 🔧 Reparar estados para migrarlo.'
             : 'Click para conciliar con banco';
-          const onclickBanco = esAplicado
+          const onclickBanco = roto
+            ? `_conDetalleVinculoRoto('VENTA','${escapar(nDoc)}','${escapar(r.nro_doc_identidad||'')}')`
+            : esAplicado
             ? `_verMovBancarioLink('${escapar(nDoc)}','VENTA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.cliente||'')}')`
             : `nexumIrAConciliar('VENTA','${r.id}')`;
           const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;cursor:pointer"

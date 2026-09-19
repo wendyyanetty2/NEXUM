@@ -213,7 +213,7 @@ async function _conMovsConNroCualquierEstado(empId, numeros) {
   const porNro = new Map();
   for (let i = 0; i < lista.length; i += 80) {
     const { data } = await _supabase.from('tesoreria_mbd')
-      .select('id,nro_factura_doc,tipo_doc,entrega_doc,ruc_dni,proveedor_empresa_personal')
+      .select('id,nro_factura_doc,tipo_doc,entrega_doc,ruc_dni,proveedor_empresa_personal,nro_operacion_bancaria,fecha_deposito,monto')
       .eq('empresa_id', empId).in('nro_factura_doc', lista.slice(i, i + 80));
     (data || []).forEach(m => {
       if (!porNro.has(m.nro_factura_doc)) porNro.set(m.nro_factura_doc, []);
@@ -222,6 +222,18 @@ async function _conMovsConNroCualquierEstado(empId, numeros) {
   }
   return porNro;
 }
+// Detalle de un comprobante con "vínculo roto": qué movimiento trae su N° y por qué no cuenta (Wendy, 2026-09-19).
+async function _conDetalleVinculoRoto(tipo, nDoc, ruc) {
+  const porNro = await _conMovsConNroCualquierEstado(empresa_activa.id, [nDoc]);
+  const movs = (porNro.get(nDoc) || []).filter(m => _conHayVinculoQueNoCuenta([m], tipo, ruc));
+  const motivo = m => !['EMITIDO', 'OBSERVADO'].includes(m.entrega_doc) ? `su estado es ${m.entrega_doc || 'PENDIENTE'}`
+    : !_CON_TIPOS_DOC_VALIDOS.includes(m.tipo_doc) ? 'su categoría interna está vacía o dañada'
+    : 'su Proveedor/RUC no coincide con el del comprobante';
+  const lineas = movs.map(m => `• Op. ${m.nro_operacion_bancaria || '—'} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.proveedor_empresa_personal || '—')} — no cuenta porque ${motivo(m)}`).join('\n');
+  const ok = await confirmar(`Comprobante ${escapar(nDoc)}: hay movimiento(s) que traen su N° pero no cuentan:\n\n${lineas || '(no se encontró el detalle)'}\n\n¿Abrir 🔧 Reparar estados para migrarlos?`, { btnOk: 'Abrir Reparar estados', btnColor: '#2C5282' });
+  if (ok && typeof consolidarEstadosRetroactivo === 'function') consolidarEstadosRetroactivo();
+}
+
 // ¿Hay algún movimiento (no cancelado; de esta categoría o sin categoría válida; que NO sea de otro emisor por RUC)
 // con el N° de este comprobante? Se usa solo para comprobantes que hoy no tienen movimientos contados.
 function _conHayVinculoQueNoCuenta(movsDelNro, categoria, ruc) {
