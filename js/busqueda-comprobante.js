@@ -159,7 +159,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     if (hasta) q = q.lte('fecha_emision', hasta);
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
-      const ndoc = [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8);
+      const ndoc = [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || 'Sin N°';
       todos.push({ _tipo:'COMPRA', _ndoc: ndoc, _prov: d.proveedor||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, _fecha: d.fecha_emision, id: d.id });
     });
   }
@@ -172,7 +172,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     if (hasta) q = q.lte('fecha_emision', hasta);
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
-      const ndoc = [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8);
+      const ndoc = [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || 'Sin N°';
       todos.push({ _tipo:'VENTA', _ndoc: ndoc, _prov: d.cliente||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, _fecha: d.fecha_emision, id: d.id });
     });
   }
@@ -185,7 +185,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     if (hasta) q = q.lte('fecha_emision', hasta);
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
-      todos.push({ _tipo:'RH', _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, _fecha: d.fecha_emision, id: d.id });
+      todos.push({ _tipo:'RH', _ndoc: d.numero_rh||'RH sin N°', _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, _fecha: d.fecha_emision, id: d.id });
     });
   }
 
@@ -197,7 +197,7 @@ async function _bmEjecutarBusquedaDoc(overlay, movBancoId, tablaBanco) {
     if (hasta) q = q.lte('fecha_emision', hasta);
     const { data } = await q.limit(50);
     (data || []).forEach(d => {
-      todos.push({ _tipo:'PM', _ndoc: d.numero_planilla||d.id?.slice(0,8), _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, _fecha: d.fecha_emision, id: d.id, _estado: d.estado });
+      todos.push({ _tipo:'PM', _ndoc: d.numero_planilla||'Planilla sin N°', _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, _fecha: d.fecha_emision, id: d.id, _estado: d.estado });
     });
   }
 

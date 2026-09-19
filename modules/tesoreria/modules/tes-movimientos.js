@@ -230,7 +230,7 @@ function filtrarMovimientos() {
       } else {
         // Búsqueda de texto normal
         const nroDocDisplay = window._rhUuidMap?.[r.nro_factura_doc]
-          || r.nro_factura_doc;
+          || _conLegible(r.nro_factura_doc);
         const haystack = [
           r.nro_operacion_bancaria, r.descripcion, r.proveedor_empresa_personal,
           r.ruc_dni, r.concepto, r.empresa, r.proyecto, nroDocDisplay,
@@ -322,7 +322,7 @@ function renderTablaMovimientos() {
         <td style="${_TD}">
           <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBg[est]||'#718096'};color:#fff;white-space:nowrap">${est}</span>
         </td>
-        <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(window._rhUuidMap?.[r.nro_factura_doc]||r.nro_factura_doc||'—')}</td>
+        <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(_conLegible(window._rhUuidMap?.[r.nro_factura_doc]||r.nro_factura_doc)||'—')}</td>
         <td style="${_TD}text-align:center">
           ${(r.tipo_comprobante||r.tipo_doc)?`<span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(r.tipo_comprobante||r.tipo_doc)}</span>`:'—'}
         </td>
@@ -466,7 +466,7 @@ async function exportarMovimientosExcel() {
     r.concepto || null,
     r.empresa || null,
     r.entrega_doc || 'PENDIENTE',
-    window._rhUuidMap?.[r.nro_factura_doc] || r.nro_factura_doc || null,
+    _conLegible(window._rhUuidMap?.[r.nro_factura_doc] || r.nro_factura_doc) || null,
     r.tipo_comprobante || r.tipo_doc || null, // "Tipo de DOC" como lo muestra la pantalla (FA/BO/RH…), no la categoría interna
     r.autorizacion || null,
     r.observaciones || null,
@@ -1215,6 +1215,8 @@ async function abrirModalMBD(id = null) {
     const { data: rhReg } = await _supabase.from('rh_registros').select('numero_rh').eq('id', item.nro_factura_doc).single();
     if (rhReg?.numero_rh) { _nroFacturaDisplay = rhReg.numero_rh; _nroFacturaIsRhUuid = true; }
   }
+  // Un código de RH sin N° conocido nunca se muestra: aviso neutro y campo de solo lectura.
+  if (typeof nexumEsUUID === 'function' && nexumEsUUID(_nroFacturaDisplay)) { _nroFacturaDisplay = NEXUM_TEXTO_SIN_NUMERO; _nroFacturaIsRhUuid = true; }
 
   const nroOps = (item?.nro_operacion_bancaria || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!nroOps.length) nroOps.push('');

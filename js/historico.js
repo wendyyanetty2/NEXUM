@@ -91,6 +91,7 @@ function _filasMBD(data, rhNumeroPorId) {
   return data.map(r => {
     let nDoc = r.nro_factura_doc || '';
     if (rhNumeroPorId?.has(nDoc)) nDoc = rhNumeroPorId.get(nDoc);
+    else nDoc = _conLegible(nDoc); // un código sin RH conocido nunca se escribe en el archivo
     return [
       r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : '',
       _histFmtFecha(r.fecha_deposito), r.descripcion||'', r.moneda||'S/', r.monto,
@@ -432,7 +433,9 @@ async function generarHistorico(empresaId, desde, hasta, empNombre) {
   Object.entries(crudoTotal).forEach(([tabla, filasT]) => {
     filasT.forEach(r => filasRaw.push([tabla, r.id || '', JSON.stringify(r)]));
   });
-  hojas.push({ nombre: 'RAW_DATA', datos: [['Tabla', 'ID', 'JSON'], ...filasRaw], esAOA: true });
+  // La empresa a la que pertenece el archivo (un código interno) va DENTRO de la hoja técnica oculta, no en
+  // la hoja visible METADATOS. La fila no tiene JSON, así que la restauración la ignora como registro.
+  hojas.push({ nombre: 'RAW_DATA', datos: [['Tabla', 'ID', 'JSON'], ['__EMPRESA__', empresaId, ''], ...filasRaw], esAOA: true });
 
   resultados.forEach(r => Object.entries(r.conteos).forEach(([t,n]) => { conteosTotal[t] = (conteosTotal[t]||0) + n; }));
   Object.entries(catalogos.conteos).forEach(([t,n]) => { conteosTotal[t] = n; });
@@ -477,7 +480,6 @@ async function generarHistorico(empresaId, desde, hasta, empNombre) {
   const metadatos = [
     ['Campo', 'Valor'],
     ['Versión', NEXUM_HIST_VERSION],
-    ['Empresa ID', empresaId],
     ['Empresa', empNombre || ''],
     ['Período(s)', periodos.join(', ')],
     ['Generado en', generadoEn],
@@ -543,7 +545,10 @@ async function _histImportarArchivo(input) {
   const meta = {};
   XLSX.utils.sheet_to_json(wsMeta, { header: 1 }).forEach(r => { if (r[0]) meta[r[0]] = r[1]; });
 
-  if (String(meta['Empresa ID'] || '') !== empresa_activa.id) {
+  // La empresa del archivo: hoja técnica oculta (formato nuevo) o METADATOS (archivos anteriores).
+  const filaEmpresa = XLSX.utils.sheet_to_json(wsRaw, { header: 1 }).find(r => r[0] === '__EMPRESA__');
+  const empresaDelArchivo = String((filaEmpresa && filaEmpresa[1]) || meta['Empresa ID'] || '');
+  if (empresaDelArchivo !== empresa_activa.id) {
     mostrarToast('Este histórico pertenece a otra empresa. Cambia a la empresa correcta (menú superior) antes de importar.', 'atencion');
     return;
   }

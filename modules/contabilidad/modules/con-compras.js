@@ -129,7 +129,7 @@ function _cDetectarParesNC(filas) {
     const positivos = grupo.filter(r => Number(r.total_cp) > 0);
     const negativos = grupo.filter(r => Number(r.total_cp) < 0);
     if (!positivos.length || !negativos.length) return;
-    const nDoc = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-') || r.id.slice(0, 8);
+    const nDoc = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-') || 'Sin N°';
     positivos.forEach(r => pares.set(r.id, nDoc(negativos[0])));
     negativos.forEach(r => pares.set(r.id, nDoc(positivos[0])));
   });
@@ -286,7 +286,7 @@ async function _renderComprasFiltradas() {
             : 'Click para conciliar con banco';
           const onclickBanco = esAplicado
             ? `_verMovBancarioLink('${escapar(nDoc)}','COMPRA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.proveedor||'')}')`
-            : `window.location.href='/modules/conciliacion/index.html?buscar=${encodeURIComponent(r.id)}&tipo=COMPRA'`;
+            : `nexumIrAConciliar('COMPRA','${r.id}')`;
           const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;cursor:pointer"
                title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
           return `
@@ -1180,6 +1180,7 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
   const hoy = new Date().toISOString().slice(0, 10);
 
   const { data: movPrevio } = await _supabase.from('tesoreria_mbd').select('entrega_doc,nro_factura_doc,monto,proveedor_empresa_personal,ruc_dni').eq('id', movId).maybeSingle();
+  if (typeof nexumPrecargarNumerosRH === 'function') await nexumPrecargarNumerosRH(movPrevio?.nro_factura_doc);
 
   if (typeof _conValidarAntesDeVincular === 'function') {
     const val = await _conValidarAntesDeVincular(empresa_activa.id, tipoDoc, nDoc, total, movId, movPrevio?.monto, { ruc, nombre: proveedor });
@@ -1187,7 +1188,7 @@ async function _cVincularMovimiento(compraId, movId, nDoc, tipoDoc, proveedor = 
   }
 
   const mensajeConfirm = movPrevio?.entrega_doc === 'EMITIDO'
-    ? `⚠️ Este movimiento bancario ya fue registrado por completo (EMITIDO)${movPrevio.nro_factura_doc ? ` con el comprobante ${escapar(movPrevio.nro_factura_doc)}` : ''}.\n¿Está segura de vincularlo con "${escapar(nDoc)}"?`
+    ? `⚠️ Este movimiento bancario ya fue registrado por completo (EMITIDO)${movPrevio.nro_factura_doc ? ` con el comprobante ${escapar(_conLegible(movPrevio.nro_factura_doc))}` : ''}.\n¿Está segura de vincularlo con "${escapar(nDoc)}"?`
     : `¿Está segura de vincular el comprobante "${escapar(nDoc)}" con este movimiento bancario?`;
   if (!await confirmar(mensajeConfirm, { btnOk: 'Sí, vincular', btnColor: movPrevio?.entrega_doc === 'EMITIDO' ? '#C53030' : '#2C5282' })) return;
 

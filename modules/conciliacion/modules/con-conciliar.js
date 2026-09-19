@@ -296,7 +296,7 @@ async function _ejecutarConciliacion(periodo) {
   const compras = (resCompras.data || []).map(d => ({
     ...d,
     _tipo:    'COMPRA',
-    _ndoc:    [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8) || '—',
+    _ndoc:    [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || 'Sin N°',
     _proveedor: d.proveedor || '',
     _ruc:     d.nro_doc_identidad || '',
     _total:   Math.abs(parseFloat(d.total_cp || 0)),
@@ -306,7 +306,7 @@ async function _ejecutarConciliacion(periodo) {
   const ventas = (resVentas.data || []).map(d => ({
     ...d,
     _tipo:    'VENTA',
-    _ndoc:    [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || d.id?.slice(0,8) || '—',
+    _ndoc:    [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-') || 'Sin N°',
     _proveedor: d.cliente || '',
     _ruc:     d.nro_doc_identidad || '',
     _total:   Math.abs(parseFloat(d.total_cp || 0)),
@@ -316,7 +316,7 @@ async function _ejecutarConciliacion(periodo) {
   const rhRegs = (resRh.data || []).map(d => ({
     ...d,
     _tipo:    'RH',
-    _ndoc:    d.numero_rh || d.id?.slice(0,8) || '—',
+    _ndoc:    d.numero_rh || 'RH sin N°',
     _proveedor: d.prestadores_servicios?.nombre || '',
     _ruc:     d.prestadores_servicios?.dni || '',
     _total:   Math.abs(parseFloat(d.monto_neto || 0)),
@@ -614,7 +614,7 @@ async function _conCargarComprobante(docTipo, docId) {
   if (docTipo === 'RH') {
     const { data: d } = await _supabase.from('rh_registros').select('*, prestadores_servicios(nombre,dni)').eq('id', docId).eq('empresa_operadora_id', empId).single();
     if (!d) return null;
-    return { id: d.id, tipo: 'RH', nDoc: d.numero_rh || d.id.slice(0, 8), proveedor: d.prestadores_servicios?.nombre || '', ruc: d.prestadores_servicios?.dni || '', total: Math.abs(parseFloat(d.monto_neto) || 0), fecha: d.fecha_emision };
+    return { id: d.id, tipo: 'RH', nDoc: d.numero_rh || 'RH sin N°', proveedor: d.prestadores_servicios?.nombre || '', ruc: d.prestadores_servicios?.dni || '', total: Math.abs(parseFloat(d.monto_neto) || 0), fecha: d.fecha_emision };
   }
   return null;
 }
@@ -2031,10 +2031,10 @@ async function _panelBuscar(movId) {
   const tipoIcon = { COMPRA:'🛒', VENTA:'📄', RH:'🧾', PM:'🚗' };
 
   const todos = [
-    ...(resC.data||[]).map(d => ({ _tipo:'COMPRA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.proveedor||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
-    ...(resV.data||[]).map(d => ({ _tipo:'VENTA',  _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||d.id?.slice(0,8), _prov: d.cliente||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
-    ...(resR.data||[]).map(d => ({ _tipo:'RH',     _ndoc: d.numero_rh||d.id?.slice(0,8), _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, id: d.id })),
-    ...(resPM.data||[]).map(d => ({ _tipo:'PM',    _ndoc: d.numero_planilla||d.id?.slice(0,8), _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, id: d.id, _estado: d.estado })),
+    ...(resC.data||[]).map(d => ({ _tipo:'COMPRA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'Sin N°', _prov: d.proveedor||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
+    ...(resV.data||[]).map(d => ({ _tipo:'VENTA',  _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'Sin N°', _prov: d.cliente||'', _ruc: d.nro_doc_identidad||'', _total: d.total_cp||0, id: d.id })),
+    ...(resR.data||[]).map(d => ({ _tipo:'RH',     _ndoc: d.numero_rh||'RH sin N°', _prov: d.prestadores_servicios?.nombre||'', _ruc: d.prestadores_servicios?.dni||'', _total: d.monto_neto||0, id: d.id })),
+    ...(resPM.data||[]).map(d => ({ _tipo:'PM',    _ndoc: d.numero_planilla||'Planilla sin N°', _prov: d.trabajador_nombre||'', _ruc: d.trabajador_dni||'', _total: d.total_gastos||0, id: d.id, _estado: d.estado })),
   ].filter(d => {
     const ndocL = (d._ndoc||'').toLowerCase();
     const provL = [(d._prov||''),(d._ruc||'')].join(' ').toLowerCase();
@@ -2129,7 +2129,7 @@ async function _conMapaNumeroRH(mbdRows) {
   return mapa;
 }
 function _conNroFacturaLegible(m, mapaRH) {
-  return mapaRH?.has(m.nro_factura_doc) ? mapaRH.get(m.nro_factura_doc) : (m.nro_factura_doc || '');
+  return mapaRH?.has(m.nro_factura_doc) ? mapaRH.get(m.nro_factura_doc) : (typeof nexumNroLegible === 'function' ? nexumNroLegible(m.nro_factura_doc || '') : (m.nro_factura_doc || ''));
 }
 
 // ── Exportar aprobados ────────────────────────────────────────────
@@ -2320,11 +2320,11 @@ async function _conValidar(filas, { emitN, obsN, pendN, totalN }) {
       let nombresRH = {};
       if (idsRH.length) {
         const { data: rhRows } = await _supabase.from('rh_registros').select('id,numero_rh').in('id', idsRH);
-        (rhRows || []).forEach(r => { nombresRH[r.id] = r.numero_rh || r.id.slice(0, 8); });
+        (rhRows || []).forEach(r => { nombresRH[r.id] = r.numero_rh || 'RH sin N°'; });
       }
       const etiquetas = gruposRepetidos.map(([k]) => {
         const [tipo, nDoc] = k.split('|');
-        return tipo === 'RH' ? escapar(nombresRH[nDoc] || nDoc.slice(0, 8)) : escapar(nDoc);
+        return tipo === 'RH' ? escapar(nombresRH[nDoc] || 'RH sin N°') : escapar(nDoc);
       });
       chips.push({ solid: '#7c3aed',
         msg: `⚠ ${etiquetas.length} comprobante(s) con varios movimientos: ${etiquetas.slice(0, 3).join(', ')}${etiquetas.length > 3 ? '…' : ''} — revisar en ⚖️ Descuadres de vínculo` });

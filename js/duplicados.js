@@ -190,12 +190,15 @@ async function _dupBuscarMovimientoBancario(candidato, excluirId = null) {
   let q = _supabase.from('tesoreria_mbd').select('*').eq('empresa_id', empresa_activa.id);
   if (excluirId) q = q.neq('id', excluirId);
   const { data } = await q;
-  return (data || []).filter(r => _dupMismoMovimiento(r, candidato, conceptosRecurrentes));
+  const dups = (data || []).filter(r => _dupMismoMovimiento(r, candidato, conceptosRecurrentes));
+  // el aviso menciona el comprobante vinculado: se cargan los N° de RH para que nunca salga un código
+  if (dups.length && typeof nexumPrecargarNumerosRH === 'function') await nexumPrecargarNumerosRH(dups.map(r => r.nro_factura_doc));
+  return dups;
 }
 
 function _dupDetalleMovimientos(candidatos) {
   return candidatos.map(m =>
-    `• Op. ${m.nro_operacion_bancaria || '—'} — ${formatearFecha(m.fecha_deposito)} — ${formatearMoneda(m.monto)} — ${m.entrega_doc || 'PENDIENTE'}${m.nro_factura_doc ? ` — vinculado a ${m.nro_factura_doc}` : ''}`
+    `• Op. ${m.nro_operacion_bancaria || '—'} — ${formatearFecha(m.fecha_deposito)} — ${formatearMoneda(m.monto)} — ${m.entrega_doc || 'PENDIENTE'}${m.nro_factura_doc ? ` — vinculado a ${_conLegible(m.nro_factura_doc)}` : ''}`
   ).join('\n');
 }
 
@@ -362,7 +365,7 @@ async function _dupDescuadresVinculacion() {
   // (carga por Excel/Importar MBD) — se evalúan ambas claves, igual criterio que _bmCargarLinks.
   // En pantalla SIEMPRE se muestra el N° de RH legible (nunca el UUID), igual que en el
   // resto del sistema (tes-movimientos.js, historico.js, con-conciliar.js).
-  const _rhMostrar = c => c.numero_rh || `RH sin N° · ${(c.id || '').slice(0, 8)}`;
+  const _rhMostrar = c => c.numero_rh || 'RH sin N°';
   const _rhRuc = c => c.prestadores_servicios?.dni;
   evaluar(rh, 'RH', c => c.id,        c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar, _rhRuc);
   // N° de RH legible: se repite entre emisores (E001-6 puede ser de varias personas). Si el N° lo usa

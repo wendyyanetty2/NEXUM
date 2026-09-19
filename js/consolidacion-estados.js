@@ -169,6 +169,10 @@ function _conEstado5(cov, esPosible) {
   return 'APLICADO'; // COMPLETO_EMITIDO / COMPLETO_OBSERVADO
 }
 
+// ── N° de comprobante listo para MOSTRAR: si es un código interno de RH, su N° legible (o un aviso
+//    neutro) — Wendy, 2026-09-19: nunca se ve un código UUID. Ver nexumNroLegible en utils.js.
+function _conLegible(v) { return typeof nexumNroLegible === 'function' ? nexumNroLegible(v) : v; }
+
 // ── Clave normalizada tipo_doc+nro_factura_doc para agrupar movimientos
 //    del mismo comprobante (auditoría 2026-09-18): un espacio de más, o
 //    mayúscula/minúscula distinta importado de un Excel, puede hacer que
@@ -997,7 +1001,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
         return `
         <div style="border:1px solid #DD6B20;border-radius:8px;padding:12px 14px;margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
-            <span style="font-weight:700;color:var(--color-secundario)">${escapar(m.nro_factura_doc)} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
+            <span style="font-weight:700;color:var(--color-secundario)">${escapar(_conLegible(m.nro_factura_doc))} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
             <span style="font-family:monospace;font-size:11px;color:var(--color-texto-suave)">Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.entrega_doc || '—')}</span>
           </div>
           <div style="font-size:11px;color:#C05621;margin-bottom:2px">⚠️ ${MOTIVO.ambiguo}</div>
@@ -1006,7 +1010,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
       }
       const cabecera = `
         <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px">
-          <span style="font-weight:700;color:var(--color-secundario)">${escapar(m.nro_factura_doc)} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
+          <span style="font-weight:700;color:var(--color-secundario)">${escapar(_conLegible(m.nro_factura_doc))} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
           <span style="font-family:monospace;font-size:11px;color:var(--color-texto-suave)">Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.entrega_doc || '—')}</span>
         </div>`;
       let cuerpo;

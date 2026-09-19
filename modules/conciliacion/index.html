@@ -11,13 +11,13 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="../../js/config.js"></script>
-  <script src="../../js/utils.js?v=2&t=20260910a"></script>
+  <script src="../../js/utils.js?v=3&t=20260919i"></script>
   <script src="../../js/auth.js?v=3&t=20260917"></script>
   <script src="../../js/tema.js"></script>
   <script src="../../js/notas.js?v=2&t=20260510"></script>
   <script src="../../js/layout.js?v=4&t=20260917"></script>
-  <script src="../../js/consolidacion-estados.js?v=21&t=20260919h"></script>
-  <script src="../../js/duplicados.js?v=12&t=20260919h"></script>
+  <script src="../../js/consolidacion-estados.js?v=22&t=20260919i"></script>
+  <script src="../../js/duplicados.js?v=13&t=20260919i"></script>
 </head>
 <body>
 <div class="nexum-layout">
@@ -60,7 +60,7 @@
 .tab-btn.activo { color:var(--color-secundario); border-bottom-color:var(--color-secundario); }
 </style>
 
-<script src="../../modules/conciliacion/modules/con-conciliar.js?v=20&t=20260919h"></script>
+<script src="../../modules/conciliacion/modules/con-conciliar.js?v=21&t=20260919i"></script>
 <script src="../../modules/conciliacion/modules/con-historial.js?v=2&t=20260909b"></script>
 
 <script>
@@ -79,8 +79,15 @@ let empresa_activa = null;
   // Compras/Ventas/RH con ?buscar=<id>&tipo=<COMPRA|VENTA|RH> abre directo
   // la búsqueda de ese comprobante puntual, sin pasar por "Iniciar conciliación".
   const params  = new URLSearchParams(window.location.search);
-  const buscarId  = params.get('buscar');
-  const buscarTipo = params.get('tipo');
+  let buscarId  = params.get('buscar');
+  let buscarTipo = params.get('tipo');
+  // Wendy, 2026-09-19: el código del comprobante NO viaja en la barra de direcciones; llega por sessionStorage.
+  try {
+    const guardado = JSON.parse(sessionStorage.getItem('nexum_buscar_comprobante') || 'null');
+    if (guardado && guardado.id && guardado.tipo) { buscarId = guardado.id; buscarTipo = guardado.tipo; }
+    sessionStorage.removeItem('nexum_buscar_comprobante');
+  } catch (e) { /* sin sessionStorage: se usa el parámetro de la URL */ }
+  if (params.has('buscar') || params.has('tipo')) window.history.replaceState(null, '', window.location.pathname); // limpia la barra
   if (buscarId && buscarTipo && typeof abrirBusquedaComprobante === 'function') {
     abrirBusquedaComprobante(buscarTipo, buscarId);
   }

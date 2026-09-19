@@ -124,7 +124,7 @@ function _vDetectarParesNC(filas) {
     const positivos = grupo.filter(r => Number(r.total_cp) > 0);
     const negativos = grupo.filter(r => Number(r.total_cp) < 0);
     if (!positivos.length || !negativos.length) return;
-    const nDoc = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-') || r.id.slice(0, 8);
+    const nDoc = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-') || 'Sin N°';
     positivos.forEach(r => pares.set(r.id, nDoc(negativos[0])));
     negativos.forEach(r => pares.set(r.id, nDoc(positivos[0])));
   });
@@ -278,7 +278,7 @@ async function _renderVentasFiltradas() {
             : 'Click para conciliar con banco';
           const onclickBanco = esAplicado
             ? `_verMovBancarioLink('${escapar(nDoc)}','VENTA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.cliente||'')}')`
-            : `window.location.href='/modules/conciliacion/index.html?buscar=${encodeURIComponent(r.id)}&tipo=VENTA'`;
+            : `nexumIrAConciliar('VENTA','${r.id}')`;
           const bancoHtml = `<span style="background:${_CON_ESTADO5_COLOR[estado5]};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;cursor:pointer"
                title="${escapar(tituloBanco)}" onclick="${onclickBanco}">${_CON_ESTADO5_ICONO[estado5]} ${estado5}</span>`;
           return `
