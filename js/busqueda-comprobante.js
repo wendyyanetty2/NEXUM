@@ -262,9 +262,12 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
   const hoy   = new Date().toISOString().slice(0,10);
   const tabla = tablaBanco || 'tesoreria_mbd';
 
-  // Para RH: UUID como clave única en nro_factura_doc (distintos emisores pueden tener el mismo número).
-  // Display legible se resuelve en tes-movimientos.js con batch lookup.
-  const nroFacturaKey = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
+  // El movimiento guarda el N° LEGIBLE del comprobante — también en RH (Wendy, 2026-09-19: "no quiero
+  // que exista el código UUID"). El mismo N° de RH lo usan varios emisores, así que el RH se distingue
+  // por N° + emisor (el DNI/nombre del RH se copia al movimiento más abajo). Solo si el RH no tiene
+  // N° se recurre a su código.
+  const nroFacturaKey = docTipo === 'RH' ? (nDoc || docId || null) : (nDoc || null);
+  const claveAntigua  = docTipo === 'RH' && docId && nroFacturaKey !== docId ? [docId] : []; // vínculos antiguos con UUID
 
   // Determinar estado según completitud de los 14 campos (PENDIENTE/OBSERVADO/EMITIDO) — punto 2.5
   let entregaDoc = 'OBSERVADO';
@@ -287,7 +290,7 @@ async function _bmEjecutarVinculacionDoc(movBancoId, docTipo, docId, nDoc, tabla
     }
 
     if (typeof _conValidarAntesDeVincular === 'function' && typeof empresa_activa !== 'undefined' && empresa_activa?.id) {
-      const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKey, extra.total, movBancoId, mov?.monto, { ruc: extra.ruc, nombre: extra.proveedor });
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKey, extra.total, movBancoId, mov?.monto, { ruc: extra.ruc, nombre: extra.proveedor, alt: claveAntigua });
       if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
     }
   }
@@ -693,20 +696,16 @@ async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, provee
   if (docTipo === 'RH' && nDocLegible && nDocLegible !== nDoc) {
     const { data: linksLegible } = await _supabase
       .from('tesoreria_mbd')
-      .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc,proveedor_empresa_personal')
+      .select('id,nro_operacion_bancaria,fecha_deposito,monto,moneda,entrega_doc,proveedor_empresa_personal,tipo_doc,ruc_dni,nro_factura_doc')
       .eq('empresa_id', empresa_activa.id)
-      .eq('tipo_doc', docTipo)
+      .or(_conFiltroTipoDoc('RH'))
       .eq('nro_factura_doc', nDocLegible)
       .order('fecha_deposito', { ascending: false });
     const vistos = new Set(links.map(l => l.id));
-    (linksLegible || []).forEach(l => {
-      if (vistos.has(l.id)) return;
-      // Estricto: el N° de RH puede repetirse entre emisores distintos, así que
-      // si falta el proveedor en cualquiera de los dos lados NO se asume match
-      // (evita mezclar montos de personas distintas — ver consolidacion-estados.js).
-      const coincideProveedor = typeof _conNombreCoincideEstricto === 'function'
-        && _conNombreCoincideEstricto(l.proveedor_empresa_personal, proveedorEmisor);
-      if (coincideProveedor) { links.push(l); vistos.add(l.id); }
+    // El N° de RH se repite entre emisores (E001-6 puede ser de varias personas): un vínculo por
+    // N° legible solo es de ESTE RH si el emisor coincide — DNI exacto o, si falta, nombre estricto.
+    _conFiltrarVinculosDelComprobante(linksLegible, 'RH', emisorRuc, proveedorEmisor || emisorNombre).forEach(l => {
+      if (!vistos.has(l.id)) { links.push(l); vistos.add(l.id); }
     });
   }
 
@@ -728,7 +727,7 @@ async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, provee
       <span style="font-size:11px;color:var(--color-texto-suave)">${l.fecha_deposito||''}</span>
       <span style="font-weight:700;font-size:12px;color:${Number(l.monto||0)<0?'var(--color-critico)':'var(--color-exito)'}">${formatearMoneda?formatearMoneda(l.monto,l.moneda||'PEN'):'S/'+Number(l.monto||0).toFixed(2)}</span>
       <span style="font-size:10px;background:${badgeColor};color:#fff;padding:1px 5px;border-radius:8px;font-weight:600">${escapar(l.entrega_doc||'')}</span>
-      <button onclick="_bmDesvincularmovLink('${l.id}','${escapar(nDoc)}','${docTipo}')"
+      <button onclick="_bmDesvincularmovLink('${l.id}','${escapar(nDoc)}','${docTipo}','${escapar(nDocLegible || nDoc)}')"
         title="Desvincular esta operación"
         style="margin-left:auto;padding:2px 8px;background:rgba(197,48,48,.12);color:#C53030;border:1px solid rgba(197,48,48,.3);border-radius:4px;cursor:pointer;font-size:11px;font-family:var(--font);flex-shrink:0">
         🔓
@@ -738,9 +737,10 @@ async function _bmCargarLinks(overlay, nDoc, docTipo, nDocLegible = null, provee
 }
 
 // ── Desvincular operación bancaria de un comprobante ─────────────
-async function _bmDesvincularmovLink(movId, nDoc, docTipo) {
+async function _bmDesvincularmovLink(movId, nDoc, docTipo, nDocLegible = '') {
+  // En RH `nDoc` es la clave interna del RH; a la persona siempre se le muestra el N° legible.
   const ok = await confirmar(
-    `¿Desvincular este movimiento del comprobante ${nDoc}? Volverá a estado PENDIENTE.`,
+    `¿Desvincular este movimiento del comprobante ${nDocLegible || nDoc}? Volverá a estado PENDIENTE.`,
     { btnOk: 'Desvincular', btnColor: '#C53030' }
   );
   if (!ok) return;
@@ -801,8 +801,9 @@ async function _bmDividirYVincular(movId, docTipo, docId, nDoc, proveedor, ruc, 
   const montoResto = montoOriginal - montoFactura;
 
   if (typeof _conValidarAntesDeVincular === 'function' && typeof empresa_activa !== 'undefined' && empresa_activa?.id) {
-    const nroFacturaKeyDiv = docTipo === 'RH' ? (docId || nDoc) : (nDoc || null);
-    const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKeyDiv, totalFactura, movId, montoFactura, { ruc, nombre: proveedor });
+    const nroFacturaKeyDiv = docTipo === 'RH' ? (nDoc || docId || null) : (nDoc || null); // N° legible, no UUID
+    const claveAntiguaDiv  = docTipo === 'RH' && docId && nroFacturaKeyDiv !== docId ? [docId] : [];
+    const val = await _conValidarAntesDeVincular(empresa_activa.id, docTipo, nroFacturaKeyDiv, totalFactura, movId, montoFactura, { ruc, nombre: proveedor, alt: claveAntiguaDiv });
     if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
   }
 

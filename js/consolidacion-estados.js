@@ -71,11 +71,14 @@ async function _conValidarAntesDeVincular(empresaId, tipoDoc, nroFacturaDoc, tot
   const total = Number(totalComprobante) || 0;
   if (!nroFacturaDoc || !total) return { ok: true };
 
+  // `emisor.alt` (opcional): otras claves con las que el mismo comprobante pudo quedar guardado
+  // — p. ej. el código único (UUID) de un RH en datos antiguos, además de su N° legible.
+  const claves = [nroFacturaDoc, ...((emisor && emisor.alt) || [])].filter(Boolean);
   let consulta = _supabase
     .from('tesoreria_mbd')
-    .select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni')
+    .select('id,nro_operacion_bancaria,fecha_deposito,monto,proveedor_empresa_personal,entrega_doc,tipo_doc,ruc_dni,nro_factura_doc')
     .eq('empresa_id', empresaId)
-    .eq('nro_factura_doc', nroFacturaDoc)
+    .in('nro_factura_doc', claves)
     .neq('id', movIdExcluir || '');
   consulta = emisor ? consulta.or(_conFiltroTipoDoc(tipoDoc)) : consulta.eq('tipo_doc', tipoDoc);
   const { data: existentes } = await consulta;
@@ -449,8 +452,22 @@ function _conFiltroTipoDoc(categoria) {
 // (vacía/dañada) siempre que estén EMITIDO/OBSERVADO y el emisor coincida
 // (RUC, o nombre estricto). Sin emisor conocido, esos NO se cuentan: es mejor
 // no mezclar comprobantes de emisores distintos que compartan serie+número.
+//
+//    RH (Wendy, 2026-09-19): el N° legible de un RH se REPITE entre emisores (E001-6 puede
+//    ser de 7 personas distintas: cada una numera desde 1), así que un vínculo guardado con
+//    el N° legible solo pertenece a ese RH si el emisor coincide (DNI exacto o, si falta,
+//    nombre). Un vínculo guardado con el código único (UUID, datos antiguos) es inequívoco.
+function _conEsUUID(v) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test((v || '').toString().trim());
+}
 function _conFiltrarVinculosDelComprobante(movs, categoria, ruc, nombre) {
   return (movs || []).filter(m => {
+    if (categoria === 'RH') {
+      if (_conEsUUID(m.nro_factura_doc)) return true;                       // clave única (datos antiguos)
+      const cubre = m.entrega_doc === 'EMITIDO' || m.entrega_doc === 'OBSERVADO';
+      if (m.tipo_doc !== 'RH' && !cubre) return false;                      // ni es de categoría RH ni cubre
+      return _conFiltrarPorEmisor([m], ruc, nombre).length > 0;             // N° legible: exige el emisor
+    }
     if (m.tipo_doc === categoria) return true;
     if (m.entrega_doc !== 'EMITIDO' && m.entrega_doc !== 'OBSERVADO') return false;
     return _conFiltrarPorEmisor([m], ruc, nombre).length > 0;
@@ -564,8 +581,10 @@ async function _conDocsYaCubiertos(empresaId, documentos) {
       movs.push(...(data || []));
     }
     rhs.forEach(d => {
+      // Código único (datos antiguos) = inequívoco; N° legible = solo si el emisor coincide
+      // (DNI exacto, o nombre si falta) — el mismo N° de RH lo usan varios emisores.
       const propios = movs.filter(m => m.nro_factura_doc === d.id
-        || (d.numero_rh && m.nro_factura_doc === d.numero_rh && _conNombreCoincideEstricto(m.proveedor_empresa_personal, d._proveedor)));
+        || (d.numero_rh && m.nro_factura_doc === d.numero_rh && _conFiltrarPorEmisor([m], d._ruc, d._proveedor).length > 0));
       const e5 = _conEstado5(_conCobertura(propios, d._total), false);
       if (e5 === 'APLICADO' || e5 === 'EXCESIVO') cubiertos.add(d.id);
     });
@@ -665,6 +684,9 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
   const items = [];
   for (const m of lista) {
     if (valido(m)) continue;
+    // Los N° guardados como código único (UUID) los atiende el bloque "UUID → N° legible"
+    // del reporte (_conClasificarUUIDsRH), no este.
+    if (_conEsUUID(m.nro_factura_doc)) continue;
     const hits    = hitsPorMov.get(m.id) || [];
     const conEmis = hits.filter(h => h.emisorOk);
 
@@ -699,8 +721,9 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
 function _conAsignarCandidato(item, c) {
   item.comprobante = c;
   item.categoria   = c.cat;
-  item.nroCanonico = c.cat === 'RH' ? item.mov.nro_factura_doc : c.nro;
-  item.cambiaNro   = c.cat !== 'RH' && item.mov.nro_factura_doc !== c.nro;
+  // Siempre el N° LEGIBLE del comprobante (también RH): el emisor lo distingue, ya no un código.
+  item.nroCanonico = c.nro;
+  item.cambiaNro   = item.mov.nro_factura_doc !== c.nro;
 }
 
 // ── Tarjeta de un comprobante candidato (compartida por el aviso interactivo
@@ -778,7 +801,7 @@ function _conElegirComprobante(candidatos, ctx = {}) {
 async function _conRevisarVinculosSinCategoria(empId, hoy) {
   const [movs, compras, ventas, rhs] = await Promise.all([
     _conTraerTodo(() => _supabase.from('tesoreria_mbd')
-      .select('id,nro_factura_doc,tipo_doc,tipo_comprobante,entrega_doc,monto,ruc_dni,proveedor_empresa_personal,nro_operacion_bancaria,fecha_deposito')
+      .select('id,nro_factura_doc,tipo_doc,tipo_comprobante,entrega_doc,monto,ruc_dni,proveedor_empresa_personal,nro_operacion_bancaria,fecha_deposito,descripcion,moneda,cotizacion,oc,proyecto,concepto,empresa,autorizacion')
       .eq('empresa_id', empId).not('nro_factura_doc', 'is', null).order('id')),
     _conTraerTodo(() => _supabase.from('contabilidad_compras')
       .select('serie_cdp,nro_cp_inicial,proveedor,nro_doc_identidad,total_cp').eq('empresa_id', empId).order('id')),
@@ -799,9 +822,17 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
       && m.entrega_doc !== 'CANCELADO' && (m.nro_factura_doc || '').toString().trim())
     .map(m => ({ ...m, _codigo: _conCodigoTipoDoc(m.tipo_doc, m.nro_factura_doc) }));
 
-  if (!items.length && !faltantesTipo.length) return { aplicados: 0, sinResolver: 0, tipoCompletados: 0 };
+  // RH guardados con el código único (UUID) → se pueden pasar a su N° legible (Wendy, 2026-09-19:
+  // "no quiero que exista el código UUID, debe ser legible"). Y estados que no calzan con la
+  // regla de los 14 campos (opcional, sin marcar por defecto).
+  const uuidItems = _conClasificarUUIDsRH(movs, rhs);
+  const estados14 = _conClasificarEstados14(movs);
 
-  const decision = await _conModalVinculosSinCategoria(items, faltantesTipo);
+  if (!items.length && !faltantesTipo.length && !uuidItems.length && !estados14.length) {
+    return { aplicados: 0, sinResolver: 0, tipoCompletados: 0, uuidConvertidos: 0, uuidSinConvertir: 0, estadosReevaluados: 0 };
+  }
+
+  const decision = await _conModalVinculosSinCategoria(items, faltantesTipo, { uuids: uuidItems, estados14 });
   if (!decision) return { cancelado: true };
 
   let aplicados = 0;
@@ -833,7 +864,102 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
       }
     }
   }
-  return { aplicados, sinResolver: items.length - aplicados, tipoCompletados };
+
+  // UUID → N° legible (solo los que se pueden distinguir sin ambigüedad; el resto queda igual).
+  let uuidConvertidos = 0;
+  const convertidosIds = new Set();
+  if (decision.convertirUUIDs) {
+    const aConvertir = uuidItems.filter(u => u.ok);
+    for (let i = 0; i < aConvertir.length; i += 10) {
+      await Promise.all(aConvertir.slice(i, i + 10).map(async u => {
+        const patch = { nro_factura_doc: u.nuevoNro, tipo_doc: 'RH', fecha_actualizacion: hoy };
+        if (!(u.mov.tipo_comprobante || '').toString().trim()) patch.tipo_comprobante = 'RH';
+        if (u.cambiaRuc && u.nuevoRuc) patch.ruc_dni = u.nuevoRuc;
+        const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', u.mov.id);
+        if (!error) { uuidConvertidos++; convertidosIds.add(u.mov.id); }
+      }));
+    }
+  }
+
+  // Re-evaluar EMITIDO/OBSERVADO con la regla de 14 campos (solo si Wendy lo marcó).
+  let estadosReevaluados = 0;
+  if (decision.reevaluar14) {
+    for (const estado of ['EMITIDO', 'OBSERVADO']) {
+      const ids = estados14.filter(x => x.nuevo === estado && !convertidosIds.has(x.mov.id)).map(x => x.mov.id);
+      for (let i = 0; i < ids.length; i += 80) {
+        const { error } = await _supabase.from('tesoreria_mbd')
+          .update({ entrega_doc: estado, fecha_actualizacion: hoy })
+          .eq('empresa_id', empId).in('id', ids.slice(i, i + 80));
+        if (!error) estadosReevaluados += Math.min(80, ids.length - i);
+      }
+    }
+  }
+  return {
+    aplicados, sinResolver: items.length - aplicados, tipoCompletados, uuidConvertidos,
+    uuidSinConvertir: uuidItems.filter(u => !u.ok).length + (decision.convertirUUIDs ? 0 : uuidItems.filter(u => u.ok).length),
+    estadosReevaluados,
+  };
+}
+
+// ── Paso B: los RH vinculados con el código único (UUID) se pasan a su N° legible.
+//    PURA (no toca la base de datos). Un N° de RH se repite entre emisores (E001-6 puede ser
+//    de 7 personas), así que el N° legible solo es seguro si el RH se distingue por su emisor:
+//      - con DNI: no debe existir OTRO RH con el mismo N° y el mismo DNI (o, si el otro no
+//        tiene DNI, el mismo nombre) → si existe, es un posible RH duplicado y NO se convierte;
+//      - sin DNI: solo si nadie más usa ese N°.
+//    Al convertir, el DNI del movimiento se iguala al del emisor del RH (misma regla de todas
+//    las vinculaciones: el dato del comprobante manda) para que el vínculo se reconozca por
+//    N° + emisor. Lo que no se puede convertir queda intacto y se explica por qué.
+function _conClasificarUUIDsRH(movs, rhs) {
+  const dniDe = r => (r.nro_doc_emisor || r.prestadores_servicios?.dni || '').toString().replace(/\D/g, '');
+  const nomDe = r => _tercNombreNorm(r.nombre_emisor || r.prestadores_servicios?.nombre || '');
+  const porId = new Map((rhs || []).map(r => [String(r.id).toLowerCase(), r]));
+  const porNro = new Map();
+  (rhs || []).forEach(r => {
+    const k = _conNormNroDoc(r.numero_rh);
+    if (!k) return;
+    if (!porNro.has(k)) porNro.set(k, []);
+    porNro.get(k).push(r);
+  });
+
+  const out = [];
+  for (const m of movs || []) {
+    if (!_conEsUUID(m.nro_factura_doc) || m.entrega_doc === 'CANCELADO') continue;
+    const rh = porId.get(String(m.nro_factura_doc).trim().toLowerCase());
+    const item = { mov: m, rh: rh || null, ok: false, motivo: '', nuevoNro: null, nuevoRuc: null, cambiaRuc: false };
+    if (!rh) { item.motivo = 'El código no corresponde a ningún RH de esta empresa'; out.push(item); continue; }
+    const nro = (rh.numero_rh || '').toString().trim();
+    if (!nro) { item.motivo = 'Ese RH no tiene N° de RH'; out.push(item); continue; }
+
+    const otros = (porNro.get(_conNormNroDoc(nro)) || []).filter(o => o !== rh);
+    const dni = dniDe(rh), nombre = nomDe(rh);
+    if (dni) {
+      const igual = otros.some(o => dniDe(o) === dni || (!dniDe(o) && nombre && nomDe(o) === nombre));
+      if (igual) { item.motivo = 'Hay otro RH con el mismo N° y el mismo emisor (posible RH duplicado)'; out.push(item); continue; }
+    } else if (otros.length) {
+      item.motivo = 'Ese RH no tiene DNI y otros emisores usan el mismo N°: no se puede distinguir'; out.push(item); continue;
+    }
+    item.ok = true;
+    item.nuevoNro = nro;
+    if (dni) {
+      item.nuevoRuc  = (rh.nro_doc_emisor || rh.prestadores_servicios?.dni || '').toString().trim();
+      item.cambiaRuc = (m.ruc_dni || '').toString().replace(/\D/g, '') !== dni;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+// ── Movimientos ya vinculados (EMITIDO/OBSERVADO) cuyo estado no coincide con la regla de los
+//    14 campos (_conEvalCompletitud14). PURA. "Reparar estados" re-evalúa con la regla histórica
+//    de 5 campos; esta es la regla vigente de todo lo nuevo. Se ofrece aparte y sin marcar.
+function _conClasificarEstados14(movs) {
+  return (movs || [])
+    .filter(m => ['COMPRA', 'VENTA', 'RH'].includes(m.tipo_doc)
+      && (m.nro_factura_doc || '').toString().trim()
+      && (m.entrega_doc === 'EMITIDO' || m.entrega_doc === 'OBSERVADO'))
+    .map(m => ({ mov: m, actual: m.entrega_doc, nuevo: _conEvalCompletitud14(m) }))
+    .filter(x => x.nuevo !== x.actual && (x.nuevo === 'EMITIDO' || x.nuevo === 'OBSERVADO'));
 }
 
 // Códigos de tipo de comprobante = los del desplegable "Tipo DOC" de Movimientos.
@@ -848,10 +974,12 @@ function _conCodigoTipoDoc(categoria, nroDoc) {
 
 // Reporte previo (regla de Wendy: reporte + aprobación antes de tocar datos
 // existentes). Resuelve con la lista de items aprobados, o null si cancela.
-function _conModalVinculosSinCategoria(items, faltantesTipo = []) {
+function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
   return new Promise(resolve => {
     const mc = document.getElementById('modal-container');
     if (!mc) { resolve(null); return; }
+    const uuids = extras.uuids || [];
+    const estados14 = extras.estados14 || [];
 
     const NOMBRE_CAT = { COMPRA: 'Compras', VENTA: 'Ventas', RH: 'RH Recibidos' };
     const MOTIVO = {
@@ -919,14 +1047,55 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = []) {
         </div>
       </label>` : '';
 
+    // N° de RH guardados como código único (UUID): se pasan a su N° legible. Nunca se muestra el
+    // código: cada línea se describe con N° de operación, fecha y el RH (N° + emisor).
+    const uuidOk = uuids.filter(u => u.ok), uuidNo = uuids.filter(u => !u.ok);
+    const nombreRH = u => u.rh?.nombre_emisor || u.rh?.prestadores_servicios?.nombre || '—';
+    const opFecha  = u => `Op. ${escapar(u.mov.nro_operacion_bancaria || '—')} · ${formatearFecha(u.mov.fecha_deposito)}`;
+    const bloqueUUID = uuids.length ? `
+      <div style="border:1px solid var(--color-secundario);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="rev-uuid" ${uuidOk.length ? 'checked' : 'disabled'} style="margin-top:3px">
+          <div style="font-size:12px">
+            <strong>RH guardados con un código interno (UUID): ${uuids.length} movimiento(s)</strong> —
+            <strong>${uuidOk.length}</strong> se pueden pasar a su N° legible, <strong>${uuidNo.length}</strong> no.
+            <div style="color:var(--color-texto-suave);margin-top:3px;line-height:1.5">
+              Al convertir, el N° del movimiento pasa del código al N° legible del RH (ej. "E001-6") y el DNI del movimiento se iguala al del
+              emisor del RH (${uuidOk.filter(u => u.cambiaRuc).length} caso(s) cambian de DNI). Así el vínculo se reconoce por N° + emisor y ya no por un código.
+              Los que no se pueden distinguir con seguridad quedan exactamente como están.
+            </div>
+          </div>
+        </label>
+        ${uuidOk.length ? `<details style="margin:8px 0 0 26px;font-size:11px"><summary style="cursor:pointer">Ver ejemplos de lo que se convertiría (primeros 8)</summary>
+          ${uuidOk.slice(0, 8).map(u => `<div style="padding:2px 0">${opFecha(u)} → <strong>RH ${escapar(u.nuevoNro)}</strong> · ${escapar(nombreRH(u))}${u.nuevoRuc ? ` (DNI ${escapar(u.nuevoRuc)})` : ''}</div>`).join('')}</details>` : ''}
+        ${uuidNo.length ? `<details style="margin:6px 0 0 26px;font-size:11px"><summary style="cursor:pointer;color:#C05621">No se convierten (${uuidNo.length}) — ver motivos</summary>
+          ${uuidNo.slice(0, 12).map(u => `<div style="padding:2px 0">${opFecha(u)} · ${escapar(u.mov.proveedor_empresa_personal || '—')} — <em>${escapar(u.motivo)}</em></div>`).join('')}
+          ${uuidNo.length > 12 ? `<div style="padding:2px 0">… y ${uuidNo.length - 12} más</div>` : ''}</details>` : ''}
+      </div>` : '';
+
+    // Estados que no calzan con la regla vigente de 14 campos — opcional, SIN marcar.
+    const a_obs = estados14.filter(x => x.nuevo === 'OBSERVADO').length;
+    const a_emi = estados14.filter(x => x.nuevo === 'EMITIDO').length;
+    const bloqueEstados = estados14.length ? `
+      <label style="display:flex;gap:10px;align-items:flex-start;border:1px dashed var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:14px;cursor:pointer">
+        <input type="checkbox" id="rev-est14" style="margin-top:3px">
+        <div style="font-size:12px">
+          <strong>Re-evaluar el estado de ${estados14.length} movimiento(s) ya vinculados con la regla de los 14 campos</strong> (opcional):
+          ${a_obs} pasarían de EMITIDO a OBSERVADO (les falta algún dato) y ${a_emi} de OBSERVADO a EMITIDO (ya tienen todo).
+          <div style="color:var(--color-texto-suave);margin-top:2px">Contabilidad no cambia (OBSERVADO y EMITIDO cubren igual el comprobante); cambian los estados de Movimientos y de las descargas.</div>
+        </div>
+      </label>` : '';
+
     mc.innerHTML = `
       <div class="modal-overlay" style="display:flex">
         <div class="modal" style="max-width:860px;width:95%;max-height:90vh;display:flex;flex-direction:column">
           <div class="modal-header">
-            <h3>🔧 Revisión de vínculos con comprobantes — ${items.length} sin categoría${faltantesTipo.length ? ` · ${faltantesTipo.length} sin Tipo DOC` : ''}</h3>
+            <h3>🔧 Revisión de vínculos con comprobantes — ${items.length} sin categoría${faltantesTipo.length ? ` · ${faltantesTipo.length} sin Tipo DOC` : ''}${uuids.length ? ` · ${uuids.length} RH con código` : ''}</h3>
             <button class="modal-cerrar" id="rev-x">✕</button>
           </div>
           <div class="modal-body" style="flex:1;overflow-y:auto">
+            ${bloqueUUID}
+            ${bloqueEstados}
             ${bloqueTipo}
             ${items.length ? `
             <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:6px">
@@ -949,10 +1118,10 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = []) {
     const btnOk = mc.querySelector('#rev-ok');
     const marcados = () => mc.querySelectorAll('.rev-chk:checked, input[name^="rev-cand-"]:checked');
     const actualizarBoton = () => {
-      const n = marcados().length + (mc.querySelector('#rev-tipo:checked') ? 1 : 0);
+      const n = marcados().length + mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked').length;
       btnOk.textContent = n ? 'Aplicar lo seleccionado y reparar' : 'Continuar sin cambiar nada';
     };
-    mc.querySelectorAll('.rev-chk, input[name^="rev-cand-"], #rev-tipo').forEach(ch => ch.addEventListener('change', actualizarBoton));
+    mc.querySelectorAll('.rev-chk, input[name^="rev-cand-"], #rev-tipo, #rev-uuid, #rev-est14').forEach(ch => ch.addEventListener('change', actualizarBoton));
     actualizarBoton();
     btnOk.onclick = () => {
       const aprobados = [];
@@ -963,7 +1132,12 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = []) {
         _conAsignarCandidato(it, it.candidatos[Number(r.value)]);
         aprobados.push(it);
       });
-      cerrar({ items: aprobados, completarTipo: !!mc.querySelector('#rev-tipo:checked') });
+      cerrar({
+        items: aprobados,
+        completarTipo:   !!mc.querySelector('#rev-tipo:checked'),
+        convertirUUIDs:  !!mc.querySelector('#rev-uuid:checked'),
+        reevaluar14:     !!mc.querySelector('#rev-est14:checked'),
+      });
     };
     mc.querySelector('#rev-cancel').onclick = () => cerrar(null);
     mc.querySelector('#rev-x').onclick = () => cerrar(null);
@@ -1021,6 +1195,7 @@ async function consolidarEstadosRetroactivo() {
     let tipoDocSanados = 0;
     let sinResolver = 0;
     let tipoCompletados = 0;
+    let uuidConvertidos = 0, uuidSinConvertir = 0, estadosReevaluados = 0;
     let ambiguosSinSync = 0;
 
     // ── Paso 0: Sanar tipo_doc dañado (bug 2026-09-18 corregido en
@@ -1046,6 +1221,9 @@ async function consolidarEstadosRetroactivo() {
     tipoDocSanados = rev.aplicados;
     sinResolver    = rev.sinResolver;
     tipoCompletados = rev.tipoCompletados || 0;
+    uuidConvertidos = rev.uuidConvertidos || 0;
+    uuidSinConvertir = rev.uuidSinConvertir || 0;
+    estadosReevaluados = rev.estadosReevaluados || 0;
 
     // ── Paso 1: Traer movimientos con comprobante vinculado ──────
     const { data: movsCrudos, error: errMovs } = await _supabase
@@ -1225,7 +1403,10 @@ async function consolidarEstadosRetroactivo() {
           actualizados++;
         }
         // Paso 2 – asegurar registro en conciliaciones para que _estadoCalculado lo detecte
-        if (!docIdsRHConc.has(mov.nro_factura_doc)) {
+        // `conciliaciones.doc_id` es una referencia interna al id del RH: solo tiene sentido con el
+        // código único. Con N° legible (ya no se crean códigos nuevos) el estado del RH sale de
+        // tesoreria_mbd (N° + emisor) y NO se escribe un N° legible en una columna de ids.
+        if (_conEsUUID(mov.nro_factura_doc) && !docIdsRHConc.has(mov.nro_factura_doc)) {
           newConcs.push({
             empresa_operadora_id: empId,
             movimiento_id:        null,
@@ -1268,6 +1449,9 @@ async function consolidarEstadosRetroactivo() {
     const parts = [`${movs.length} mov. revisados`];
     if (tipoDocSanados) parts.push(`${tipoDocSanados} movimiento(s) sin categoría de comprobante corregido(s)`);
     if (tipoCompletados) parts.push(`${tipoCompletados} "Tipo DOC" completado(s) (FA/BO/RH)`);
+    if (uuidConvertidos) parts.push(`${uuidConvertidos} RH pasaron de código a N° legible`);
+    if (uuidSinConvertir) parts.push(`⚠️ ${uuidSinConvertir} RH con código quedaron igual (no se pueden distinguir con seguridad — revísalos a mano)`);
+    if (estadosReevaluados) parts.push(`${estadosReevaluados} estado(s) re-evaluado(s) con la regla de 14 campos`);
     if (sinResolver)    parts.push(`⚠️ ${sinResolver} con N° de comprobante sin resolver — revísalos a mano en Movimientos`);
     if (ambiguosSinSync) parts.push(`⚠️ ${ambiguosSinSync} con N° compartido por varios emisores: no se tocó su proveedor/RUC — vincúlalos eligiendo el comprobante`);
     if (actualizados)   parts.push(`${actualizados} estado(s) corregido(s)`);
@@ -1275,8 +1459,8 @@ async function consolidarEstadosRetroactivo() {
     if (concCreadas)    parts.push(`${concCreadas} conciliación(es) RH creada(s)`);
     if (cancelados)     parts.push(`${cancelados} CANCELADO(s) respetado(s) sin tocar`);
     if (discrepancias)  parts.push(`⚠️ ${discrepancias} con monto que no coincide — revísalas en Conciliación → Verificar montos`);
-    if (!tipoDocSanados && !tipoCompletados && !sinResolver && !ambiguosSinSync && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
-    const hayAviso = discrepancias || sinResolver || ambiguosSinSync;
+    if (!tipoDocSanados && !tipoCompletados && !uuidConvertidos && !uuidSinConvertir && !estadosReevaluados && !sinResolver && !ambiguosSinSync && !actualizados && !proveedorSincronizados && !concCreadas && !discrepancias) parts.push('todo ya consistente');
+    const hayAviso = discrepancias || sinResolver || ambiguosSinSync || uuidSinConvertir;
     mostrarToast((hayAviso ? '⚠️ ' : '✅ ') + parts.join(' · '), hayAviso ? 'atencion' : 'exito');
 
     // ── Refrescar módulos abiertos ───────────────────────────────

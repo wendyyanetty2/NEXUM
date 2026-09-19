@@ -187,6 +187,34 @@ async function _rhCalcularMatchesSinGuardar(empresaId, mes, anio) {
   return { lista: resultado, total: rhList.length };
 }
 
+// ── ¿Se puede vincular este RH a este movimiento? (Wendy, 2026-09-19)
+//    Misma validación central que todos los demás caminos de vinculación
+//    (_conValidarAntesDeVincular): lo vinculado a un comprobante no puede pasarse de su total
+//    ni repetirse — bloquea o pregunta según el margen. Se llama ANTES de crear el vínculo
+//    antiguo (rh_movimiento_links), para no dejar un vínculo a medias si se bloquea.
+//    El RH se identifica por N° + emisor (DNI exacto o nombre), y también por su código
+//    antiguo (UUID) para ver vínculos hechos antes. Si el movimiento no está en
+//    tesoreria_mbd (solo en la tabla vieja), no hay nada que validar.
+async function _rhValidarVinculo(rhId, movimientoId) {
+  if (typeof _conValidarAntesDeVincular !== 'function' || typeof empresa_activa === 'undefined' || !empresa_activa?.id) return { ok: true };
+  const [{ data: rh }, { data: movOld }] = await Promise.all([
+    _supabase.from('rh_registros').select('numero_rh, nombre_emisor, nro_doc_emisor, monto_neto, prestadores_servicios(nombre, dni)').eq('id', rhId).single(),
+    _supabase.from('movimientos').select('numero_operacion').eq('id', movimientoId).single(),
+  ]);
+  if (!rh || !movOld?.numero_operacion) return { ok: true };
+  const nroOp    = String(movOld.numero_operacion);
+  const nroOpSin = nroOp.replace(/^0+/, '');
+  const { data: mbdRows } = await _supabase.from('tesoreria_mbd').select('id, monto')
+    .eq('empresa_id', empresa_activa.id)
+    .or(`nro_operacion_bancaria.eq.${nroOp},nro_operacion_bancaria.eq.${nroOpSin}`).limit(1);
+  const mbd = mbdRows?.[0];
+  if (!mbd) return { ok: true };
+  return _conValidarAntesDeVincular(
+    empresa_activa.id, 'RH', rh.numero_rh || rhId, Number(rh.monto_neto) || 0, mbd.id, mbd.monto,
+    { ruc: rh.nro_doc_emisor || rh.prestadores_servicios?.dni || '', nombre: rh.nombre_emisor || rh.prestadores_servicios?.nombre || '', alt: [rhId] }
+  );
+}
+
 // ── Confirma un link posible ──────────────────────────────────────
 async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
   const { error } = await _supabase
@@ -198,51 +226,63 @@ async function confirmarLinkRH(rhId, movimientoId, usuarioId) {
 
   // Buscar el movimiento en `movimientos` para obtener su N° operación
   const [{ data: rh }, { data: movOld }] = await Promise.all([
-    _supabase.from('rh_registros').select('numero_rh, nombre_emisor, nro_doc_emisor').eq('id', rhId).single(),
+    _supabase.from('rh_registros').select('numero_rh, nombre_emisor, nro_doc_emisor, prestadores_servicios(nombre, dni)').eq('id', rhId).single(),
     _supabase.from('movimientos').select('numero_operacion').eq('id', movimientoId).single(),
   ]);
+  const rhNombre = rh?.nombre_emisor  || rh?.prestadores_servicios?.nombre || '';
+  const rhDni    = rh?.nro_doc_emisor || rh?.prestadores_servicios?.dni    || '';
 
   // Buscar en tesoreria_mbd el registro por N° operación (con o sin ceros iniciales)
   if (movOld?.numero_operacion) {
     const nroOp     = String(movOld.numero_operacion);
     const nroOpSin  = nroOp.replace(/^0+/, '');
-    const { data: mbdRows } = await _supabase
+    let consulta = _supabase
       .from('tesoreria_mbd')
-      .select('id, proveedor_empresa_personal, ruc_dni, nro_factura_doc, tipo_doc, cotizacion, oc, proyecto, concepto, empresa')
-      .or(`nro_operacion_bancaria.eq.${nroOp},nro_operacion_bancaria.eq.${nroOpSin}`)
-      .limit(1);
+      .select('id, nro_operacion_bancaria, fecha_deposito, descripcion, moneda, monto, proveedor_empresa_personal, ruc_dni, nro_factura_doc, tipo_doc, tipo_comprobante, cotizacion, oc, proyecto, concepto, empresa, autorizacion, entrega_doc')
+      .or(`nro_operacion_bancaria.eq.${nroOp},nro_operacion_bancaria.eq.${nroOpSin}`);
+    // Solo movimientos de la empresa activa (el N° de operación puede repetirse entre empresas).
+    if (typeof empresa_activa !== 'undefined' && empresa_activa?.id) consulta = consulta.eq('empresa_id', empresa_activa.id);
+    const { data: mbdRows } = await consulta.limit(1);
 
     if (mbdRows?.length) {
       const mbd   = mbdRows[0];
       const patch = { estado_conciliacion: 'conciliado', fecha_actualizacion: new Date().toISOString().slice(0, 10) };
+      const esUUID = v => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test((v || '').toString().trim());
 
-      if (rh?.numero_rh   && !mbd.nro_factura_doc)             patch.nro_factura_doc            = rh.numero_rh;
-      if (!mbd.tipo_doc)                                        patch.tipo_doc                   = 'RH';
+      // El movimiento guarda el N° LEGIBLE del RH (nunca un código UUID). El mismo N° lo usan varios
+      // emisores: el RH se distingue por N° + emisor (DNI/nombre, que se copian más abajo).
+      // Se completa si estaba vacío o si tenía un código antiguo; un comprobante real distinto no se pisa.
+      if (rh?.numero_rh && (!mbd.nro_factura_doc || esUUID(mbd.nro_factura_doc))) patch.nro_factura_doc = rh.numero_rh;
+      // Categoría interna: solo se completa si faltaba o estaba DAÑADA (ej. 'FA', bug del modal).
+      if (!['COMPRA', 'VENTA', 'RH', 'PM'].includes(mbd.tipo_doc)) patch.tipo_doc = 'RH';
       patch.tipo_comprobante = 'RH';
       // Proveedor/Empresa: si ya tenía un nombre distinto al del RH (pago a
       // tercero), se conserva y el del RH se guarda aparte en titular_comprobante
-      // — nunca se sobrescribe en silencio (Wendy, 2026-09-18).
+      // — nunca se sobrescribe en silencio (Wendy, 2026-09-18). El DNI del RH pasa al
+      // movimiento: con él se reconoce el vínculo (N° + emisor).
       if (typeof _resolverProveedorTitular === 'function') {
-        const rt = _resolverProveedorTitular(mbd.proveedor_empresa_personal, rh?.nombre_emisor, mbd.ruc_dni, rh?.nro_doc_emisor);
+        const rt = _resolverProveedorTitular(mbd.proveedor_empresa_personal, rhNombre, mbd.ruc_dni, rhDni);
         patch.proveedor_empresa_personal = rt.proveedor;
         patch.titular_comprobante = rt.titular;
         patch.ruc_dni = rt.ruc;
       } else {
-        if (rh?.nombre_emisor)  patch.proveedor_empresa_personal = rh.nombre_emisor;
-        if (rh?.nro_doc_emisor) patch.ruc_dni = rh.nro_doc_emisor;
+        if (rhNombre) patch.proveedor_empresa_personal = rhNombre;
+        if (rhDni)    patch.ruc_dni = rhDni;
       }
 
-      // EMITIDO solo si TODOS los campos clave están completos
-      const proveedor = (patch.proveedor_empresa_personal || mbd.proveedor_empresa_personal || '').trim();
-      const camposLlenos = !!(
-        proveedor &&
-        mbd.cotizacion?.trim() &&
-        mbd.oc?.trim() &&
-        mbd.proyecto?.trim() &&
-        mbd.concepto?.trim() &&
-        mbd.empresa?.trim()
-      );
-      patch.entrega_doc = camposLlenos ? 'EMITIDO' : 'OBSERVADO';
+      // Estado con la MISMA regla de los 14 campos que usan todos los demás caminos de vinculación
+      // (antes aquí EMITIDO exigía Cotización Y OC; en el resto basta una de las dos).
+      const completo = { ...mbd, ...patch,
+        nro_factura_doc: patch.nro_factura_doc || mbd.nro_factura_doc,
+        tipo_doc: patch.tipo_doc || mbd.tipo_doc };
+      if (typeof _conEvalCompletitud14 === 'function') {
+        patch.entrega_doc = _conEvalCompletitud14(completo);
+      } else {
+        const proveedor = (completo.proveedor_empresa_personal || '').trim();
+        const okc = v => !!(v && String(v).trim());
+        patch.entrega_doc = (proveedor && (okc(mbd.cotizacion) || okc(mbd.oc)) && okc(mbd.proyecto) && okc(mbd.concepto) && okc(mbd.empresa))
+          ? 'EMITIDO' : 'OBSERVADO';
+      }
 
       await _supabase.from('tesoreria_mbd').update(patch).eq('id', mbd.id);
     }

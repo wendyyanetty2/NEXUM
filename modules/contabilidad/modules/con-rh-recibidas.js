@@ -122,7 +122,7 @@ async function _estadoCalculado(rh) {
       .eq('nro_factura_doc', rh.id),
     rh.numero_rh
       ? _supabase.from('tesoreria_mbd')
-          .select('id,proveedor_empresa_personal')
+          .select('id,proveedor_empresa_personal,ruc_dni')
           .eq('empresa_id', empresa_activa.id)
           .or(_conFiltroTipoDoc('RH')) // 2026-09-19: también movimientos sin categoría válida (vacía/dañada)
           .eq('nro_factura_doc', rh.numero_rh)
@@ -133,7 +133,12 @@ async function _estadoCalculado(rh) {
   (uuidLinks   || []).forEach(l => todosIds.add(l.id));
   (numeroLinks || []).forEach(l => {
     const nombreEmisor = rh.nombre_emisor || rh.prestadores_servicios?.nombre || '';
-    if (typeof _conNombreCoincideEstricto === 'function' && _conNombreCoincideEstricto(l.proveedor_empresa_personal, nombreEmisor)) {
+    const dniEmisor    = rh.nro_doc_emisor || rh.prestadores_servicios?.dni || '';
+    // El N° legible lo usan varios emisores (E001-6 puede ser de 7 personas): el vínculo es de ESTE
+    // RH si el emisor coincide — DNI exacto y, si falta el DNI, nombre estricto (2026-09-19).
+    if (typeof _conFiltrarPorEmisor === 'function'
+        ? _conFiltrarPorEmisor([l], dniEmisor, nombreEmisor).length > 0
+        : (typeof _conNombreCoincideEstricto === 'function' && _conNombreCoincideEstricto(l.proveedor_empresa_personal, nombreEmisor))) {
       todosIds.add(l.id);
     }
   });
@@ -626,8 +631,10 @@ async function _rhAplicarSeleccionados(listaPlana) {
 
   const checks = document.querySelectorAll('[id^=rhr-chk-]');
   let ok = 0, errores = 0;
+  const bloqueados = []; // vínculos que no se aplicaron por pasarse del total del RH (mismo aviso que el resto del sistema)
   const hoy = new Date().toISOString();
   const usuarioId = perfil_usuario?.id || null;
+  const _validar = async (rhId, movId) => (typeof _rhValidarVinculo === 'function' ? _rhValidarVinculo(rhId, movId) : { ok: true });
 
   for (const chk of checks) {
     if (!chk.checked) continue;
@@ -637,6 +644,8 @@ async function _rhAplicarSeleccionados(listaPlana) {
 
     if (item.tipo === 'auto' || item.tipo === 'posible') {
       if (!item.movId) continue;
+      const val = await _validar(item.rhId, item.movId);
+      if (!val.ok) { if (val.mensaje) bloqueados.push(val.mensaje); continue; }
       const autoConf = item.nivel <= 2;
       const { error } = await _supabase.from('rh_movimiento_links').upsert({
         empresa_id:      empresa_activa.id,
@@ -658,6 +667,8 @@ async function _rhAplicarSeleccionados(listaPlana) {
     } else if (item.tipo === 'combo') {
       let comboOk = true;
       for (const movId of item.comboMovIds) {
+        const valC = await _validar(item.rhId, movId);
+        if (!valC.ok) { if (valC.mensaje) bloqueados.push(valC.mensaje); comboOk = false; continue; }
         const { error } = await _supabase.from('rh_movimiento_links').upsert({
           empresa_id:      empresa_activa.id,
           rh_id:           item.rhId,
@@ -683,6 +694,10 @@ async function _rhAplicarSeleccionados(listaPlana) {
     ok > 0 ? 'exito' : 'error',
     5000
   );
+  if (bloqueados.length && typeof _conAlertaBloqueo === 'function') {
+    await _conAlertaBloqueo(`⛔ ${bloqueados.length} vínculo(s) NO se aplicaron:\n\n` + bloqueados.slice(0, 3).join('\n\n— — —\n\n')
+      + (bloqueados.length > 3 ? `\n\n… y ${bloqueados.length - 3} más.` : ''));
+  }
   cargarRHRecibidas();
   // confirmarLinkRH ya escribió en tesoreria_mbd (entrega_doc, nro_factura_doc,
   // estado_conciliacion) — sin esto, Movimientos/Compras/Ventas/Conciliación
@@ -820,6 +835,11 @@ async function rhConfirmarPosible(rhId) {
 }
 
 async function rhConfirmarLink(rhId, movId, recargar = false) {
+  // Misma validación que el resto del sistema: lo vinculado no puede pasarse del total del RH.
+  if (typeof _rhValidarVinculo === 'function') {
+    const val = await _rhValidarVinculo(rhId, movId);
+    if (!val.ok) { if (val.mensaje && typeof _conAlertaBloqueo === 'function') await _conAlertaBloqueo(val.mensaje); return; }
+  }
   const ok = await confirmarLinkRH(rhId, movId, perfil_usuario?.id);
   if (ok) {
     mostrarToast('Vinculación confirmada.', 'exito');

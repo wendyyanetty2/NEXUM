@@ -1458,10 +1458,10 @@ async function guardarMBD(id) {
     if (comprobante) {
       vinculo = comprobante;
       payload.tipo_doc = comprobante.tipoDoc;
-      // Igual que todos los caminos de vinculación del sistema: los RH se guardan con su
-      // UUID (el N° de RH puede repetirse entre emisores) y Compras/Ventas con el N° tal
-      // como está en el comprobante (Contabilidad los busca por igualdad exacta).
-      payload.nro_factura_doc = comprobante.tipoDoc === 'RH' ? comprobante.id : (comprobante.nro || payload.nro_factura_doc);
+      // Siempre el N° LEGIBLE del comprobante, tal como está en Contabilidad (que lo busca por igualdad
+      // exacta) — también en RH: nunca un código UUID (Wendy, 2026-09-19). El N° de un RH lo usan varios
+      // emisores, así que el RH se distingue por N° + emisor: el DNI/nombre del RH se copian al movimiento.
+      payload.nro_factura_doc = comprobante.nro || payload.nro_factura_doc;
       if (!payload.tipo_comprobante && typeof _mbdCodigoTipoComprobante === 'function') {
         payload.tipo_comprobante = _mbdCodigoTipoComprobante(comprobante.tipoDoc, payload.nro_factura_doc);
       }
@@ -1505,7 +1505,7 @@ async function guardarMBD(id) {
     if (!id || nroPrevio !== payload.nro_factura_doc) {
       const val = await _conValidarAntesDeVincular(
         empresa_activa.id, vinculo.tipoDoc, payload.nro_factura_doc, vinculo.monto, id || null, payload.monto,
-        { ruc: vinculo.ruc, nombre: vinculo.proveedor }
+        { ruc: vinculo.ruc, nombre: vinculo.proveedor, alt: vinculo.tipoDoc === 'RH' && vinculo.id ? [vinculo.id] : [] }
       );
       if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
     }
@@ -1787,7 +1787,7 @@ async function _confirmarDividirMBD() {
     const grupos = new Map();
     comprobantes.forEach((comp, i) => {
       if (!comp) return;
-      const nroKey = comp.tipoDoc === 'RH' ? comp.id : (comp.nro || _dividirFilas[i].nrodoc);
+      const nroKey = comp.nro || _dividirFilas[i].nrodoc; // N° legible (RH incluido)
       const k = `${comp.tipoDoc}|${comp.id}`;
       if (!grupos.has(k)) grupos.set(k, { comp, nroKey, monto: 0 });
       grupos.get(k).monto += Math.abs(parseFloat(_dividirFilas[i].monto) || 0);
@@ -1795,7 +1795,7 @@ async function _confirmarDividirMBD() {
     for (const g of grupos.values()) {
       const val = await _conValidarAntesDeVincular(
         empresa_activa.id, g.comp.tipoDoc, g.nroKey, g.comp.monto, r.id, g.monto,
-        { ruc: g.comp.ruc, nombre: g.comp.proveedor }
+        { ruc: g.comp.ruc, nombre: g.comp.proveedor, alt: g.comp.tipoDoc === 'RH' && g.comp.id ? [g.comp.id] : [] }
       );
       if (!val.ok) {
         await _conAlertaBloqueo(val.mensaje);
@@ -1808,9 +1808,9 @@ async function _confirmarDividirMBD() {
   // Construir las N filas hijas
   const nuevasFilas = _dividirFilas.map((f, i) => {
     const comp = comprobantes[i];
-    // N° a guardar: igual que al vincular en el resto del sistema — RH con su UUID (el N° de
-    // RH puede repetirse entre emisores), Compras/Ventas con el N° exacto del comprobante.
-    const nroGuardar = comp ? (comp.tipoDoc === 'RH' ? comp.id : (comp.nro || f.nrodoc)) : (f.nrodoc || null);
+    // N° a guardar: el N° LEGIBLE del comprobante (RH incluido; nunca un código UUID). El RH se
+    // distingue por N° + emisor: el DNI/nombre del RH se copian a la fila más abajo (regla de pago a terceros).
+    const nroGuardar = comp ? (comp.nro || f.nrodoc) : (f.nrodoc || null);
     // Proveedor/RUC/titular con la regla central de pago a terceros (igual que al vincular).
     const rt = comp && typeof _resolverProveedorTitular === 'function'
       ? _resolverProveedorTitular(f.proveedor || r.proveedor_empresa_personal, comp.proveedor, f.ruc, comp.ruc)

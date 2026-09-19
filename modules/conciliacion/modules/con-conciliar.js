@@ -790,7 +790,7 @@ async function _conVincularComprobante(doc, movId) {
     .eq('id', movId).single();
   if (!mov) { mostrarToast('No se pudo cargar el movimiento', 'error'); return; }
 
-  const val = await _conValidarAntesDeVincular(empresa_activa.id, doc.tipo, doc.nDoc, doc.total, movId, mov.monto, { ruc: doc.ruc, nombre: doc.proveedor });
+  const val = await _conValidarAntesDeVincular(empresa_activa.id, doc.tipo, doc.nDoc, doc.total, movId, mov.monto, { ruc: doc.ruc, nombre: doc.proveedor, alt: doc.tipo === 'RH' && doc.id ? [doc.id] : [] });
   if (!val.ok) { await _conAlertaBloqueo(val.mensaje); return; }
 
   const mensajeConfirm = mov.entrega_doc === 'EMITIDO'
@@ -2206,7 +2206,7 @@ async function _conRefrescarPanel() {
 
   const { data, error } = await _supabase
     .from('tesoreria_mbd')
-    .select('entrega_doc, monto, nro_factura_doc, tipo_doc')
+    .select('entrega_doc, monto, nro_factura_doc, tipo_doc, ruc_dni')
     .eq('empresa_id', empresa_activa.id)
     .gte('fecha_deposito', `${yyyy}-${mm}-01`)
     .lte('fecha_deposito', fin);
@@ -2309,12 +2309,14 @@ async function _conValidar(filas, { emitN, obsN, pendN, totalN }) {
     const porClave = {};
     filas.filter(r => r.entrega_doc === 'EMITIDO' && r.nro_factura_doc)
          .forEach(r => {
-           const k = `${r.tipo_doc || ''}|${r.nro_factura_doc}`;
+           // Un N° de RH legible lo usan varios emisores: se separa por DNI para no juntar RH distintos.
+           const dniK = (r.tipo_doc === 'RH' && !_conUuidRE.test(r.nro_factura_doc || '')) ? (r.ruc_dni || '').toString().replace(/\D/g, '') : '';
+           const k = `${r.tipo_doc || ''}|${r.nro_factura_doc}|${dniK}`;
            (porClave[k] = porClave[k] || []).push(r);
          });
     const gruposRepetidos = Object.entries(porClave).filter(([, rs]) => rs.length > 1);
     if (gruposRepetidos.length) {
-      const idsRH = gruposRepetidos.filter(([k]) => k.startsWith('RH|')).map(([k]) => k.split('|')[1]);
+      const idsRH = gruposRepetidos.filter(([k]) => k.startsWith('RH|')).map(([k]) => k.split('|')[1]).filter(v => _conUuidRE.test(v));
       let nombresRH = {};
       if (idsRH.length) {
         const { data: rhRows } = await _supabase.from('rh_registros').select('id,numero_rh').in('id', idsRH);

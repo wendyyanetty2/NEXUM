@@ -338,13 +338,14 @@ async function _dupDescuadresVinculacion() {
   // mostrarFn: qué N° mostrar en el reporte — puede ser distinto de claveFn (que sirve
   // solo para EMPAREJAR contra tesoreria_mbd). Nunca se muestra un UUID crudo en pantalla
   // (fix 2026-09-18: RH mostraba el UUID interno en vez de "E001-23" en este reporte).
-  const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn, mostrarFn, rucFn) => {
+  const evaluar = (comprobantes, tipoDoc, claveFn, labelFn, totalFn, mostrarFn, rucFn, filtroMovFn) => {
     (comprobantes || []).forEach(c => {
       const clave = claveFn(c);
       if (!clave) return;
       const rucDoc = rucFn ? rucFn(c) : '';
       const lista = (movsPorClave.get(_conClaveDoc(tipoDoc, clave)) || [])
-        .filter(m => _rucCompatible(rucDoc, m.ruc_dni));
+        .filter(m => _rucCompatible(rucDoc, m.ruc_dni))
+        .filter(m => !filtroMovFn || filtroMovFn(m, c));
       if (!lista.length) return;
       const total = totalFn(c);
       if (!total) return;
@@ -364,7 +365,14 @@ async function _dupDescuadresVinculacion() {
   const _rhMostrar = c => c.numero_rh || `RH sin N° · ${(c.id || '').slice(0, 8)}`;
   const _rhRuc = c => c.prestadores_servicios?.dni;
   evaluar(rh, 'RH', c => c.id,        c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar, _rhRuc);
-  evaluar(rh, 'RH', c => c.numero_rh, c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar, _rhRuc);
+  // N° de RH legible: se repite entre emisores (E001-6 puede ser de varias personas). Si el N° lo usa
+  // más de un RH, un movimiento solo cuenta para ESTE RH si su DNI coincide (el nombre no sirve: la
+  // transferencia puede ir a una persona y el RH estar a nombre de otra). Sin compartir, sigue igual.
+  const _rhVeces = new Map();
+  (rh || []).forEach(c => { const k = _conNormNroDoc(c.numero_rh); if (k) _rhVeces.set(k, (_rhVeces.get(k) || 0) + 1); });
+  const _rhSoloSuEmisor = (m, c) => (_rhVeces.get(_conNormNroDoc(c.numero_rh)) || 0) <= 1
+    || (_rucNorm(m.ruc_dni) !== '' && _rucNorm(m.ruc_dni) === _rucNorm(_rhRuc(c)));
+  evaluar(rh, 'RH', c => c.numero_rh, c => c.prestadores_servicios?.nombre || '—', c => Number(c.monto_neto) || 0, _rhMostrar, _rhRuc, _rhSoloSuEmisor);
 
   // Un mismo RH puede calzar por las dos claves a la vez — no listarlo dos veces.
   const vistos = new Set();
