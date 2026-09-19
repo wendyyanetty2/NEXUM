@@ -1052,7 +1052,12 @@ function _conCodigoTipoDoc(categoria, nroDoc) {
 }
 
 // Reporte previo (regla de Wendy: reporte + aprobación antes de tocar datos
-// existentes). Resuelve con la lista de items aprobados, o null si cancela.
+// existentes). Resuelve con lo aprobado, o null si cancela.
+//
+// Diseño simple (Wendy, 2026-09-19: "no se ha utilizado, está complicado"): antes eran cientos de
+// tarjetas en una sola lista. Ahora hay un resumen en lenguaje claro, secciones plegables (lo seguro ya
+// viene marcado), el botón dice cuántos cambios va a hacer, y lo que no se puede reparar aquí (N° que no
+// existe en Contabilidad) va aparte, sin casillas. El contrato de salida es el mismo de siempre.
 function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
   return new Promise(resolve => {
     const mc = document.getElementById('modal-container');
@@ -1062,173 +1067,170 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
     const ceros = extras.ceros || [];
 
     const NOMBRE_CAT = { COMPRA: 'Compras', VENTA: 'Ventas', RH: 'RH Recibidos' };
-    const MOTIVO = {
-      sin_emisor: 'El N° existe, pero el RUC/nombre del movimiento no coincide con el del comprobante. Marca la casilla solo si es el comprobante correcto.',
-      ambiguo: 'Ese N° lo comparten varios comprobantes (distinto tipo o emisor). Elige cuál corresponde a este movimiento; si no eliges ninguno, no se toca.',
-      sin_comprobante: 'Ese N° no existe en Compras, Ventas ni RH. Revisa que esté bien escrito o que el comprobante ya esté cargado.',
-    };
-    const porTipo = t => items.filter(i => i.tipo === t).length;
+    const indexados = items.map((it, i) => ({ it, i }));
+    const de = t => indexados.filter(x => x.it.tipo === t);
+    const seguros = de('seguro'), terceros = de('sin_emisor'), ambiguos = de('ambiguo'), sinComp = de('sin_comprobante');
+    const preMarcado = x => x.it.tipo === 'seguro' || x.it.marcarPorDefecto;
 
-    const tarjeta = (it, i) => {
-      const m = it.mov;
-      const marcable = !!it.categoria;
-      const c = it.comprobante;
-      if (it.tipo === 'ambiguo') {
-        return `
-        <div style="border:1px solid #DD6B20;border-radius:8px;padding:12px 14px;margin-bottom:10px">
-          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:4px">
-            <span style="font-weight:700;color:var(--color-secundario)">${escapar(_conLegible(m.nro_factura_doc))} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
-            <span style="font-family:monospace;font-size:11px;color:var(--color-texto-suave)">Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.entrega_doc || '—')}</span>
-          </div>
-          <div style="font-size:11px;color:#C05621;margin-bottom:2px">⚠️ ${MOTIVO.ambiguo}</div>
-          ${it.candidatos.map((cand, k) => _conHtmlCandidato(cand, { name: `rev-cand-${i}`, value: k })).join('')}
-        </div>`;
+    const linea = m => `Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.entrega_doc || '—')}`;
+    const titulo = it => `<strong style="color:var(--color-secundario)">${escapar(_conLegible(it.mov.nro_factura_doc))}</strong> · ${escapar(it.mov.proveedor_empresa_personal || '—')}`;
+
+    // Una fila compacta (una casilla) para los que se pueden reparar.
+    const fila = ({ it, i }) => {
+      const m = it.mov, c = it.comprobante;
+      const cv = it.categoria === 'COMPRA' || it.categoria === 'VENTA';
+      let nota = '';
+      if (it.estado5) {
+        nota = `En Contabilidad quedará <strong style="color:${_CON_ESTADO5_COLOR[it.estado5]}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)}).`;
+      } else if (!it.cuentaEnConta) {
+        nota = 'Su estado en Movimientos es PENDIENTE: solo se le asigna la categoría.';
       }
-      const cabecera = `
-        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px">
-          <span style="font-weight:700;color:var(--color-secundario)">${escapar(_conLegible(m.nro_factura_doc))} · ${escapar(m.proveedor_empresa_personal || '—')}</span>
-          <span style="font-family:monospace;font-size:11px;color:var(--color-texto-suave)">Op. ${escapar(m.nro_operacion_bancaria || '—')} · ${formatearFecha(m.fecha_deposito)} · ${formatearMoneda(m.monto)} · ${escapar(m.entrega_doc || '—')}</span>
-        </div>`;
-      let cuerpo;
-      if (marcable) {
-        let despues;
-        if (it.estado5) {
-          const col = _CON_ESTADO5_COLOR[it.estado5];
-          despues = `En Contabilidad quedará: <strong style="color:${col}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (vinculado ${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)})`;
-        } else if (!it.cuentaEnConta) {
-          despues = 'Su estado en Movimientos es PENDIENTE: Contabilidad seguirá mostrándolo PENDIENTE (regla), aunque se le asigne la categoría.';
-        } else if (it.tipo === 'sin_emisor' && !it.rucConflicto && (it.categoria === 'COMPRA' || it.categoria === 'VENTA')) {
-          // Tras asignar la categoría, "Reparar estados" sincroniza el emisor con el comprobante (Paso 2).
-          despues = `Al aplicar, el Proveedor y el RUC del movimiento pasan a ser los del comprobante y el nombre actual (<strong>${escapar(m.proveedor_empresa_personal || '—')}</strong>) queda en «A quién se depositó». Así Contabilidad sí lo cuenta.${it.marcarPorDefecto ? ' Viene marcado porque el monto es exactamente el del comprobante.' : ' No viene marcado: el monto no es el total del comprobante (¿pago parcial?). Márcalo si es el correcto.'}`;
+      if (it.tipo === 'sin_emisor') {
+        if (it.rucConflicto) {
+          nota = `⚠️ El RUC del movimiento (${escapar(m.ruc_dni)}) es distinto al del comprobante (${escapar(c.ruc || '—')}): probablemente NO es el mismo comprobante.`;
+        } else if (cv) {
+          nota = `Pago a tercero: el Proveedor y el RUC pasan a ser los del comprobante y «${escapar(m.proveedor_empresa_personal || '—')}» queda en «A quién se depositó».`
+            + (it.marcarPorDefecto ? '' : ' Su monto no es el total del comprobante (¿pago parcial?): márcalo solo si es el correcto.');
         } else {
-          despues = 'Aunque se asigne la categoría, Contabilidad no lo contará porque el RUC/nombre no coincide con el comprobante.';
+          nota = 'El RUC/nombre no coincide con el comprobante: márcalo solo si es el correcto.';
         }
-        cuerpo = `
-          <div style="font-size:12px;margin-bottom:4px">Comprobante hallado en <strong>${NOMBRE_CAT[it.categoria]}</strong>: ${escapar(c.nombre || '—')} · RUC/DNI ${escapar(c.ruc || '—')} · Total ${formatearMoneda(c.total)}</div>
-          <div style="font-size:12px;margin-bottom:4px">Se asignará categoría <strong style="font-family:monospace">${it.categoria}</strong> (hoy: <span style="font-family:monospace">${escapar(m.tipo_doc || 'vacío')}</span>)${it.cambiaNro ? ` y el N° se normalizará a <strong style="font-family:monospace">${escapar(it.nroCanonico)}</strong>` : ''}.</div>
-          <div style="font-size:12px">${despues}</div>
-          ${it.tipo === 'sin_emisor' ? `<div style="font-size:11px;color:#C05621;margin-top:4px">⚠️ ${MOTIVO.sin_emisor}</div>` : ''}`;
-      } else {
-        cuerpo = `<div style="font-size:12px;color:var(--color-texto-suave)">${MOTIVO[it.tipo]}</div>`;
       }
       return `
-        <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:10px;${marcable ? 'cursor:pointer' : 'opacity:.85'}">
-          <input type="checkbox" class="rev-chk" data-i="${i}" ${it.tipo === 'seguro' || it.marcarPorDefecto ? 'checked' : ''} ${marcable ? '' : 'disabled'} style="margin-top:3px">
-          <div style="flex:1;min-width:0">${cabecera}${cuerpo}</div>
+        <label style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-bottom:1px solid var(--color-borde);cursor:pointer">
+          <input type="checkbox" class="rev-chk" data-i="${i}" data-g="${it.tipo}" ${preMarcado({ it }) ? 'checked' : ''} style="margin-top:3px">
+          <div style="flex:1;min-width:0;font-size:12px">
+            <div>${titulo(it)}${c ? ` <span style="color:var(--color-texto-suave)">→ ${NOMBRE_CAT[it.categoria] || ''}: ${escapar(c.nombre || '—')}</span>` : ''}</div>
+            <div style="font-size:11px;color:var(--color-texto-suave);font-family:monospace">${linea(m)}</div>
+            ${nota ? `<div style="font-size:11px;margin-top:2px;${it.rucConflicto ? 'color:#C05621' : ''}">${nota}</div>` : ''}
+          </div>
         </label>`;
     };
 
-    // Tipo DOC vacío en movimientos YA vinculados (categoría COMPRA/VENTA/RH válida): se
-    // completa con el código de la lista — FA (factura), BO (boleta) o RH — nunca "COMPRA".
-    const bloqueTipo = faltantesTipo.length ? `
-      <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--color-secundario);border-radius:8px;padding:12px 14px;margin-bottom:14px;cursor:pointer">
-        <input type="checkbox" id="rev-tipo" checked style="margin-top:3px">
-        <div style="font-size:12px">
-          <strong>Completar "Tipo DOC" en ${faltantesTipo.length} movimiento(s) ya vinculado(s)</strong> que lo tienen vacío:
-          ${['FA', 'BO', 'RH'].map(cod => { const n = faltantesTipo.filter(m => m._codigo === cod).length; return n ? `<strong>${n}</strong> → ${cod}` : ''; }).filter(Boolean).join(' · ')}.
-          <div style="color:var(--color-texto-suave);margin-top:2px">FA si es factura de Compras/Ventas, BO si la serie empieza con B, RH si es recibo por honorarios. Solo se llena el vacío; nunca se cambia uno ya elegido.</div>
+    // N° compartido por varios comprobantes: hay que elegir cuál (o no tocarlo).
+    const filaAmbigua = ({ it, i }) => `
+      <div style="padding:8px 10px;border-bottom:1px solid var(--color-borde)">
+        <div style="font-size:12px">${titulo(it)}</div>
+        <div style="font-size:11px;color:var(--color-texto-suave);font-family:monospace">${linea(it.mov)}</div>
+        <div style="font-size:11px;color:#C05621;margin:2px 0">Ese N° lo comparten varios comprobantes. Elige cuál es; si no eliges ninguno, no se toca.</div>
+        ${it.candidatos.map((cand, k) => _conHtmlCandidato(cand, { name: `rev-cand-${i}`, value: k })).join('')}
+      </div>`;
+
+    // Sin comprobante: solo informativo, no hay nada que aprobar.
+    const filaInfo = ({ it }) => `
+      <div style="padding:6px 10px;border-bottom:1px solid var(--color-borde);font-size:12px">
+        ${titulo(it)}<div style="font-size:11px;color:var(--color-texto-suave);font-family:monospace">${linea(it.mov)}</div>
+      </div>`;
+
+    const seccion = (id, icono, texto, ayuda, lista, cuerpo, { abierto = false, botones = false } = {}) => !lista ? '' : `
+      <details ${abierto ? 'open' : ''} style="border:1px solid var(--color-borde);border-radius:10px;margin-bottom:10px">
+        <summary style="cursor:pointer;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:700;font-size:13px">${icono} ${texto} <span style="color:var(--color-texto-suave);font-weight:400">(${lista})</span></span>
+          <span class="rev-cont" data-g="${id}" style="font-size:11px;color:var(--color-texto-suave)"></span>
+        </summary>
+        <div style="padding:0 14px 12px">
+          <p style="font-size:12px;color:var(--color-texto-suave);margin:0 0 8px;line-height:1.5">${ayuda}</p>
+          ${botones ? `<div style="font-size:11px;margin-bottom:6px">
+            <span class="rev-todos" data-g="${id}" data-v="1" style="cursor:pointer;text-decoration:underline;color:var(--color-secundario)">Marcar todos</span> ·
+            <span class="rev-todos" data-g="${id}" data-v="0" style="cursor:pointer;text-decoration:underline;color:var(--color-secundario)">Quitar todos</span></div>` : ''}
+          <div style="max-height:280px;overflow-y:auto;border:1px solid var(--color-borde);border-radius:8px">${cuerpo}</div>
         </div>
-      </label>` : '';
+      </details>`;
 
-    // N° de RH guardados como código único (UUID): se pasan a su N° legible. Nunca se muestra el
-    // código: cada línea se describe con N° de operación, fecha y el RH (N° + emisor).
+    // ── Arreglos de formato (una casilla por tipo de arreglo; data-n = cuántos cambios hace) ──
     const uuidOk = uuids.filter(u => u.ok), uuidNo = uuids.filter(u => !u.ok);
-    const nombreRH = u => u.rh?.nombre_emisor || u.rh?.prestadores_servicios?.nombre || '—';
-    const opFecha  = u => `Op. ${escapar(u.mov.nro_operacion_bancaria || '—')} · ${formatearFecha(u.mov.fecha_deposito)}`;
-    const bloqueUUID = uuids.length ? `
-      <div style="border:1px solid var(--color-secundario);border-radius:8px;padding:12px 14px;margin-bottom:14px">
-        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
-          <input type="checkbox" id="rev-uuid" ${uuidOk.length ? 'checked' : 'disabled'} style="margin-top:3px">
-          <div style="font-size:12px">
-            <strong>RH guardados con un código interno (UUID): ${uuids.length} movimiento(s)</strong> —
-            <strong>${uuidOk.length}</strong> se pueden pasar a su N° legible, <strong>${uuidNo.length}</strong> no.
-            <div style="color:var(--color-texto-suave);margin-top:3px;line-height:1.5">
-              Al convertir, el N° del movimiento pasa del código al N° legible del RH (ej. "E001-6") y el DNI del movimiento se iguala al del
-              emisor del RH (${uuidOk.filter(u => u.cambiaRuc).length} caso(s) cambian de DNI). Así el vínculo se reconoce por N° + emisor y ya no por un código.
-              Los que no se pueden distinguir con seguridad quedan exactamente como están.
-            </div>
-          </div>
-        </label>
-        ${uuidOk.length ? `<details style="margin:8px 0 0 26px;font-size:11px"><summary style="cursor:pointer">Ver ejemplos de lo que se convertiría (primeros 8)</summary>
-          ${uuidOk.slice(0, 8).map(u => `<div style="padding:2px 0">${opFecha(u)} → <strong>RH ${escapar(u.nuevoNro)}</strong> · ${escapar(nombreRH(u))}${u.nuevoRuc ? ` (DNI ${escapar(u.nuevoRuc)})` : ''}</div>`).join('')}</details>` : ''}
-        ${uuidNo.length ? `<details style="margin:6px 0 0 26px;font-size:11px"><summary style="cursor:pointer;color:#C05621">No se convierten (${uuidNo.length}) — ver motivos</summary>
-          ${uuidNo.slice(0, 12).map(u => `<div style="padding:2px 0">${opFecha(u)} · ${escapar(u.mov.proveedor_empresa_personal || '—')} — <em>${escapar(u.motivo)}</em></div>`).join('')}
-          ${uuidNo.length > 12 ? `<div style="padding:2px 0">… y ${uuidNo.length - 12} más</div>` : ''}</details>` : ''}
-      </div>` : '';
-
-    // Estados que no calzan con la regla vigente de 14 campos — opcional, SIN marcar.
     const a_obs = estados14.filter(x => x.nuevo === 'OBSERVADO').length;
     const a_emi = estados14.filter(x => x.nuevo === 'EMITIDO').length;
-    const bloqueEstados = estados14.length ? `
-      <label style="display:flex;gap:10px;align-items:flex-start;border:1px dashed var(--color-borde);border-radius:8px;padding:12px 14px;margin-bottom:14px;cursor:pointer">
-        <input type="checkbox" id="rev-est14" style="margin-top:3px">
-        <div style="font-size:12px">
-          <strong>Re-evaluar el estado de ${estados14.length} movimiento(s) ya vinculados con la regla de los 14 campos</strong> (opcional):
-          ${a_obs} pasarían de EMITIDO a OBSERVADO (les falta algún dato) y ${a_emi} de OBSERVADO a EMITIDO (ya tienen todo).
-          <div style="color:var(--color-texto-suave);margin-top:2px">Contabilidad no cambia (OBSERVADO y EMITIDO cubren igual el comprobante); cambian los estados de Movimientos y de las descargas.</div>
-        </div>
-      </label>` : '';
+    const opcion = (id, marcado, n, titular, detalle) => `
+      <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--color-borde);cursor:pointer">
+        <input type="checkbox" id="${id}" data-n="${n}" ${marcado && n ? 'checked' : ''} ${n ? '' : 'disabled'} style="margin-top:3px">
+        <div style="font-size:12px;line-height:1.5"><strong>${titular}</strong><div style="color:var(--color-texto-suave)">${detalle}</div></div>
+      </label>`;
+    const opciones = [
+      ceros.length ? opcion('rev-ceros', true, ceros.length,
+        `Quitar ceros a la izquierda del N° de comprobante — ${ceros.length} movimiento(s)`,
+        'F001-00118811 pasa a F001-118811, igual que en Contabilidad. Solo se quitan los ceros; nada más cambia.') : '',
+      uuidOk.length || uuidNo.length ? opcion('rev-uuid', uuidOk.length > 0, uuidOk.length,
+        `RH guardados con un código interno: ${uuidOk.length} se pasan a su N° legible${uuidNo.length ? ` (${uuidNo.length} no se pueden distinguir con seguridad y quedan igual)` : ''}`,
+        'El N° del movimiento pasa del código al N° del RH (ej. E001-6) y su DNI se iguala al del emisor.') : '',
+      faltantesTipo.length ? opcion('rev-tipo', true, faltantesTipo.length,
+        `Completar «Tipo DOC» vacío — ${faltantesTipo.length} movimiento(s)`,
+        `${['FA', 'BO', 'RH'].map(cod => { const n = faltantesTipo.filter(m => m._codigo === cod).length; return n ? `${n} → ${cod}` : ''; }).filter(Boolean).join(' · ')}. Solo se llena el vacío; nunca se cambia uno ya elegido.`) : '',
+      estados14.length ? opcion('rev-est14', false, estados14.length,
+        `(Opcional) Re-evaluar el estado con la regla de los 14 campos — ${estados14.length} movimiento(s)`,
+        `${a_obs} pasarían de EMITIDO a OBSERVADO (les falta algún dato) y ${a_emi} de OBSERVADO a EMITIDO. No afecta a Contabilidad; por eso viene sin marcar.`) : '',
+    ].join('');
+    const nOpciones = [ceros, uuids, faltantesTipo, estados14].filter(a => a.length).length;
 
-    // N° con ceros a la izquierda → mismo formato que Contabilidad (solo se quitan los ceros).
-    const bloqueCeros = ceros.length ? `
-      <div style="border:1px solid var(--color-secundario);border-radius:8px;padding:12px 14px;margin-bottom:14px">
-        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
-          <input type="checkbox" id="rev-ceros" checked style="margin-top:3px">
-          <div style="font-size:12px">
-            <strong>N° de comprobante con ceros a la izquierda: ${ceros.length} movimiento(s)</strong>
-            <div style="color:var(--color-texto-suave);margin-top:3px;line-height:1.5">
-              Contabilidad guarda el número sin ceros (F001-118811), por eso un N° con ceros (F001-00118811) no se reconocía como el mismo comprobante.
-              Se quitan <strong>solo los ceros</strong> del número; nada más cambia. Algunos comprobantes pueden cambiar de estado porque ahora sí se reconocerán sus movimientos.
-            </div>
-          </div>
-        </label>
-        <details style="margin:8px 0 0 26px;font-size:11px"><summary style="cursor:pointer">Ver ejemplos (primeros 10)</summary>
-          ${ceros.slice(0, 10).map(c => `<div style="padding:2px 0">Op. ${escapar(c.mov.nro_operacion_bancaria || '—')}: <span style="font-family:monospace">${escapar(c.antes)}</span> → <strong style="font-family:monospace">${escapar(c.despues)}</strong></div>`).join('')}</details>
-      </div>` : '';
-
+    const hayAlgo = seguros.length || terceros.length || ambiguos.length || opciones;
     mc.innerHTML = `
       <div class="modal-overlay" style="display:flex">
-        <div class="modal" style="max-width:860px;width:95%;max-height:90vh;display:flex;flex-direction:column">
+        <div class="modal" style="max-width:820px;width:95%;max-height:90vh;display:flex;flex-direction:column">
           <div class="modal-header">
-            <h3>🔧 Revisión de vínculos con comprobantes — ${items.length} sin categoría${faltantesTipo.length ? ` · ${faltantesTipo.length} sin Tipo DOC` : ''}${uuids.length ? ` · ${uuids.length} RH con código` : ''}</h3>
+            <h3>🔧 Reparar estados</h3>
             <button class="modal-cerrar" id="rev-x">✕</button>
           </div>
           <div class="modal-body" style="flex:1;overflow-y:auto">
-            ${bloqueCeros}
-            ${bloqueUUID}
-            ${bloqueEstados}
-            ${bloqueTipo}
-            ${items.length ? `
-            <p style="font-size:12px;color:var(--color-texto-suave);margin-bottom:6px">
-              Estos movimientos ya tienen un N° de comprobante escrito, pero les falta (o tienen dañada) la categoría interna que Contabilidad usa para saber a qué comprobante pertenecen. Por eso hoy su comprobante puede aparecer PENDIENTE aunque el movimiento esté OBSERVADO o EMITIDO.
-            </p>
-            <p style="font-size:12px;margin-bottom:14px">
-              <strong>${porTipo('seguro')}</strong> seguro(s) · <strong>${porTipo('sin_emisor')}</strong> con emisor distinto · <strong>${porTipo('ambiguo')}</strong> ambiguo(s) · <strong>${porTipo('sin_comprobante')}</strong> sin comprobante.
-              Nada se modifica hasta que confirmes; solo se corrigen las casillas marcadas u opciones elegidas. El estado de cada movimiento (Emitido/Observado/Pendiente) no se cambia aquí.
-            </p>` : ''}
-            ${items.map(tarjeta).join('')}
+            <div style="background:rgba(72,187,120,.1);border:1px solid rgba(72,187,120,.4);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.6">
+              <strong>Lo seguro ya viene marcado.</strong> Si estás de acuerdo, solo presiona <strong>«Aplicar»</strong> abajo.
+              Nada cambia hasta que lo hagas; con <strong>«Cancelar»</strong> no se toca nada.
+              <div style="font-size:12px;color:var(--color-texto-suave);margin-top:4px">
+                Abre cada sección solo si quieres ver el detalle o quitar algún caso.
+                El estado (Emitido/Observado/Pendiente) de cada movimiento no se cambia aquí.
+              </div>
+            </div>
+            ${!hayAlgo && !sinComp.length ? '<p style="font-size:13px">No hay nada que reparar.</p>' : ''}
+            ${seccion('fmt', '🧹', 'Arreglos de formato', 'Correcciones automáticas de datos; cada casilla es un tipo de arreglo.', nOpciones, opciones, { abierto: true })}
+            ${seccion('seguro', '✅', 'Movimientos que se vinculan con su comprobante',
+              'Su N° de comprobante existe en Contabilidad y el emisor coincide. Solo falta asignarles la categoría para que el comprobante los cuente.',
+              seguros.length, seguros.map(fila).join(''), { botones: true })}
+            ${seccion('sin_emisor', '🤝', 'Pagos a terceros (el nombre del banco no es el del emisor)',
+              'El N° existe en un solo comprobante, pero el movimiento está a nombre de quien recibió el dinero. Vienen marcados solo los que tienen el monto exacto del comprobante y ningún RUC que los contradiga.',
+              terceros.length, terceros.map(fila).join(''), { botones: true, abierto: terceros.some(x => preMarcado(x)) })}
+            ${seccion('ambiguo', '❓', 'Necesitan tu decisión',
+              'El mismo N° lo tienen varios comprobantes (distinto tipo o emisor). El sistema no adivina: elige cuál corresponde, o déjalo sin elegir.',
+              ambiguos.length, ambiguos.map(filaAmbigua).join(''))}
+            ${seccion('sin_comprobante', '➖', 'No se pueden reparar aquí',
+              'Ese N° no existe en Compras, Ventas ni RH: revisa que esté bien escrito o importa el comprobante que falta. Es solo informativo, aquí no hay nada que marcar.',
+              sinComp.length, sinComp.map(filaInfo).join(''))}
           </div>
           <div class="modal-footer">
             <button class="btn btn-secundario" id="rev-cancel">Cancelar (no cambia nada)</button>
-            <button class="btn btn-primario" id="rev-ok">Aplicar seleccionados y reparar</button>
+            <button class="btn btn-primario" id="rev-ok">Aplicar</button>
           </div>
         </div>
       </div>`;
 
     const cerrar = valor => { mc.innerHTML = ''; resolve(valor); };
     const btnOk = mc.querySelector('#rev-ok');
-    const marcados = () => mc.querySelectorAll('.rev-chk:checked, input[name^="rev-cand-"]:checked');
-    const actualizarBoton = () => {
-      const n = marcados().length + mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked').length;
-      btnOk.textContent = n ? 'Aplicar lo seleccionado y reparar' : 'Continuar sin cambiar nada';
+    const chk = () => [...mc.querySelectorAll('.rev-chk')];
+    const radios = () => [...mc.querySelectorAll('input[name^="rev-cand-"]:checked')];
+    const actualizar = () => {
+      // Contadores por sección
+      ['seguro', 'sin_emisor'].forEach(g => {
+        const lista = chk().filter(c => c.dataset.g === g);
+        const cont = mc.querySelector(`.rev-cont[data-g="${g}"]`);
+        if (cont) cont.textContent = `${lista.filter(c => c.checked).length} de ${lista.length} marcados`;
+      });
+      const cAmb = mc.querySelector('.rev-cont[data-g="ambiguo"]');
+      if (cAmb) cAmb.textContent = `${radios().length} elegidos`;
+      const cFmt = mc.querySelector('.rev-cont[data-g="fmt"]');
+      if (cFmt) cFmt.textContent = `${mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked').length} marcados`;
+      // Botón: cuántos cambios se harán
+      let n = chk().filter(c => c.checked).length + radios().length;
+      mc.querySelectorAll('#rev-tipo:checked, #rev-uuid:checked, #rev-est14:checked, #rev-ceros:checked').forEach(c => { n += Number(c.dataset.n) || 0; });
+      btnOk.textContent = n ? `Aplicar (${n} cambio${n === 1 ? '' : 's'})` : 'Continuar sin cambiar nada';
     };
-    mc.querySelectorAll('.rev-chk, input[name^="rev-cand-"], #rev-tipo, #rev-uuid, #rev-est14, #rev-ceros').forEach(ch => ch.addEventListener('change', actualizarBoton));
-    actualizarBoton();
+    mc.querySelector('.modal-overlay').addEventListener('change', actualizar);
+    mc.querySelectorAll('.rev-todos').forEach(b => b.addEventListener('click', () => {
+      chk().filter(c => c.dataset.g === b.dataset.g).forEach(c => { c.checked = b.dataset.v === '1'; });
+      actualizar();
+    }));
+    actualizar();
     btnOk.onclick = () => {
       const aprobados = [];
-      mc.querySelectorAll('.rev-chk:checked').forEach(ch => aprobados.push(items[Number(ch.dataset.i)]));
+      chk().filter(c => c.checked).forEach(c => aprobados.push(items[Number(c.dataset.i)]));
       // Ambiguos: se aplican SOLO si Wendy eligió uno de los comprobantes candidatos.
-      mc.querySelectorAll('input[name^="rev-cand-"]:checked').forEach(r => {
+      radios().forEach(r => {
         const it = items[Number(r.name.replace('rev-cand-', ''))];
         _conAsignarCandidato(it, it.candidatos[Number(r.value)]);
         aprobados.push(it);
