@@ -201,12 +201,26 @@ async function _estadoCalculado(rh) {
 //    de _estadoCalculado() — usado por la exportación para no reimplementar
 //    la búsqueda de vínculos por separado (ver nota en memoria del proyecto
 //    sobre no duplicar la lógica de matching de RH). ─────────────────────
+// Fecha como la muestran las pantallas (dd/mm/aaaa), no ISO crudo.
+function _rhrFechaLegible(f) {
+  return (f && typeof formatearFecha === 'function') ? formatearFecha(f) : (f || '');
+}
+
+// Estado de un RH con el MISMO texto que muestra la pantalla, sin el emoji del badge:
+// "APLICADO", "EXCEDE (+S/ 5.00)", "PARCIAL (S/ 50.00)", "PENDIENTE", "POSIBLE", "CANCELADO".
+// Antes las descargas escribían el código interno (p. ej. "PARCIAL" también cuando la
+// pantalla decía EXCEDE) — Wendy, 2026-09-19: lo descargado debe leerse como en el sistema.
+function _rhrEtiquetaTexto(info) {
+  const txt = (info?.etiqueta || info?.estado || 'PENDIENTE').toString();
+  return txt.replace(/^[^\p{L}\p{N}]+/u, '').trim() || 'PENDIENTE';
+}
+
 function _rhrDetalleVinculo(info) {
   if (!info?.links?.length) return { nOperacion: '', fechaMov: '', montoVinculado: 0, nivelConfianza: '' };
   if (info.esMBD) {
     return {
       nOperacion: info.links.map(l => l.nro_operacion_bancaria).filter(Boolean).join(', '),
-      fechaMov: info.links.map(l => l.fecha_deposito).filter(Boolean).join(', '),
+      fechaMov: info.links.map(l => l.fecha_deposito).filter(Boolean).map(_rhrFechaLegible).join(', '),
       montoVinculado: info.links.reduce((s, l) => s + Math.abs(Number(l.monto || 0)), 0),
       nivelConfianza: '',
     };
@@ -214,7 +228,7 @@ function _rhrDetalleVinculo(info) {
   const confirmados = info.confirmados || info.links;
   return {
     nOperacion: confirmados.map(l => l.movimientos?.numero_operacion).filter(Boolean).join(', '),
-    fechaMov: confirmados.map(l => l.movimientos?.fecha).filter(Boolean).join(', '),
+    fechaMov: confirmados.map(l => l.movimientos?.fecha).filter(Boolean).map(_rhrFechaLegible).join(', '),
     montoVinculado: confirmados.reduce((s, l) => s + parseFloat(l.monto_parcial ?? l.movimientos?.importe ?? 0), 0),
     nivelConfianza: [...new Set(confirmados.map(l => l.nivel_confianza).filter(Boolean))].join(', '),
   };
@@ -1317,11 +1331,11 @@ async function exportarExcelRHRecibidas() {
     const info = estadosMap[r.id] || {};
     const vinc = _rhrDetalleVinculo(info);
     return [
-      r.fecha_emision, r.numero_rh,
+      _rhrFechaLegible(r.fecha_emision), r.numero_rh,
       r.prestadores_servicios?.dni || r.nro_doc_emisor,
       r.prestadores_servicios?.nombre || r.nombre_emisor,
       r.concepto, r.moneda, r.monto_bruto, r.monto_retencion, r.monto_neto,
-      info.estado || 'PENDIENTE',
+      _rhrEtiquetaTexto(info),
       vinc.nOperacion, vinc.fechaMov, vinc.montoVinculado || '', vinc.nivelConfianza,
       r.observaciones
     ];

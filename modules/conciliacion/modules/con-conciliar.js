@@ -2120,7 +2120,7 @@ async function _vincularManual(movId, docTipo, docId, nDocDirecto) {
 const _conUuidRE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function _conMapaNumeroRH(mbdRows) {
   const ids = [...new Set((mbdRows || [])
-    .filter(r => r.tipo_doc === 'RH' && _conUuidRE.test(r.nro_factura_doc || ''))
+    .filter(r => _conUuidRE.test(r.nro_factura_doc || '')) // un UUID solo puede ser un RH, aunque tipo_doc esté vacío/dañado
     .map(r => r.nro_factura_doc))];
   const mapa = new Map();
   if (!ids.length) return mapa;
@@ -2129,7 +2129,7 @@ async function _conMapaNumeroRH(mbdRows) {
   return mapa;
 }
 function _conNroFacturaLegible(m, mapaRH) {
-  return (m.tipo_doc === 'RH' && mapaRH?.has(m.nro_factura_doc)) ? mapaRH.get(m.nro_factura_doc) : (m.nro_factura_doc || '');
+  return mapaRH?.has(m.nro_factura_doc) ? mapaRH.get(m.nro_factura_doc) : (m.nro_factura_doc || '');
 }
 
 // ── Exportar aprobados ────────────────────────────────────────────
@@ -2170,7 +2170,7 @@ async function _conExportarAprobados() {
       m.moneda||'S/', m.monto,
       m.proveedor_empresa_personal||'', m.ruc_dni||'', m.cotizacion||'',
       m.oc||'', m.proyecto||'', m.concepto||'', m.empresa||'',
-      m.entrega_doc||'', _conNroFacturaLegible(m, mapaRH), m.tipo_doc||'',
+      m.entrega_doc||'', _conNroFacturaLegible(m, mapaRH), m.tipo_comprobante||m.tipo_doc||'', // FA/BO/RH como en pantalla, no la categoría interna
       m.autorizacion||'', m.observaciones||'',
       m.detalles_compra_servicio||'', m.observaciones_2||'',
       c?.tipo_match||'', c?.score ?? '', c?.estado||'',
@@ -2383,7 +2383,7 @@ async function _conExportarAvance() {
       m.ruc_dni                || '',
       m.entrega_doc            || '',
       _conNroFacturaLegible(m, mapaRH),
-      m.tipo_doc               || '',
+      m.tipo_comprobante || m.tipo_doc || '', // FA/BO/RH como en pantalla, no la categoría interna
       c?.tipo_match||'', c?.score ?? '',
     ];
   });

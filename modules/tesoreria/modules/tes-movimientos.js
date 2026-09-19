@@ -172,7 +172,9 @@ async function cargarMovimientos(mantenerPagina = false) {
   // Los links nuevos ya guardan el número legible directamente (ej. "E001-17").
   const _uuidRx = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const rhIds = (data || [])
-    .filter(r => r.tipo_doc === 'RH' && r.nro_factura_doc && _uuidRx.test(r.nro_factura_doc))
+    // Un UUID en N° de comprobante solo puede ser el id de un RH: se traduce aunque tipo_doc
+    // esté vacío o dañado (nunca se le debe mostrar a Wendy un código largo en vez del N° de RH).
+    .filter(r => r.nro_factura_doc && _uuidRx.test(r.nro_factura_doc))
     .map(r => r.nro_factura_doc);
   window._rhUuidMap = {};
   if (rhIds.length) {
@@ -227,7 +229,7 @@ function filtrarMovimientos() {
         if (!_fechaCoincide(r.fecha_deposito, fechaFiltro)) return false;
       } else {
         // Búsqueda de texto normal
-        const nroDocDisplay = (r.tipo_doc === 'RH' && window._rhUuidMap?.[r.nro_factura_doc])
+        const nroDocDisplay = window._rhUuidMap?.[r.nro_factura_doc]
           || r.nro_factura_doc;
         const haystack = [
           r.nro_operacion_bancaria, r.descripcion, r.proveedor_empresa_personal,
@@ -320,7 +322,7 @@ function renderTablaMovimientos() {
         <td style="${_TD}">
           <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${badgeBg[est]||'#718096'};color:#fff;white-space:nowrap">${est}</span>
         </td>
-        <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar((r.tipo_doc==='RH'&&window._rhUuidMap?.[r.nro_factura_doc])||r.nro_factura_doc||'—')}</td>
+        <td style="${_TD}font-family:monospace;font-size:11px;white-space:nowrap">${escapar(window._rhUuidMap?.[r.nro_factura_doc]||r.nro_factura_doc||'—')}</td>
         <td style="${_TD}text-align:center">
           ${(r.tipo_comprobante||r.tipo_doc)?`<span style="background:var(--color-secundario);color:#fff;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600">${escapar(r.tipo_comprobante||r.tipo_doc)}</span>`:'—'}
         </td>
@@ -464,8 +466,8 @@ async function exportarMovimientosExcel() {
     r.concepto || null,
     r.empresa || null,
     r.entrega_doc || 'PENDIENTE',
-    (r.tipo_doc === 'RH' && window._rhUuidMap?.[r.nro_factura_doc]) || r.nro_factura_doc || null,
-    r.tipo_doc || null,
+    window._rhUuidMap?.[r.nro_factura_doc] || r.nro_factura_doc || null,
+    r.tipo_comprobante || r.tipo_doc || null, // "Tipo de DOC" como lo muestra la pantalla (FA/BO/RH…), no la categoría interna
     r.autorizacion || null,
     r.observaciones || null,
     r.detalles_compra_servicio || null,
@@ -1180,7 +1182,7 @@ async function abrirModalMBD(id = null) {
   // Resolver UUID → número legible para tipo RH
   let _nroFacturaDisplay = item?.nro_factura_doc || '';
   let _nroFacturaIsRhUuid = false;
-  if (item?.tipo_doc === 'RH' && item?.nro_factura_doc && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(item.nro_factura_doc)) {
+  if (item?.nro_factura_doc && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(item.nro_factura_doc)) {
     const { data: rhReg } = await _supabase.from('rh_registros').select('numero_rh').eq('id', item.nro_factura_doc).single();
     if (rhReg?.numero_rh) { _nroFacturaDisplay = rhReg.numero_rh; _nroFacturaIsRhUuid = true; }
   }

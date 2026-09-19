@@ -57,15 +57,10 @@ function _histListaPeriodos(desde, hasta) {
   return lista;
 }
 
-// ── Etiqueta legible de cobertura bancaria (misma escala que muestran
-//    Compras/Ventas en pantalla: PENDIENTE/PARCIAL/EXCEDE/APLICADO/OBSERVADO) ──
-function _histEtiquetaCobertura(cov) {
-  if (cov.estado === 'PENDIENTE') return 'PENDIENTE';
-  if (cov.estado === 'PARCIAL')   return cov.excede ? `EXCEDE (+${cov.excede})` : `PARCIAL (${cov.suma}/${cov.total})`;
-  if (cov.estado === 'COMPLETO_EMITIDO')   return 'APLICADO';
-  if (cov.estado === 'COMPLETO_OBSERVADO') return 'OBSERVADO';
-  return cov.estado || '';
-}
+// (El estado de conciliación bancaria de Compras/Ventas ya no se traduce aquí con una
+//  escala propia: sale de _conEstadosCobertura() — consolidacion-estados.js —, la MISMA
+//  función que usan las pantallas y los exportes de cada módulo, así que el histórico dice
+//  PENDIENTE / POSIBLE / PARCIAL / EXCESIVO / APLICADO igual que el sistema.)
 
 // ── Cabeceras (idénticas a las columnas que cada módulo ya usa en su
 //    propio exportador) — separadas de las filas para poder concatenar
@@ -84,7 +79,7 @@ const CAB_MBD = ['N° de operación','Fecha de Deposito','Descripcion','Moneda',
 const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function _histMapaNumeroRH(mbdData) {
   const ids = [...new Set(mbdData
-    .filter(r => r.tipo_doc === 'RH' && _UUID_RE.test(r.nro_factura_doc || ''))
+    .filter(r => _UUID_RE.test(r.nro_factura_doc || '')) // un UUID solo puede ser un RH, aunque tipo_doc esté vacío/dañado
     .map(r => r.nro_factura_doc))];
   const mapa = new Map();
   if (!ids.length) return mapa;
@@ -95,12 +90,14 @@ async function _histMapaNumeroRH(mbdData) {
 function _filasMBD(data, rhNumeroPorId) {
   return data.map(r => {
     let nDoc = r.nro_factura_doc || '';
-    if (r.tipo_doc === 'RH' && rhNumeroPorId?.has(nDoc)) nDoc = rhNumeroPorId.get(nDoc);
+    if (rhNumeroPorId?.has(nDoc)) nDoc = rhNumeroPorId.get(nDoc);
     return [
       r.nro_operacion_bancaria ? String(r.nro_operacion_bancaria).padStart(8,'0') : '',
       _histFmtFecha(r.fecha_deposito), r.descripcion||'', r.moneda||'S/', r.monto,
       r.proveedor_empresa_personal||'', r.ruc_dni||'', r.cotizacion||'', r.oc||'', r.proyecto||'',
-      r.concepto||'', r.empresa||'', r.entrega_doc||'PENDIENTE', nDoc, r.tipo_doc||'', r.autorizacion||'',
+      // "Tipo de DOC" como lo muestra la pantalla de Movimientos (FA/BO/RH…, el tipo de comprobante);
+      // tipo_doc solo es la categoría interna (COMPRA/VENTA/RH) y se usa si no hay tipo de comprobante.
+      r.concepto||'', r.empresa||'', r.entrega_doc||'PENDIENTE', nDoc, r.tipo_comprobante||r.tipo_doc||'', r.autorizacion||'',
       r.observaciones||'', r.detalles_compra_servicio||'', r.observaciones_2||'', r.titular_comprobante||'',
       r.estado_conciliacion === 'conciliado' ? 'CONCILIADO' : 'PENDIENTE',
       r.tipo_comprobante||'', _histFmtFecha(r.fecha_actualizacion),
@@ -137,23 +134,15 @@ const CAB_CONTAB_COMPRAS = ['RUC','Proveedor','Periodo','Fecha de emisión','Tip
   'Moneda','Estado Conciliación Bancaria','Monto Vinculado','N° Operación Vinculado(s)','Fecha Movimiento','Descripción Movimiento'];
 async function _filasContabComprasConEstado(data, empresaId) {
   if (!data.length) return [];
-  const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
-  const { data: mbd } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,fecha_deposito,descripcion,monto,id,entrega_doc,ruc_dni,proveedor_empresa_personal')
-        .eq('empresa_id', empresaId).in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
-    : { data: [] };
-  const mapa = new Map();
-  (mbd||[]).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
-  return data.map(r => {
-    const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-    const movs = _conFiltrarPorEmisor(mapa.get(nDoc), r.nro_doc_identidad, r.proveedor);
-    const cov  = _conCobertura(movs, r.total_cp);
+  const estados = await _conEstadosCobertura(empresaId, 'COMPRA', data, 'proveedor');
+  return data.map((r, i) => {
+    const { estado5, cov, movs } = estados[i];
     const vinc = _histDetalleMovs(movs);
     return [
-      r.ruc, r.proveedor||r.razon_social, r.periodo, r.fecha_emision, r.tipo_cp_doc, r.serie_cdp,
+      r.ruc, r.proveedor||r.razon_social, r.periodo, _histFmtFecha(r.fecha_emision), r.tipo_cp_doc, r.serie_cdp,
       r.nro_cp_inicial, r.nro_cp_final, r.tipo_doc_identidad, r.nro_doc_identidad,
       r.bi_gravado_dg, r.igv_ipm_dg, r.total_cp, r.moneda,
-      _histEtiquetaCobertura(cov), cov.suma||0, vinc.nOperacion, vinc.fechaMov, vinc.descripcionMov,
+      estado5, cov.suma||0, vinc.nOperacion, vinc.fechaMov, vinc.descripcionMov,
     ];
   });
 }
@@ -163,23 +152,15 @@ const CAB_CONTAB_VENTAS = ['RUC','Cliente','Periodo','Fecha de emisión','Tipo C
   'Moneda','Estado Conciliación Bancaria','Monto Vinculado','N° Operación Vinculado(s)','Fecha Movimiento','Descripción Movimiento'];
 async function _filasContabVentasConEstado(data, empresaId) {
   if (!data.length) return [];
-  const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
-  const { data: mbd } = numeros.length
-    ? await _supabase.from('tesoreria_mbd').select('nro_factura_doc,nro_operacion_bancaria,fecha_deposito,descripcion,monto,id,entrega_doc,ruc_dni,proveedor_empresa_personal')
-        .eq('empresa_id', empresaId).in('entrega_doc', ['EMITIDO','OBSERVADO']).in('nro_factura_doc', numeros)
-    : { data: [] };
-  const mapa = new Map();
-  (mbd||[]).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
-  return data.map(r => {
-    const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-    const movs = _conFiltrarPorEmisor(mapa.get(nDoc), r.nro_doc_identidad, r.cliente);
-    const cov  = _conCobertura(movs, r.total_cp);
+  const estados = await _conEstadosCobertura(empresaId, 'VENTA', data, 'cliente');
+  return data.map((r, i) => {
+    const { estado5, cov, movs } = estados[i];
     const vinc = _histDetalleMovs(movs);
     return [
-      r.ruc, r.cliente||r.razon_social, r.periodo, r.fecha_emision, r.tipo_cp_doc, r.serie_cdp,
+      r.ruc, r.cliente||r.razon_social, r.periodo, _histFmtFecha(r.fecha_emision), r.tipo_cp_doc, r.serie_cdp,
       r.nro_cp_inicial, r.nro_cp_final, r.tipo_doc_identidad, r.nro_doc_identidad,
       r.bi_gravada, r.igv_ipm, r.total_cp, r.moneda,
-      _histEtiquetaCobertura(cov), cov.suma||0, vinc.nOperacion, vinc.fechaMov, vinc.descripcionMov,
+      estado5, cov.suma||0, vinc.nOperacion, vinc.fechaMov, vinc.descripcionMov,
     ];
   });
 }
@@ -193,9 +174,9 @@ async function _filasRHRecibidosConEstado(data) {
   return data.map((r, i) => {
     const vinc = _rhrDetalleVinculo(estados[i]);
     return [
-      r.fecha_emision, r.numero_rh||'', r.prestadores_servicios?.dni||r.nro_doc_emisor||'',
+      _histFmtFecha(r.fecha_emision), r.numero_rh||'', r.prestadores_servicios?.dni||r.nro_doc_emisor||'',
       r.prestadores_servicios?.nombre||r.nombre_emisor||'', r.concepto||'', r.moneda||'PEN',
-      r.monto_bruto, r.monto_retencion, r.monto_neto, estados[i].estado,
+      r.monto_bruto, r.monto_retencion, r.monto_neto, _rhrEtiquetaTexto(estados[i]),
       vinc.nOperacion, vinc.fechaMov, vinc.montoVinculado||'', vinc.nivelConfianza, r.observaciones||'',
     ];
   });
@@ -478,7 +459,12 @@ async function generarHistorico(empresaId, desde, hasta, empNombre) {
     [''],
     ['Cada hoja usa las mismas columnas legibles que ves en cada módulo — incluyendo'],
     ['el estado real de conciliación bancaria de Compras, Ventas y RH (calculado'],
-    ['igual que en pantalla, no un valor guardado aparte).'],
+    ['igual que en pantalla, con las mismas palabras: PENDIENTE, POSIBLE, PARCIAL,'],
+    ['EXCESIVO, APLICADO), el tipo de documento (FA, BO, RH…) y las fechas en dd/mm/aaaa.'],
+    [''],
+    ['El archivo incluye además una hoja técnica OCULTA llamada RAW_DATA: guarda los'],
+    ['registros tal cual están en la base de datos y es la que usa "Importar histórico"'],
+    ['para restaurar. No la borres ni la modifiques (aunque no la veas, debe seguir ahí).'],
     [''],
     ['Para volver a ver esta información dentro de NEXUM más adelante (por ejemplo si'],
     ['un período fue limpiado de Supabase), usa Reportes → Importar histórico y'],

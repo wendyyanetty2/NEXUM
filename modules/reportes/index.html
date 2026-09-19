@@ -16,9 +16,9 @@
   <script src="../../js/tema.js"></script>
   <script src="../../js/notas.js?v=2&t=20260510"></script>
   <script src="../../js/layout.js?v=4&t=20260917"></script>
-  <script src="../../js/consolidacion-estados.js"></script>
-  <script src="/modules/contabilidad/modules/con-rh-recibidas.js"></script>
-  <script src="../../js/historico.js?v=5&t=20260911c"></script>
+  <script src="../../js/consolidacion-estados.js?v=20&t=20260919f"></script>
+  <script src="/modules/contabilidad/modules/con-rh-recibidas.js?v=20&t=20260919f"></script>
+  <script src="../../js/historico.js?v=6&t=20260919f"></script>
 </head>
 <body>
 <div class="nexum-layout">
@@ -185,6 +185,13 @@ function _descargarExcelConFormato(hojas, nombre) {
     XLSX.utils.book_append_sheet(wb, ws, nombreHoja);
   });
   if (wb.SheetNames.length === 0) { mostrarToast('Sin datos para exportar', 'atencion'); return; }
+  // RAW_DATA (filas crudas con IDs y JSON, solo para "Importar histórico") se deja OCULTA: sigue
+  // dentro del archivo y la restauración la lee igual, pero al abrir el Excel solo se ven las
+  // hojas legibles, sin texto técnico. Se puede mostrar con clic derecho → Mostrar (Excel).
+  if (wb.SheetNames.includes('RAW_DATA')) {
+    wb.Workbook = wb.Workbook || {};
+    wb.Workbook.Sheets = wb.SheetNames.map(n => ({ Hidden: n === 'RAW_DATA' ? 1 : 0 }));
+  }
   XLSX.writeFile(wb, nombre);
 }
 

@@ -664,32 +664,24 @@ async function exportarInfoTrabajadaCompras() {
   const { data } = await q;
   if (!data?.length) { mostrarToast('Sin datos para exportar.', 'atencion'); return; }
 
-  const numeros = data.map(r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-')).filter(Boolean);
-  const { data: mbd } = numeros.length
-    ? await _conMovsDeComprobantes(empresa_activa.id, 'COMPRA', numeros, 'nro_factura_doc,nro_operacion_bancaria,monto,entrega_doc,ruc_dni,proveedor_empresa_personal')
-    : { data: [] };
-  const mapa = new Map();
-  (mbd || []).forEach(r => { if (!mapa.has(r.nro_factura_doc)) mapa.set(r.nro_factura_doc, []); mapa.get(r.nro_factura_doc).push(r); });
-  const etiquetaCob = cov => {
-    if (cov.estado === 'PENDIENTE') return 'PENDIENTE';
-    if (cov.estado === 'PARCIAL')   return cov.excede ? `EXCEDE (+${cov.excede})` : `PARCIAL (${cov.suma}/${cov.total})`;
-    if (cov.estado === 'COMPLETO_EMITIDO')   return 'APLICADO';
-    if (cov.estado === 'COMPLETO_OBSERVADO') return 'OBSERVADO';
-    return cov.estado || '';
-  };
+  // Estado de conciliación bancaria: el MISMO que muestra la pantalla (PENDIENTE / POSIBLE /
+  // PARCIAL / EXCESIVO / APLICADO) — una sola función compartida, no una escala aparte.
+  const estados = await _conEstadosCobertura(empresa_activa.id, 'COMPRA', data, 'proveedor');
+  const _fmtFecha = f => (f ? formatearFecha(f) : ''); // mismo formato que las pantallas (dd/mm/aaaa)
 
   const cab = ['RUC','Proveedor','Periodo','Fecha de emisión','Tipo CP/Doc.','Serie del CDP',
     'N° Inicial','N° Final','Tipo Doc Identidad','Nro Doc Identidad','BI Gravado DG','IGV / IPM DG','Total CP',
-    'Moneda','Detracción','Tipo de Nota','Estado Conciliación Bancaria','Monto Vinculado','N° Operación / Movs. Vinculados'];
-  const filas = data.map(r => {
-    const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
-    const movs = _conFiltrarPorEmisor(mapa.get(nDoc), r.nro_doc_identidad, r.proveedor);
-    const cov  = _conCobertura(movs, r.total_cp);
+    'Moneda','Detracción','Tipo de Nota','Estado Conciliación Bancaria','Monto Vinculado','N° Operación / Movs. Vinculados',
+    'Fecha Movimiento','Descripción Movimiento'];
+  const filas = data.map((r, i) => {
+    const { estado5, cov, movs } = estados[i];
     return [
       r.ruc, r.proveedor||r.razon_social, r.periodo, r.fecha_emision, r.tipo_cp_doc, r.serie_cdp,
       r.nro_cp_inicial, r.nro_cp_final, r.tipo_doc_identidad, r.nro_doc_identidad,
       r.bi_gravado_dg, r.igv_ipm_dg, r.total_cp, r.moneda, r.detraccion||0, r.tipo_nota||'',
-      etiquetaCob(cov), cov.suma||0, movs.map(m=>m.nro_operacion_bancaria).filter(Boolean).join(', '),
+      estado5, cov.suma||0, movs.map(m=>m.nro_operacion_bancaria).filter(Boolean).join(', '),
+      movs.map(m=>_fmtFecha(m.fecha_deposito)).filter(Boolean).join(', '),
+      movs.map(m=>m.descripcion).filter(Boolean).join(' | '),
     ];
   });
 

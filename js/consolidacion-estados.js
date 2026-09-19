@@ -496,6 +496,36 @@ async function _conMovsDeComprobantes(empresaId, categoria, numeros, columnas) {
   return { data: [...vistos.values()], error: null };
 }
 
+// ── Estado de conciliación bancaria de una lista de comprobantes de Compras o
+//    Ventas, calculado EXACTAMENTE como lo muestra la pantalla (mismos movimientos
+//    —incluidos los escritos a mano sin categoría—, mismo filtro de emisor, misma
+//    cobertura N:M y el mismo POSIBLE). Lo usan las descargas (Exportar de cada
+//    módulo y Histórico) para que el archivo diga lo mismo que el sistema y no una
+//    escala distinta (Wendy, 2026-09-19: "no distorsionada, como están en el sistema").
+//    `filas` = registros de contabilidad_compras/ventas; `campoNombre` = 'proveedor'
+//    o 'cliente'. Devuelve, en el mismo orden: { estado5, cov, movs }.
+async function _conEstadosCobertura(empresaId, categoria, filas, campoNombre) {
+  const nroDe = r => [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
+  const numeros = (filas || []).map(nroDe).filter(Boolean);
+  const { data } = numeros.length
+    ? await _conMovsDeComprobantes(empresaId, categoria, numeros,
+        'nro_factura_doc,nro_operacion_bancaria,fecha_deposito,descripcion,monto,id,entrega_doc,ruc_dni,proveedor_empresa_personal')
+    : { data: [] };
+  const porNro = new Map();
+  (data || []).forEach(m => { if (!porNro.has(m.nro_factura_doc)) porNro.set(m.nro_factura_doc, []); porNro.get(m.nro_factura_doc).push(m); });
+
+  const base = (filas || []).map(r => {
+    const movs = _conFiltrarPorEmisor(porNro.get(nroDe(r)), r.nro_doc_identidad, r[campoNombre]);
+    return { movs, cov: _conCobertura(movs, r.total_cp) };
+  });
+  const hayPendientes = base.some(x => x.cov.estado === 'PENDIENTE');
+  const candidatos = hayPendientes ? await _conCandidatosMontoDisponibles(empresaId) : [];
+  return base.map((x, i) => ({
+    ...x,
+    estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && _conHayCandidato(candidatos, filas[i].total_cp)),
+  }));
+}
+
 // ── Comprobantes que YA están cubiertos por movimientos bancarios (APLICADO o
 //    EXCESIVO según _conCobertura — misma regla que ven Compras/Ventas), para
 //    que las sugerencias automáticas de Conciliación no los propongan de nuevo
