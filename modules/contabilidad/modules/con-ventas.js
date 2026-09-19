@@ -177,10 +177,15 @@ async function _renderVentasFiltradas() {
     _vCandidatosMontoCache = await _conCandidatosMontoDisponibles(empresa_activa.id);
   }
   const candidatosMontoV = hayPendientesV ? _vCandidatosMontoCache : [];
-  const covFilasV = covFilasVBase.map(x => ({
-    ...x,
-    estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && _conHayCandidato(candidatosMontoV, x.r.total_cp)),
-  }));
+  // "Posible" solo sugiere: si ya hay un movimiento con el N° de este comprobante que no cuenta, no es una sugerencia.
+  const rotosMapV = hayPendientesV
+    ? await _conMovsConNroCualquierEstado(empresa_activa.id, covFilasVBase.filter(x => x.cov.estado === 'PENDIENTE').map(x => _nDocV(x.r)))
+    : new Map();
+  const covFilasV = covFilasVBase.map(x => {
+    const roto = x.cov.estado === 'PENDIENTE' && _conHayVinculoQueNoCuenta(rotosMapV.get(_nDocV(x.r)), 'VENTA', x.r.nro_doc_identidad);
+    return { ...x, roto,
+      estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && !roto && _conHayCandidato(candidatosMontoV, x.r.total_cp)) };
+  });
 
   const countAplicV = covFilasV.filter(x => x.estado5 === 'APLICADO').length;
   const countParcV  = covFilasV.filter(x => x.estado5 === 'PARCIAL').length;
@@ -263,7 +268,7 @@ async function _renderVentasFiltradas() {
         <th>Moneda</th><th style="text-align:center">Banco</th><th style="text-align:center">Acc.</th>
       </tr></thead>
       <tbody>
-        ${filasVista.map(({ r, cov, estado5 }) => {
+        ${filasVista.map(({ r, cov, estado5, roto }) => {
           const nDoc = [r.serie_cdp, r.nro_cp_inicial].filter(Boolean).join('-');
           const conciliarArgs = `'${r.id}','${escapar(nDoc)}','${escapar(r.cliente||'')}',${Number(r.total_cp||0)},'${escapar(r.fecha_emision||'')}','${escapar(r.nro_doc_identidad||'')}'`;
           // Fase A (Wendy, 2026-09-18): el badge ahora navega a la búsqueda
@@ -274,7 +279,8 @@ async function _renderVentasFiltradas() {
           const tituloBanco = esAplicado ? 'Click para ver con qué movimiento(s) bancario(s) está vinculado'
             : estado5 === 'EXCESIVO'  ? `Excede: ${formatearMoneda(cov.suma)} vinculados superan el total (${formatearMoneda(cov.total)}) por ${formatearMoneda(cov.excede)}. Click para revisar y desvincular el que sobra.`
             : estado5 === 'PARCIAL'   ? `Parcial: ${formatearMoneda(cov.suma)} de ${formatearMoneda(cov.total)} vinculado, falta ${formatearMoneda(cov.falta)}. Click para vincular más movimientos.`
-            : estado5 === 'POSIBLE'   ? 'Hay un movimiento bancario sin vincular con un monto parecido — click para revisar y confirmar.'
+            : estado5 === 'POSIBLE'   ? 'Sugerencia: hay un movimiento bancario sin vincular con un monto parecido — click para revisar y confirmar.'
+            : roto                    ? 'Ya hay un movimiento con el N° de este comprobante, pero no cuenta (está PENDIENTE o su emisor no coincide). Usa 🔧 Reparar estados para migrarlo.'
             : 'Click para conciliar con banco';
           const onclickBanco = esAplicado
             ? `_verMovBancarioLink('${escapar(nDoc)}','VENTA','${escapar(r.nro_doc_identidad||'')}','${escapar(r.cliente||'')}')`

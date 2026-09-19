@@ -203,6 +203,37 @@ function _conCoincideFiltroEstado(estado5, filtro) {
   return estado5 === filtro;
 }
 
+// ── "POSIBLE" es solo una SUGERENCIA (Wendy, 2026-09-19): "hay un movimiento sin vincular con monto parecido".
+//    No puede aparecer cuando YA hay un movimiento que trae el N° de ese comprobante pero no cuenta para su estado
+//    (está PENDIENTE, su emisor no calza, etc.): eso es un vínculo roto, no una sugerencia — el comprobante está
+//    pendiente de repararse con "🔧 Reparar estados", no de conciliarse con otro movimiento.
+//    Trae, por N° exacto, los movimientos de la empresa que lo llevan (cualquier estado).
+async function _conMovsConNroCualquierEstado(empId, numeros) {
+  const lista = [...new Set((numeros || []).filter(Boolean))];
+  const porNro = new Map();
+  for (let i = 0; i < lista.length; i += 80) {
+    const { data } = await _supabase.from('tesoreria_mbd')
+      .select('id,nro_factura_doc,tipo_doc,entrega_doc,ruc_dni,proveedor_empresa_personal')
+      .eq('empresa_id', empId).in('nro_factura_doc', lista.slice(i, i + 80));
+    (data || []).forEach(m => {
+      if (!porNro.has(m.nro_factura_doc)) porNro.set(m.nro_factura_doc, []);
+      porNro.get(m.nro_factura_doc).push(m);
+    });
+  }
+  return porNro;
+}
+// ¿Hay algún movimiento (no cancelado; de esta categoría o sin categoría válida; que NO sea de otro emisor por RUC)
+// con el N° de este comprobante? Se usa solo para comprobantes que hoy no tienen movimientos contados.
+function _conHayVinculoQueNoCuenta(movsDelNro, categoria, ruc) {
+  return (movsDelNro || []).some(m => {
+    if (m.entrega_doc === 'CANCELADO') return false;
+    if (_CON_TIPOS_DOC_VALIDOS.includes(m.tipo_doc) && m.tipo_doc !== categoria) return false;
+    const rucMov = (m.ruc_dni || '').toString().trim(), rucComp = (ruc || '').toString().trim();
+    if (rucMov && rucComp && rucMov !== rucComp) return false; // es de otro emisor
+    return true;
+  });
+}
+
 // ── Busca movimientos SIN vincular (nro_factura_doc vacío) cuyo monto cae
 //    dentro del margen ±S/3 (_CON_MARGEN_POSIBLE) del total de un
 //    comprobante — usado por el ícono 🔗. Corrige TRES bugs reales:
@@ -560,10 +591,14 @@ async function _conEstadosCobertura(empresaId, categoria, filas, campoNombre) {
   });
   const hayPendientes = base.some(x => x.cov.estado === 'PENDIENTE');
   const candidatos = hayPendientes ? await _conCandidatosMontoDisponibles(empresaId) : [];
-  return base.map((x, i) => ({
-    ...x,
-    estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && _conHayCandidato(candidatos, filas[i].total_cp)),
-  }));
+  const rotosMap = hayPendientes
+    ? await _conMovsConNroCualquierEstado(empresaId, base.map((x, i) => x.cov.estado === 'PENDIENTE' ? nroDe(filas[i]) : null))
+    : new Map();
+  return base.map((x, i) => {
+    const roto = x.cov.estado === 'PENDIENTE' && _conHayVinculoQueNoCuenta(rotosMap.get(nroDe(filas[i])), categoria, filas[i].nro_doc_identidad);
+    return { ...x, roto,
+      estado5: _conEstado5(x.cov, x.cov.estado === 'PENDIENTE' && !roto && _conHayCandidato(candidatos, filas[i].total_cp)) };
+  });
 }
 
 // ── Los movimientos que CUENTAN para el estado de un comprobante de Compras/Ventas son los de
@@ -738,7 +773,8 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
   lista.forEach(m => {
     const hits = hitsDe(m);
     hitsPorMov.set(m.id, hits);
-    if (!cuenta(m)) return;
+    // Un movimiento con N° de comprobante que figura PENDIENTE también lo cubrirá al repararlo (su estado pasa a
+    // OBSERVADO/EMITIDO por la regla de 14 campos), así que entra en la predicción del estado del comprobante.
     hits.filter(h => h.emisorOk && (!valido(m) || m.tipo_doc === h.c.cat)).forEach(h => {
       if (!miembros.has(h.c)) miembros.set(h.c, []);
       miembros.get(h.c).push(m);
@@ -758,7 +794,8 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
     let hits = hitsPorMov.get(m.id) || [];
     if (yaCategorizado) {
       hits = hits.filter(h => h.c.cat === m.tipo_doc);
-      if (hits.length !== 1 || hits[0].emisorOk || !cuenta(m)) continue;
+      // Nada que reparar si ya calza por emisor, ya cuenta (EMITIDO/OBSERVADO) y su N° es el mismo del comprobante.
+      if (hits.length !== 1 || (hits[0].emisorOk && cuenta(m) && (m.nro_factura_doc || '').toString().trim() === hits[0].c.nro)) continue;
     }
     const conEmis = hits.filter(h => h.emisorOk);
 
@@ -774,10 +811,10 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
 
     const item = { mov: m, tipo, categoria: null, comprobante: null, cuentaEnConta: cuenta(m),
                    nroCanonico: null, cambiaNro: false, cov: null, estado5: null, candidatos,
-                   rucConflicto: false, titularChoca: false, marcarPorDefecto: false };
+                   rucConflicto: false, titularChoca: false, marcarPorDefecto: false, corregirEstado: false, estadoNuevo: null };
     if (elegido) {
       _conAsignarCandidato(item, elegido);
-      if (tipo === 'seguro' && item.cuentaEnConta) {
+      if (tipo === 'seguro') {
         item.cov = _conCobertura(miembros.get(elegido) || [], elegido.total);
         item.estado5 = _conEstado5(item.cov, false);
       }
@@ -791,9 +828,22 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
         // puede guardar ninguno de los dos sin perder uno).
         const titularYa = (m.titular_comprobante || '').toString().trim();
         item.titularChoca = !!(titularYa && _tercNombreNorm(m.proveedor_empresa_personal) !== _tercNombreNorm(titularYa));
-        item.marcarPorDefecto = !item.rucConflicto && !item.titularChoca && item.cuentaEnConta
+        item.marcarPorDefecto = !item.rucConflicto && !item.titularChoca
           && (elegido.cat === 'COMPRA' || elegido.cat === 'VENTA')
           && Math.abs(Math.abs(Number(m.monto) || 0) - (Number(elegido.total) || 0)) <= 0.01;
+      }
+      // Movimiento con N° de comprobante pero en estado PENDIENTE (o vacío): no cuenta para su comprobante, que se
+      // queda PENDIENTE/POSIBLE aunque ya esté pagado. Con N° presente la regla de 14 campos nunca da PENDIENTE
+      // (EMITIDO si tiene todo, OBSERVADO si falta algo), así que el estado se corrige a lo que dice esa regla.
+      if (!cuenta(m) && (tipo === 'seguro' || (tipo === 'sin_emisor' && !item.rucConflicto && !item.titularChoca))) {
+        const sincroniza = elegido.cat === 'COMPRA' || elegido.cat === 'VENTA';
+        const rt = sincroniza ? _resolverProveedorTitular(m.proveedor_empresa_personal, elegido.nombre, m.ruc_dni, elegido.ruc) : null;
+        const nuevo = _conEvalCompletitud14({
+          ...m, nro_factura_doc: item.nroCanonico, tipo_doc: item.categoria,
+          tipo_comprobante: m.tipo_comprobante || _conCodigoTipoDoc(item.categoria, item.nroCanonico),
+          ...(rt ? { proveedor_empresa_personal: rt.proveedor, ruc_dni: rt.ruc } : {}),
+        });
+        if (nuevo === 'EMITIDO' || nuevo === 'OBSERVADO') { item.corregirEstado = true; item.estadoNuevo = nuevo; }
       }
     }
     items.push(item);
@@ -948,6 +998,8 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
         : _conCodigoTipoDoc(it.categoria, it.nroCanonico);
     }
     if (it.cambiaNro) patch.nro_factura_doc = it.nroCanonico;
+    // Estado de un movimiento con N° pero PENDIENTE → el que da la regla de 14 campos (solo si sigue PENDIENTE/vacío).
+    if (it.corregirEstado && it.estadoNuevo && !['EMITIDO', 'OBSERVADO', 'CANCELADO'].includes(it.mov.entrega_doc)) patch.entrega_doc = it.estadoNuevo;
     const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', it.mov.id);
     if (!error) aplicados++;
   }
@@ -1131,10 +1183,12 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
       const m = it.mov, c = it.comprobante;
       const cv = it.categoria === 'COMPRA' || it.categoria === 'VENTA';
       let nota = '';
+      const cambio = it.corregirEstado
+        ? `Su estado pasa de ${escapar(m.entrega_doc || 'PENDIENTE')} a <strong>${it.estadoNuevo}</strong> (ya tiene N° de comprobante; regla de 14 campos). ` : '';
       if (it.estado5) {
-        nota = `En Contabilidad quedará <strong style="color:${_CON_ESTADO5_COLOR[it.estado5]}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)}).`;
-      } else if (!it.cuentaEnConta) {
-        nota = 'Su estado en Movimientos es PENDIENTE: solo se le asigna la categoría.';
+        nota = cambio + `En Contabilidad quedará <strong style="color:${_CON_ESTADO5_COLOR[it.estado5]}">${_CON_ESTADO5_ICONO[it.estado5]} ${it.estado5}</strong> (${formatearMoneda(it.cov.suma)} de ${formatearMoneda(it.cov.total)}).`;
+      } else if (cambio) {
+        nota = cambio;
       }
       if (it.tipo === 'sin_emisor') {
         if (it.rucConflicto) {
@@ -1142,10 +1196,10 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
         } else if (it.titularChoca) {
           nota = `Ya tiene escrito «A quién se depositó»: «${escapar(m.titular_comprobante)}». No se cambia nada de su proveedor para no perder ese nombre ni «${escapar(m.proveedor_empresa_personal || '—')}»: revísalo a mano.`;
         } else if (cv) {
-          nota = `Pago a tercero: el Proveedor y el RUC pasan a ser los del comprobante y «${escapar(m.proveedor_empresa_personal || '—')}» queda en «A quién se depositó».`
+          nota = cambio + `Pago a tercero: el Proveedor y el RUC pasan a ser los del comprobante y «${escapar(m.proveedor_empresa_personal || '—')}» queda en «A quién se depositó».`
             + (it.marcarPorDefecto ? '' : ' Su monto no es el total del comprobante (¿pago parcial?): márcalo solo si es el correcto.');
         } else {
-          nota = 'El RUC/nombre no coincide con el comprobante: márcalo solo si es el correcto.';
+          nota = cambio + 'El RUC/nombre no coincide con el comprobante: márcalo solo si es el correcto.';
         }
       }
       return `
@@ -1228,7 +1282,7 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
               Nada cambia hasta que lo hagas; con <strong>«Cancelar»</strong> no se toca nada.
               <div style="font-size:12px;color:var(--color-texto-suave);margin-top:4px;line-height:1.5">
                 <strong>Antes de aplicar se descarga un respaldo</strong> de todos tus movimientos, por si quieres volver atrás.
-                Nunca se tocan montos, observaciones, notas ni el estado (Emitido/Observado/Pendiente). Lo único que se escribe es la categoría, el N° en formato Contabilidad y, en los pagos a terceros, el Proveedor/RUC del comprobante
+                Nunca se tocan montos, observaciones ni notas. El estado solo cambia en los movimientos que ya traen el N° de su comprobante pero figuran PENDIENTE (pasan a OBSERVADO/EMITIDO por la regla de 14 campos, para que su comprobante los cuente). Lo demás que se escribe es la categoría, el N° en formato Contabilidad y, en los pagos a terceros, el Proveedor/RUC del comprobante
                 (el nombre del banco pasa a «A quién se depositó»; si ya había uno escrito, no se pisa).
                 Abre cada sección solo si quieres ver el detalle o quitar algún caso.
               </div>
@@ -1301,6 +1355,106 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
     mc.querySelector('#rev-cancel').onclick = () => cerrar(null);
     mc.querySelector('#rev-x').onclick = () => cerrar(null);
   });
+}
+
+// ════════════════════════════════════════════════════════════════
+// VINCULACIÓN CENTRAL — una sola regla para TODO botón que concilia a mano
+// (Wendy, 2026-09-19: "todos los botones que permiten conciliar de manera manual deben
+// respetar las reglas de migración de los estados hacia Contabilidad").
+//
+// Cada botón tenía su propia versión y varios se saltaban reglas: forzaban EMITIDO sin mirar los
+// 14 campos, no avisaban de exceso/duplicado, pisaban el nombre del banco. Esta función aplica
+// SIEMPRE lo mismo:
+//   1. Exceso/duplicado: lo vinculado no puede pasarse del total del comprobante
+//      (_conValidarAntesDeVincular: bloquea o pregunta según el margen configurado).
+//   2. Categoría interna (tipo_doc) + código «Tipo DOC» (FA/BO/RH), N° del comprobante.
+//   3. Proveedor/RUC del comprobante y nombre del banco a «A quién se depositó» — sin pisar ni
+//      borrar un titular ya escrito (mismo criterio que "Reparar estados").
+//   4. Estado del movimiento por la regla de 14 campos (EMITIDO/OBSERVADO), nunca forzado. De ese
+//      estado sale el de Contabilidad: la suma de lo vinculado contra el total (Aplicado / Parcial /
+//      Exceso; Posible es solo una sugerencia y no cuenta como vínculo).
+// NO refresca pantallas: quien llama lo hace una sola vez al terminar (_refrescarVistasVinculadas).
+// ════════════════════════════════════════════════════════════════
+
+// Marcadores que las pantallas ponen cuando un comprobante no tiene N° — nunca deben guardarse como N°.
+const _CON_MARCADORES_SIN_NRO = ['—', 'Sin N°', 'RH sin N°', 'Planilla sin N°'];
+function _conNroReal(v) {
+  const s = (v ?? '').toString().trim();
+  return s && !_CON_MARCADORES_SIN_NRO.includes(s) ? s : '';
+}
+
+// Datos del comprobante a partir de su id (Compras/Ventas/RH). null si no existe o es de otra categoría (PM).
+async function _conCargarDocPorId(tipo, id) {
+  if (!tipo || !id || typeof empresa_activa === 'undefined' || !empresa_activa?.id) return null;
+  if (tipo === 'COMPRA' || tipo === 'VENTA') {
+    const tabla = tipo === 'COMPRA' ? 'contabilidad_compras' : 'contabilidad_ventas';
+    const { data: d } = await _supabase.from(tabla).select('*').eq('id', id).eq('empresa_id', empresa_activa.id).maybeSingle();
+    if (!d) return null;
+    return { tipo, id: d.id, nDoc: [d.serie_cdp, d.nro_cp_inicial].filter(Boolean).join('-'),
+      proveedor: (tipo === 'COMPRA' ? d.proveedor : d.cliente) || '', ruc: d.nro_doc_identidad || '', total: Number(d.total_cp) || 0 };
+  }
+  if (tipo === 'RH') {
+    const { data: d } = await _supabase.from('rh_registros').select('*, prestadores_servicios(nombre, dni)').eq('id', id).eq('empresa_operadora_id', empresa_activa.id).maybeSingle();
+    if (!d) return null;
+    return { tipo, id: d.id, nDoc: d.numero_rh || '', proveedor: d.nombre_emisor || d.prestadores_servicios?.nombre || '',
+      ruc: d.nro_doc_emisor || d.prestadores_servicios?.dni || '', total: Number(d.monto_neto) || 0 };
+  }
+  return null;
+}
+
+// Vincula UN movimiento a UN comprobante con todas las reglas. `doc` = { tipo, id, nDoc, proveedor, ruc, total }.
+// Opciones: tipoMatch/score (para la tabla conciliaciones), omitirValidacion (ya se validó el grupo entero),
+// silencioso (no abrir el aviso de bloqueo: devuelve el mensaje para que el llamador lo junte).
+// Devuelve { ok, estado, motivo, mensaje, titularRespetado }.
+async function _conVincularCentral(movId, doc, opc = {}) {
+  const { tipoMatch = 'MANUAL', score = 0, omitirValidacion = false, silencioso = false } = opc;
+  if (typeof empresa_activa === 'undefined' || !empresa_activa?.id) return { ok: false, motivo: 'sin_empresa' };
+  const nDoc = _conNroReal(doc?.nDoc);
+  if (!nDoc) {
+    const mensaje = 'Este comprobante no tiene N° (serie-número): sin N° no se puede vincular, porque todo el sistema reconoce los vínculos por el N° del comprobante.';
+    if (!silencioso) await _conAlertaBloqueo(mensaje);
+    return { ok: false, motivo: 'sin_numero', mensaje };
+  }
+  const { data: mov } = await _supabase.from('tesoreria_mbd').select('*').eq('id', movId).eq('empresa_id', empresa_activa.id).maybeSingle();
+  if (!mov) return { ok: false, motivo: 'no_encontrado', mensaje: 'No se pudo cargar el movimiento.' };
+
+  if (!omitirValidacion && doc.total) {
+    const val = await _conValidarAntesDeVincular(empresa_activa.id, doc.tipo, nDoc, doc.total, movId, mov.monto,
+      { ruc: doc.ruc, nombre: doc.proveedor, alt: doc.tipo === 'RH' && doc.id ? [doc.id] : [] });
+    if (!val.ok) {
+      if (val.mensaje && !silencioso) await _conAlertaBloqueo(val.mensaje);
+      return { ok: false, motivo: 'exceso', mensaje: val.mensaje || '' };
+    }
+  }
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const patch = {
+    nro_factura_doc: nDoc,
+    tipo_doc: doc.tipo,
+    tipo_comprobante: _conCodigoTipoDoc(doc.tipo, nDoc),
+    estado_conciliacion: 'conciliado',
+    fecha_actualizacion: hoy,
+  };
+  // Proveedor/RUC/titular: el comprobante manda, el nombre del banco pasa a «A quién se depositó». Si el
+  // movimiento ya tiene un titular distinto, no se toca la identidad (no se puede guardar ninguno sin perder uno).
+  const rt = _resolverProveedorTitular(mov.proveedor_empresa_personal, doc.proveedor, mov.ruc_dni, doc.ruc);
+  const titularYa = (mov.titular_comprobante || '').toString().trim();
+  const choca = !!(rt.titular && titularYa && _tercNombreNorm(rt.titular) !== _tercNombreNorm(titularYa));
+  if (!choca) {
+    patch.proveedor_empresa_personal = rt.proveedor;
+    patch.ruc_dni = rt.ruc;
+    if (rt.titular && !titularYa) patch.titular_comprobante = rt.titular;
+  }
+  patch.entrega_doc = _conEvalCompletitud14({ ...mov, ...patch });
+
+  const { error } = await _supabase.from('tesoreria_mbd').update(patch).eq('id', movId);
+  if (error) return { ok: false, motivo: 'error', mensaje: error.message };
+
+  await _supabase.from('conciliaciones').insert({
+    empresa_operadora_id: empresa_activa.id, movimiento_id: movId, doc_tipo: doc.tipo, doc_id: doc.id || null,
+    score, tipo_match: tipoMatch, estado: 'APROBADO', usuario_id: (typeof perfil_usuario !== 'undefined' ? perfil_usuario?.id : null) || null,
+  });
+  return { ok: true, estado: patch.entrega_doc, titularRespetado: choca };
 }
 
 // ════════════════════════════════════════════════════════════════

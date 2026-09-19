@@ -947,11 +947,21 @@ async function _qkEjecutar(periodo) {
   ]);
   // CORRECCIÓN 10: excluir movimientos ya conciliados en sesiones anteriores
   const movs = (rMov.data||[]).filter(m => m.estado_conciliacion !== 'conciliado');
-  const docs = [
+  let docs = [
     ...(rComp.data||[]).map(d=>({...d,_tipo:'COMPRA',_ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'—',_proveedor:d.proveedor||'',_ruc:d.nro_doc_identidad||'',importe:d.total_cp||0})),
     ...(rVent.data||[]).map(d=>({...d,_tipo:'VENTA', _ndoc:[d.serie_cdp,d.nro_cp_inicial].filter(Boolean).join('-')||'—',_proveedor:d.cliente||'',  _ruc:d.nro_doc_identidad||'',  importe:d.total_cp||0})),
-    ...(rRh.data  ||[]).map(d=>({...d,_tipo:'RH',    _ndoc:[d.serie,d.numero].filter(Boolean).join('-')||'—',_proveedor:d.prestadores_servicios?.nombre||d.nombre||'',_ruc:d.prestadores_servicios?.dni||d.ruc||'',importe:d.monto_neto||d.monto||0})),
+    // RH: el N° es numero_rh (antes se armaba con columnas que no existen y quedaba "—", que se guardaba como N° del comprobante)
+    ...(rRh.data  ||[]).map(d=>({...d,_tipo:'RH',    _ndoc:d.numero_rh||'—',_proveedor:d.nombre_emisor||d.prestadores_servicios?.nombre||'',_ruc:d.nro_doc_emisor||d.prestadores_servicios?.dni||'',importe:d.monto_neto||d.monto||0})),
   ];
+  // Regla del sistema (2026-09-19): no se propone un comprobante sin N° (no se puede vincular) ni uno que ya está
+  // cubierto por sus movimientos (APLICADO/EXCESIVO) — sumarle otro movimiento sería un duplicado / un exceso.
+  docs = docs.filter(d => _conNroReal(d._ndoc));
+  if (typeof _conDocsYaCubiertos === 'function' && docs.length) {
+    try {
+      const cubiertos = await _conDocsYaCubiertos(empresa_activa.id, docs.map(d => ({ ...d, _total: Number(d.importe) || 0 })));
+      docs = docs.filter(d => !cubiertos.has(d.id));
+    } catch (e) { console.warn('[nexum] no se pudo excluir los comprobantes ya cubiertos', e); }
+  }
   const exactos=[],posibles=[],sinMatch=[];
   const usadosDoc=new Set();
   for (const mov of movs) {
@@ -973,45 +983,55 @@ async function _qkEjecutar(periodo) {
   return {exactos,posibles,sinMatch,total:movs.length};
 }
 
-async function _qkAprobarUno(idx,pref) {
+// Regla única de vinculación (2026-09-19): antes forzaba EMITIDO, pisaba el nombre del banco con el del
+// comprobante y no validaba exceso/duplicado. Ahora usa _conVincularCentral (mismas reglas que todos los botones).
+function _qkDocCentral(doc) {
+  return { tipo: doc._tipo, id: doc.id, nDoc: doc._ndoc, proveedor: doc._proveedor, ruc: doc._ruc, total: Number(doc.importe || doc.monto_total || 0) };
+}
+async function _qkAprobarUno(idx,pref,sinRefrescar) {
   const arr=(pref==='ex'?window._qkRes?.exactos:window._qkRes?.posibles)||[];
-  const item=arr[idx]; if(!item||item._ok) return;
-  const hoy=new Date().toISOString().slice(0,10);
-  const patch={entrega_doc:'EMITIDO',estado_conciliacion:'conciliado',nro_factura_doc:item.doc._ndoc||null,tipo_doc:item.doc._tipo||null,tipo_comprobante:_mbdCodigoTipoComprobante(item.doc._tipo,item.doc._ndoc),fecha_actualizacion:hoy};
-  if(item.doc._proveedor) patch.proveedor_empresa_personal=item.doc._proveedor;
-  if(item.doc._ruc) patch.ruc_dni=item.doc._ruc;
-  const {error}=await _supabase.from('tesoreria_mbd').update(patch).eq('id',item.mov.id);
-  if(error){mostrarToast('Error: '+error.message,'error');return;}
-  await _supabase.from('conciliaciones').insert({empresa_operadora_id:empresa_activa.id,movimiento_id:item.mov.id,doc_tipo:item.doc._tipo,doc_id:item.doc.id||null,score:item.score,tipo_match:pref==='ex'?'EXACTO':'POSIBLE',estado:'APROBADO',usuario_id:perfil_usuario?.id||null});
+  const item=arr[idx]; if(!item||item._ok) return false;
+  const r=await _conVincularCentral(item.mov.id,_qkDocCentral(item.doc),{tipoMatch:pref==='ex'?'EXACTO':'POSIBLE',score:item.score,silencioso:!!sinRefrescar});
+  if(!r.ok){ if(r.motivo==='error') mostrarToast('Error: '+r.mensaje,'error'); return false; }
   item._ok=true;
   const fila=document.getElementById(`qk-row-${pref}-${idx}`);
   if(fila){fila.style.opacity='0.35';fila.querySelectorAll('button').forEach(b=>b.disabled=true);}
-  mostrarToast('✓ Aprobado','exito');
+  if(!sinRefrescar){ mostrarToast('✓ Aprobado','exito'); if(typeof _refrescarVistasVinculadas==='function') _refrescarVistasVinculadas(); }
+  return true;
 }
 
 async function _qkAprobarMulti(idx) {
   const item=(window._qkRes?.posibles||[])[idx]; if(!item?.esMulti||item._ok) return;
-  const hoy=new Date().toISOString().slice(0,10); let ok=0;
+  let ok=0;
+  const docC=_qkDocCentral(item.doc);
+  // Se valida la SUMA de todos los movimientos contra el total del comprobante antes de tocar nada.
+  if(docC.total && typeof _conValidarAntesDeVincular==='function'){
+    const suma=item.movs.reduce((s,m)=>s+Math.abs(Number(m.monto)||0),0);
+    const val=await _conValidarAntesDeVincular(empresa_activa.id,docC.tipo,docC.nDoc,docC.total,null,suma,{ruc:docC.ruc,nombre:docC.proveedor,alt:docC.tipo==='RH'&&docC.id?[docC.id]:[]});
+    if(!val.ok){ if(val.mensaje) await _conAlertaBloqueo(val.mensaje); return; }
+  }
   for (const mov of item.movs) {
-    const patch={entrega_doc:'EMITIDO',estado_conciliacion:'conciliado',nro_factura_doc:item.doc._ndoc||null,tipo_doc:item.doc._tipo||null,tipo_comprobante:_mbdCodigoTipoComprobante(item.doc._tipo,item.doc._ndoc),fecha_actualizacion:hoy};
-    if(item.doc._proveedor) patch.proveedor_empresa_personal=item.doc._proveedor;
-    if(item.doc._ruc) patch.ruc_dni=item.doc._ruc;
-    const {error}=await _supabase.from('tesoreria_mbd').update(patch).eq('id',mov.id);
-    if(!error){await _supabase.from('conciliaciones').insert({empresa_operadora_id:empresa_activa.id,movimiento_id:mov.id,doc_tipo:item.doc._tipo,doc_id:item.doc.id||null,score:item.score,tipo_match:'MULTI_TRANSFER',estado:'APROBADO',usuario_id:perfil_usuario?.id||null});ok++;}
+    const r=await _conVincularCentral(mov.id,docC,{tipoMatch:'MULTI_TRANSFER',score:item.score,omitirValidacion:true,silencioso:true});
+    if(r.ok) ok++;
   }
   item._ok=true;
   const fila=document.getElementById(`qk-row-pos-${idx}`);
   if(fila){fila.style.opacity='0.35';fila.querySelectorAll('button').forEach(b=>b.disabled=true);}
   mostrarToast(`✅ Multi-transferencia: ${ok} mov. aprobados`,'exito');
+  if(typeof _refrescarVistasVinculadas==='function') _refrescarVistasVinculadas();
 }
 
 async function _qkAprobarLote() {
   const pend=(window._qkRes?.exactos||[]).filter(i=>!i._ok);
   if(!pend.length){mostrarToast('No hay exactos pendientes','atencion');return;}
   if(!await confirmar(`¿Aprobar los ${pend.length} matches exactos?`,{btnOk:'Sí, aprobar',btnColor:'#166534'})) return;
-  (window._qkRes?.exactos||[]).forEach((_,i)=>{ if(!window._qkRes.exactos[i]._ok) _qkAprobarUno(i,'ex'); });
-  mostrarToast(`✅ ${pend.length} en proceso…`,'exito');
-  setTimeout(cargarMovimientos, 1500);
+  // Uno por uno (esperando cada resultado): cada aprobación valida contra lo ya vinculado y calcula su estado.
+  let ok=0;
+  const exactos=window._qkRes?.exactos||[];
+  for(let i=0;i<exactos.length;i++){ if(!exactos[i]._ok && await _qkAprobarUno(i,'ex',true)) ok++; }
+  const saltados=pend.length-ok;
+  mostrarToast(`✅ ${ok} aprobados${saltados?` · ⚠️ ${saltados} sin aprobar (pasan el total de su comprobante o no tienen N°)`:''}`,saltados?'atencion':'exito',saltados?7000:3500);
+  if(typeof _refrescarVistasVinculadas==='function') _refrescarVistasVinculadas(); else cargarMovimientos();
 }
 
 function _qkDescartar(idx,pref) {

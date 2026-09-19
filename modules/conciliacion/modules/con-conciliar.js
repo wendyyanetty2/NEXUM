@@ -1224,6 +1224,17 @@ async function _aprobarMatchMultiComprobante(key, idx) {
   const signo = Number(base.monto) < 0 ? -1 : 1;
   const hoy = new Date().toISOString().slice(0, 10);
 
+  // Regla única de vinculación (2026-09-19): antes de dividir, cada comprobante debe poder recibir su parte sin
+  // pasarse de su total (la fila original, que se elimina al final, no cuenta). Si alguno se pasa, no se divide nada.
+  if (typeof _conValidarAntesDeVincular === 'function') {
+    for (const d of item.docs) {
+      if (d._tipo === 'PM' || !_conNroReal(d._ndoc) || !d._total) continue;
+      const val = await _conValidarAntesDeVincular(empresa_activa.id, d._tipo, d._ndoc, d._total, item.mov.id, Math.abs(d._total || 0),
+        { ruc: d._ruc, nombre: d._proveedor, alt: d._tipo === 'RH' && d.id ? [d.id] : [] });
+      if (!val.ok) { if (val.mensaje) await _conAlertaBloqueo(val.mensaje); return; }
+    }
+  }
+
   let ok = 0, errores = 0;
   for (const d of item.docs) {
     const rt = typeof _resolverProveedorTitular === 'function'
@@ -1702,10 +1713,21 @@ function _descartarSugerenciaSM(idx) {
 async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefijo) {
   const hoy = new Date().toISOString().slice(0, 10);
 
-  // Actualizar tesoreria_mbd: EMITIDO + escribir el número de comprobante
+  // Actualizar tesoreria_mbd: escribir el número de comprobante y calcular el estado (14 campos)
   const itemLocal = Object.values(_conItemCache).find(it => it.mov?.id === movId);
   const nroDoc    = itemLocal?.doc?._ndoc || null;
   const tipoDoc   = itemLocal?.doc?._tipo || null;
+
+  // Regla única de vinculación (2026-09-19): antes forzaba EMITIDO y no validaba exceso/duplicado.
+  // PM (planillas) sigue por el camino anterior.
+  const docCentral = itemLocal?.doc
+    ? (tipoDoc !== 'PM' ? { tipo: tipoDoc, id: itemLocal.doc.id, nDoc: nroDoc, proveedor: itemLocal.doc._proveedor, ruc: itemLocal.doc._ruc, total: itemLocal.doc._total } : null)
+    : (docTipo && docTipo !== 'PM' && typeof _conCargarDocPorId === 'function' ? await _conCargarDocPorId(docTipo, docId) : null);
+  let errMov = null;
+  if (docCentral) {
+    const r = await _conVincularCentral(movId, docCentral, { tipoMatch, score });
+    if (!r.ok) { if (r.motivo === 'error') mostrarToast('Error al actualizar movimiento: ' + r.mensaje, 'error'); return; }
+  } else {
 
   // MEJORA 6: migrar proveedor y ruc sólo si el comprobante los tiene y el mov no
   const updateMov = {
@@ -1729,10 +1751,10 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
       updateMov.ruc_dni = itemLocal.doc._ruc;
   }
 
-  const { error: errMov } = await _supabase
+  ({ error: errMov } = await _supabase
     .from('tesoreria_mbd')
     .update(updateMov)
-    .eq('id', movId);
+    .eq('id', movId));
 
   if (errMov) { mostrarToast('Error al actualizar movimiento: ' + errMov.message, 'error'); return; }
 
@@ -1747,6 +1769,7 @@ async function _aprobarMatch(movId, docTipo, docId, score, tipoMatch, idx, prefi
     estado:               'APROBADO',
     usuario_id:           perfil_usuario?.id || null,
   });
+  }
 
   // Animar fila
   const fila = document.getElementById(`con-row-${prefijo}-${idx}`);
@@ -1804,9 +1827,27 @@ async function _aprobarMatchMulti(key, idx) {
   if (!item || !item.esMulti) return;
   const hoy = new Date().toISOString().slice(0, 10);
   const d   = item.doc;
-  let ok = 0, errores = 0;
+  let ok = 0, errores = 0, titularesRespetados = 0;
+
+  // Regla única de vinculación (2026-09-19): se valida la SUMA de todos los movimientos contra el total del
+  // comprobante ANTES de tocar nada (si se pasa, no se vincula ninguno), y cada movimiento toma su estado
+  // por la regla de 14 campos — antes forzaba EMITIDO y no validaba exceso/duplicado.
+  const docCentral = { tipo: d._tipo, id: d.id, nDoc: d._ndoc, proveedor: d._proveedor, ruc: d._ruc, total: d._total };
+  if (d._tipo !== 'PM' && typeof _conValidarAntesDeVincular === 'function' && _conNroReal(d._ndoc) && d._total) {
+    const sumaMovs = item.movs.reduce((s, m) => s + Math.abs(Number(m.monto) || 0), 0);
+    const val = await _conValidarAntesDeVincular(empresa_activa.id, d._tipo, d._ndoc, d._total, null, sumaMovs,
+      { ruc: d._ruc, nombre: d._proveedor, alt: d._tipo === 'RH' && d.id ? [d.id] : [] });
+    if (!val.ok) { if (val.mensaje) await _conAlertaBloqueo(val.mensaje); return; }
+  }
 
   for (const m of item.movs) {
+    if (d._tipo !== 'PM') {
+      const r = await _conVincularCentral(m.id, docCentral, { tipoMatch: 'MULTI_TRANSFER', score: item.score, omitirValidacion: true, silencioso: true });
+      if (!r.ok) { errores++; continue; }
+      if (r.titularRespetado) titularesRespetados++;
+      ok++;
+      continue;
+    }
     const updateMov = {
       entrega_doc:          'EMITIDO',
       estado_conciliacion:  'conciliado',
@@ -1851,7 +1892,7 @@ async function _aprobarMatchMulti(key, idx) {
   document.getElementById('con-cnt-posibles').textContent = _con_resultados.posibles.length;
   _conRefrescarPanel();
   if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
-  mostrarToast(`✅ Multi-transferencia aprobada (${ok} movimientos)${errores ? ` · ${errores} con error` : ''}`, ok ? 'exito' : 'error');
+  mostrarToast(`✅ Multi-transferencia aprobada (${ok} movimientos)${errores ? ` · ${errores} con error` : ''}${titularesRespetados ? ` · ${titularesRespetados} con «A quién se depositó» ya escrito (no se pisó)` : ''}`, ok ? 'exito' : 'error');
 }
 
 // ── Rechazar multi-transferencia ──────────────────────────────────
@@ -1873,13 +1914,25 @@ async function _aprobarEnLote() {
   if (!lista.length) return;
 
   if (!await confirmar(`¿Aprobar los ${lista.length} matches exactos en lote?`, { btnOk: 'Sí, aprobar todos', btnColor: '#166534' })) return;
-  if (!await confirmar(`CONFIRMACIÓN FINAL: ¿Aprobar ${lista.length} registros como EMITIDOS?`, { btnOk: 'Confirmar', btnColor: '#166534' })) return;
+  if (!await confirmar(`CONFIRMACIÓN FINAL: ¿Aprobar ${lista.length} registros? Cada movimiento quedará EMITIDO u OBSERVADO según tenga completos sus 14 campos, y los que harían pasarse del total de su comprobante se saltan.`, { btnOk: 'Confirmar', btnColor: '#166534' })) return;
 
   const hoy    = new Date().toISOString().slice(0, 10);
   let   ok     = 0;
   let   errores = 0;
+  const saltados = [];
 
   for (const item of lista) {
+    // Regla única de vinculación (2026-09-19): valida exceso/duplicado y calcula el estado con la regla de 14
+    // campos (antes forzaba EMITIDO en todos). Los bloqueados se saltan y se avisan al final. PM sigue igual.
+    if (item.doc._tipo !== 'PM') {
+      const r = await _conVincularCentral(item.mov.id,
+        { tipo: item.doc._tipo, id: item.doc.id, nDoc: item.doc._ndoc, proveedor: item.doc._proveedor, ruc: item.doc._ruc, total: item.doc._total },
+        { tipoMatch: 'EXACTO', score: item.score, silencioso: true });
+      if (r.ok) ok++;
+      else if (r.motivo === 'exceso' || r.motivo === 'sin_numero') saltados.push(item.doc._ndoc || '—');
+      else errores++;
+      continue;
+    }
     // MEJORA 6: migrar proveedor y ruc sólo si el comprobante los tiene y el mov no
     const updLote = {
       entrega_doc:          'EMITIDO',
@@ -1925,7 +1978,7 @@ async function _aprobarEnLote() {
   // tesoreria_mbd — sin esto se quedaban con el estado viejo (auditoría 2026-09-18).
   if (typeof _refrescarVistasVinculadas === 'function') _refrescarVistasVinculadas();
 
-  mostrarToast(`✅ ${ok} aprobados${errores ? ` · ${errores} con error` : ''}.`, ok ? 'exito' : 'error');
+  mostrarToast(`✅ ${ok} aprobados${errores ? ` · ${errores} con error` : ''}${saltados.length ? ` · ⚠️ ${saltados.length} saltado(s) por pasarse del total de su comprobante o no tener N° (revisar: ${saltados.slice(0, 6).join(', ')})` : ''}.`, saltados.length || !ok ? (ok ? 'atencion' : 'error') : 'exito', saltados.length ? 8000 : 3500);
 }
 
 // ── Guardar clasificación sin match ──────────────────────────────
@@ -2076,26 +2129,34 @@ async function _vincularManual(movId, docTipo, docId, nDocDirecto) {
     nroDoc = itemDoc?.doc?._ndoc || null;
   }
 
-  const { error } = await _supabase.from('tesoreria_mbd')
-    .update({
-      entrega_doc:     'OBSERVADO',
-      nro_factura_doc: nroDoc,
-      tipo_doc:        docTipo,
-      tipo_comprobante: docTipo ? _conCodigoTipoComprobante(docTipo, nroDoc) : undefined,
-    }).eq('id', movId);
+  // Regla única de vinculación (2026-09-19): valida exceso/duplicado, migra Proveedor/RUC/titular y calcula
+  // el estado con la regla de 14 campos — antes forzaba OBSERVADO sin validar nada. PM (planillas) sigue igual.
+  const docCentral = (docTipo && docTipo !== 'PM' && typeof _conCargarDocPorId === 'function') ? await _conCargarDocPorId(docTipo, docId) : null;
+  if (docCentral) {
+    const r = await _conVincularCentral(movId, docCentral, { tipoMatch: 'MANUAL' });
+    if (!r.ok) { if (r.motivo === 'error') mostrarToast('Error: ' + r.mensaje, 'error'); return; }
+  } else {
+    const { error } = await _supabase.from('tesoreria_mbd')
+      .update({
+        entrega_doc:     'OBSERVADO',
+        nro_factura_doc: nroDoc,
+        tipo_doc:        docTipo,
+        tipo_comprobante: docTipo ? _conCodigoTipoComprobante(docTipo, nroDoc) : undefined,
+      }).eq('id', movId);
 
-  if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
+    if (error) { mostrarToast('Error: ' + error.message, 'error'); return; }
 
-  await _supabase.from('conciliaciones').insert({
-    empresa_operadora_id: empresa_activa.id,
-    movimiento_id:        movId,
-    doc_tipo:             docTipo,
-    doc_id:               docId,
-    score:                0,
-    tipo_match:           'MANUAL',
-    estado:               'APROBADO',
-    usuario_id:           perfil_usuario?.id || null,
-  });
+    await _supabase.from('conciliaciones').insert({
+      empresa_operadora_id: empresa_activa.id,
+      movimiento_id:        movId,
+      doc_tipo:             docTipo,
+      doc_id:               docId,
+      score:                0,
+      tipo_match:           'MANUAL',
+      estado:               'APROBADO',
+      usuario_id:           perfil_usuario?.id || null,
+    });
+  }
 
   document.getElementById('con-panel-manual').style.display = 'none';
   mostrarToast('✓ Vinculación manual guardada', 'exito');
