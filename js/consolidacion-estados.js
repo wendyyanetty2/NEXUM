@@ -642,12 +642,15 @@ function _conQuitarCerosNro(v) {
   return m ? `${m[1]}-${m[2]}` : s;
 }
 
-// Movimientos cuyo N° de comprobante lleva ceros a la izquierda. No se tocan los RH (su N° se guarda
-// tal como se escribió en el RH y sus vínculos dependen de esa forma), las planillas (PM), los códigos
-// internos ni los CANCELADOS.
-function _conClasificarCerosNro(movs) {
+// Movimientos cuyo N° de comprobante lleva ceros a la izquierda. No se tocan las planillas (PM), los
+// códigos internos ni los CANCELADOS. Los RH SÍ se incluyen (Wendy: ningún N° de RH empieza con ceros),
+// salvo que en esta empresa exista algún RH cuyo N° guardado lleve ceros: en ese caso quitárselos al
+// movimiento rompería el vínculo con ese RH, así que sus movimientos de RH se dejan tal cual.
+function _conClasificarCerosNro(movs, rhs) {
+  const rhConCeros = (rhs || []).some(r => (r.numero_rh || '') && _conQuitarCerosNro(r.numero_rh) !== r.numero_rh);
   return (movs || [])
-    .filter(m => m.entrega_doc !== 'CANCELADO' && m.tipo_doc !== 'RH' && m.tipo_doc !== 'PM' && !_conEsUUID(m.nro_factura_doc))
+    .filter(m => m.entrega_doc !== 'CANCELADO' && m.tipo_doc !== 'PM' && !_conEsUUID(m.nro_factura_doc)
+      && !(m.tipo_doc === 'RH' && rhConCeros))
     .map(m => ({ mov: m, antes: m.nro_factura_doc, despues: _conQuitarCerosNro(m.nro_factura_doc) }))
     .filter(x => x.despues !== x.antes);
 }
@@ -878,7 +881,7 @@ async function _conRevisarVinculosSinCategoria(empId, hoy) {
   // regla de los 14 campos (opcional, sin marcar por defecto).
   const uuidItems = _conClasificarUUIDsRH(movs, rhs);
   const estados14 = _conClasificarEstados14(movs);
-  const cerosItems = _conClasificarCerosNro(movs);
+  const cerosItems = _conClasificarCerosNro(movs, rhs);
 
   if (!items.length && !faltantesTipo.length && !uuidItems.length && !estados14.length && !cerosItems.length) {
     return { aplicados: 0, sinResolver: 0, tipoCompletados: 0, uuidConvertidos: 0, uuidSinConvertir: 0, estadosReevaluados: 0, cerosQuitados: 0 };
