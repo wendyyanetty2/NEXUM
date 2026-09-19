@@ -582,13 +582,13 @@ function _movFilaCampo(campo, label, tipo, opciones, listaItems) {
   } else if (tipo === 'combobox') {
     inputHtml = `
       <input type="text" id="${inputId}" disabled placeholder="${label}"
-        list="${listId}" style="${inputEstilo}">
+        autocomplete="off" list="${listId}" style="${inputEstilo}">
       <datalist id="${listId}">
         ${(listaItems||[]).map(i=>`<option value="${escapar(i)}">`).join('')}
       </datalist>`;
   } else {
     inputHtml = `<input type="text" id="${inputId}" disabled placeholder="${label}"
-      style="${inputEstilo}">`;
+      autocomplete="off" style="${inputEstilo}">`;
   }
 
   return `
@@ -687,9 +687,9 @@ async function _movEditarMasivo() {
         ${_movFilaCampo('cotizacion',              'COTIZACIÓN',                    'text')}
         ${_movFilaCampo('oc',                      'OC',                            'text')}
         ${_movFilaCampo('autorizacion',            'Autorización',                  'combobox', null, _mbdCatalogos.autorizaciones)}
-        ${_movFilaCampo('detalles_compra_servicio','Detalles Compra / Servicio',    'text')}
-        ${_movFilaCampo('observaciones',           'Observaciones',                 'text')}
-        ${_movFilaCampo('observaciones_2',         'Observaciones 2',               'text')}
+        ${_movFilaCampo('detalles_compra_servicio','Detalles Compra / Servicio',    'combobox', null, _mbdCatalogos.detalles)}
+        ${_movFilaCampo('observaciones',           'Observaciones',                 'combobox', null, _mbdCatalogos.observaciones)}
+        ${_movFilaCampo('observaciones_2',         'Observaciones 2',               'combobox', null, _mbdCatalogos.observaciones2)}
       </div>
 
       <!-- Pie fijo -->
@@ -1096,12 +1096,12 @@ const TIPOS_DOC_MBD = [
   {val:'VB',lab:'VB — Voucher de banco'},{val:'OT',lab:'OT — Comprobante sin serie legible'}
 ];
 
-let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [], proveedores: [], proyectos: [] };
+let _mbdCatalogos = { conceptos: [], empresas: [], autorizaciones: [], mediosPago: [], proveedores: [], proyectos: [], observaciones: [], observaciones2: [], detalles: [] };
 
 async function _mbdCargarCatalogos() {
   // Catálogo propio de la empresa activa (igual que el módulo Catálogos).
   const eid = empresa_activa.id;
-  const [rc, re, ra, rm, rproy, rmov, rComp, rVent, rRh] = await Promise.all([
+  const [rc, re, ra, rm, rproy, rmov, rComp, rVent, rRh, rObs] = await Promise.all([
     _supabase.from('conceptos').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('empresas_clientes').select('nombre,ruc_dni').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
     _supabase.from('autorizaciones').select('nombre').eq('activo', true).eq('empresa_operadora_id', eid).order('nombre'),
@@ -1124,6 +1124,12 @@ async function _mbdCargarCatalogos() {
       .eq('empresa_id', eid).not('cliente', 'is', null).limit(5000),
     _supabase.from('rh_registros').select('prestadores_servicios(nombre,dni)')
       .eq('empresa_operadora_id', eid).limit(5000),
+    // Notas libres ya usadas (Observaciones/Obs.2/Detalles) — solo para sugerir
+    // al escribir, nunca para autocompletar solo ni para tocar registros existentes.
+    _supabase.from('tesoreria_mbd').select('observaciones,observaciones_2,detalles_compra_servicio')
+      .eq('empresa_id', eid)
+      .order('fecha_deposito', { ascending: false })
+      .limit(3000),
   ]);
 
   // De-duplicar por nombre (por si hubiera ítems repetidos con distinta tilde/espacios
@@ -1160,6 +1166,29 @@ async function _mbdCargarCatalogos() {
     })
     .map(r => ({ nombre: r.nombre.trim(), doc: r.doc || '' }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  // Notas frecuentes (Observaciones / Obs. 2 / Detalles Compra-Servicio):
+  // se ordenan por cuántas veces se repitió cada texto exacto (las más usadas
+  // primero) y se recorta a un top razonable para que sea un apoyo, no una
+  // lista interminable. Solo lectura — nunca escribe ni modifica registros.
+  const _topFrecuentes = (valores, max = 40) => {
+    const conteo = new Map();
+    for (const v of valores) {
+      const t = (v || '').toString().trim();
+      if (!t) continue;
+      const k = _normNombre(t);
+      const actual = conteo.get(k);
+      if (actual) actual.n++; else conteo.set(k, { texto: t, n: 1 });
+    }
+    return [...conteo.values()]
+      .sort((a, b) => b.n - a.n || a.texto.localeCompare(b.texto))
+      .slice(0, max)
+      .map(o => o.texto);
+  };
+  const _obsRows = rObs.data || [];
+  _mbdCatalogos.observaciones  = _topFrecuentes(_obsRows.map(r => r.observaciones));
+  _mbdCatalogos.observaciones2 = _topFrecuentes(_obsRows.map(r => r.observaciones_2));
+  _mbdCatalogos.detalles       = _topFrecuentes(_obsRows.map(r => r.detalles_compra_servicio));
 }
 
 // Auto-completar RUC/DNI al seleccionar un proveedor ya registrado en Movimientos
@@ -1317,19 +1346,31 @@ async function abrirModalMBD(id = null) {
             </div>
             <div class="campo" style="grid-column:span 3">
               <label>Detalles Compra / Servicio</label>
-              <input type="text" id="mbd-detalles" value="${escapar(item?.detalles_compra_servicio||'')}">
+              <input type="text" id="mbd-detalles" value="${escapar(item?.detalles_compra_servicio||'')}"
+                autocomplete="off" list="mbd-detalles-datalist" placeholder="Escribir o elegir una frecuente">
+              <datalist id="mbd-detalles-datalist">
+                ${_mbdCatalogos.detalles.map(d=>`<option value="${escapar(d)}">`).join('')}
+              </datalist>
             </div>
             <div class="campo" style="grid-column:span 3">
               <label>Observaciones</label>
-              <input type="text" id="mbd-obs" value="${escapar(item?.observaciones||'')}">
+              <input type="text" id="mbd-obs" value="${escapar(item?.observaciones||'')}"
+                autocomplete="off" list="mbd-obs-datalist" placeholder="Escribir o elegir una frecuente">
+              <datalist id="mbd-obs-datalist">
+                ${_mbdCatalogos.observaciones.map(o=>`<option value="${escapar(o)}">`).join('')}
+              </datalist>
             </div>
             <div class="campo" style="grid-column:span 3">
               <label>Obs. 2</label>
-              <input type="text" id="mbd-obs2" value="${escapar(item?.observaciones_2||'')}">
+              <input type="text" id="mbd-obs2" value="${escapar(item?.observaciones_2||'')}"
+                autocomplete="off" list="mbd-obs2-datalist" placeholder="Escribir o elegir una frecuente">
+              <datalist id="mbd-obs2-datalist">
+                ${_mbdCatalogos.observaciones2.map(o=>`<option value="${escapar(o)}">`).join('')}
+              </datalist>
             </div>
             <div class="campo" style="grid-column:span 3">
               <label>Obs. 4</label>
-              <input type="text" id="mbd-obs4" value="${escapar(item?.observaciones_4||'')}">
+              <input type="text" id="mbd-obs4" value="${escapar(item?.observaciones_4||'')}" autocomplete="off">
             </div>
             <div class="campo" style="grid-column:span 3">
               <label>⚠️ A quién se depositó (si difiere del proveedor)</label>
