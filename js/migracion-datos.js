@@ -129,8 +129,10 @@ function _migCompararCampos(formVals, comprobante) {
     }
   }
 
+  // RUC/DNI (Wendy, 2026-09-19): SIEMPRE el del comprobante — se reemplaza igual que el Proveedor, sin preguntar.
+  // Solo el Monto sigue preguntándose cuando difiere (es un dato distinto, no de identidad).
+  if (comprobante.ruc) autocompletar.ruc = comprobante.ruc;
   const camposConflicto = [
-    { key: 'ruc',   label: 'RUC / DNI', formVal: formVals.ruc },
     { key: 'monto', label: 'Monto',     formVal: formVals.monto },
   ];
   camposConflicto.forEach(c => {

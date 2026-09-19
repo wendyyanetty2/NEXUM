@@ -840,14 +840,13 @@ function _conClasificarVinculosSinCategoria(movs, compras, ventas, rhs) {
         // no lo contradice y el monto es exactamente el del comprobante (2026-09-19).
         const rucMov = (m.ruc_dni || '').toString().trim(), rucComp = (elegido.ruc || '').toString().trim();
         item.rucConflicto = !!(rucMov && rucComp && rucMov !== rucComp);
-        item.marcarPorDefecto = !item.rucConflicto
-          && (elegido.cat === 'COMPRA' || elegido.cat === 'VENTA')
+        item.marcarPorDefecto = (elegido.cat === 'COMPRA' || elegido.cat === 'VENTA')
           && Math.abs(Math.abs(Number(m.monto) || 0) - (Number(elegido.total) || 0)) <= 0.01;
       }
       // Movimiento con N° de comprobante pero en estado PENDIENTE (o vacío): no cuenta para su comprobante, que se
       // queda PENDIENTE/POSIBLE aunque ya esté pagado. Con N° presente la regla de 14 campos nunca da PENDIENTE
       // (EMITIDO si tiene todo, OBSERVADO si falta algo), así que el estado se corrige a lo que dice esa regla.
-      if (!cuenta(m) && (tipo === 'seguro' || (tipo === 'sin_emisor' && !item.rucConflicto))) {
+      if (!cuenta(m) && (tipo === 'seguro' || tipo === 'sin_emisor')) {
         const sincroniza = elegido.cat === 'COMPRA' || elegido.cat === 'VENTA';
         const rt = sincroniza ? _resolverProveedorTitular(m.proveedor_empresa_personal, elegido.nombre, m.ruc_dni, elegido.ruc) : null;
         const nuevo = _conEvalCompletitud14({
@@ -1203,10 +1202,8 @@ function _conModalVinculosSinCategoria(items, faltantesTipo = [], extras = {}) {
         nota = cambio;
       }
       if (it.tipo === 'sin_emisor') {
-        if (it.rucConflicto) {
-          nota = `⚠️ El RUC del movimiento (${escapar(m.ruc_dni)}) es distinto al del comprobante (${escapar(c.ruc || '—')}): probablemente NO es el mismo comprobante.`;
-        } else if (cv) {
-          nota = cambio + `Pago a tercero: el Proveedor y el RUC pasan a ser los del comprobante y «${escapar(m.proveedor_empresa_personal || '—')}» ${(m.titular_comprobante || '').toString().trim() ? `se agrega a lo que ya tenía en «A quién se depositó» («${escapar(m.titular_comprobante)}»)` : 'queda en «A quién se depositó»'}.`
+        if (cv) {
+          nota = cambio + `Pago a tercero: el Proveedor y el RUC pasan a ser los del comprobante y «${escapar(m.proveedor_empresa_personal || '—')}» ${(m.titular_comprobante || '').toString().trim() ? `se agrega a lo que ya tenía en «A quién se depositó» («${escapar(m.titular_comprobante)}»)` : 'queda en «A quién se depositó»'}.${it.rucConflicto ? ` Su RUC/DNI (${escapar(m.ruc_dni)}) se reemplaza por el del comprobante (${escapar(c.ruc || '—')}).` : ''}`
             + (it.marcarPorDefecto ? '' : ' Su monto no es el total del comprobante (¿pago parcial?): márcalo solo si es el correcto.');
         } else {
           nota = cambio + 'El RUC/nombre no coincide con el comprobante: márcalo solo si es el correcto.';
