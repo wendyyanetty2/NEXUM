@@ -668,6 +668,12 @@ async function _movEditarMasivo() {
     { v: 'CANCELADO', t: '⚫ Cancelado' },
   ];
 
+  // Medio de Pago se guarda en observaciones_3 (igual que en la edición individual)
+  const MEDIO_PAGO = [
+    { v: '', t: '— Seleccionar —' },
+    ..._mbdCatalogos.mediosPago.map(m => ({ v: m, t: m })),
+  ];
+
   const overlay = document.createElement('div');
   overlay.id = 'overlay-masivo';
   overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);
@@ -709,6 +715,9 @@ async function _movEditarMasivo() {
         ${_movFilaCampo('detalles_compra_servicio','Detalles Compra / Servicio',    'combobox', null, _mbdCatalogos.detalles)}
         ${_movFilaCampo('observaciones',           'Observaciones',                 'combobox', null, _mbdCatalogos.observaciones)}
         ${_movFilaCampo('observaciones_2',         'Observaciones 2',               'combobox', null, _mbdCatalogos.observaciones2)}
+        ${_movFilaCampo('observaciones_3',         'Medio de Pago',                 'select', MEDIO_PAGO)}
+        ${_movFilaCampo('observaciones_4',         'Observaciones 4',               'text')}
+        ${_movFilaCampo('titular_comprobante',     'A quién se depositó (si difiere del proveedor)', 'text')}
       </div>
 
       <!-- Pie fijo -->
@@ -767,6 +776,7 @@ async function _movGuardarMasivo() {
     'proveedor_empresa_personal', 'ruc_dni', 'proyecto', 'nro_factura_doc',
     'tipo_comprobante', 'entrega_doc', 'concepto', 'empresa', 'cotizacion', 'oc',
     'autorizacion', 'detalles_compra_servicio', 'observaciones', 'observaciones_2',
+    'observaciones_3', 'observaciones_4', 'titular_comprobante',
   ];
 
   const payload = {};
